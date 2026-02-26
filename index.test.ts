@@ -1,3 +1,4 @@
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { describe, test, expect, beforeEach, afterAll } from "bun:test";
 import {
   mkdtempSync,
@@ -5,6 +6,7 @@ import {
   existsSync,
   writeFileSync,
   readFileSync,
+  mkdirSync,
 } from "node:fs";
 import {
   createServer,
@@ -67,6 +69,16 @@ function json(
   return parseJsonValue(stdout) as
     | Record<string, unknown>
     | Record<string, unknown>[];
+}
+
+function dbRun(sql: string, params: SQLQueryBindings[] = []) {
+  const dbPath = join(testDir, ".agents", "memory.db");
+  const db = new Database(dbPath);
+  try {
+    db.run(sql, params);
+  } finally {
+    db.close();
+  }
 }
 
 beforeEach(() => {
@@ -415,6 +427,370 @@ describe("query", () => {
     json("delete", "1");
     const result = json("query", "searchable");
     expect(result).toEqual([]);
+  });
+});
+
+// --- Checklist feature coverage ---
+
+describe("checklist: deprecation and invalidation", () => {
+  test("deprecate marks status and query excludes deprecated by default", () => {
+    json("add", "legacy auth token format");
+    json("add", "new auth token format");
+
+    const deprecated = json(
+      "deprecate",
+      "1",
+      "--superseded-by",
+      "2",
+    ) as Record<string, unknown>;
+    expect(deprecated.status).toBe("superseded_by");
+    expect(deprecated.superseded_by).toBe(2);
+
+    const defaultQuery = json("query", "legacy") as Record<string, unknown>[];
+    expect(defaultQuery).toEqual([]);
+
+    const withDeprecated = json(
+      "query",
+      "legacy",
+      "--include-deprecated",
+    ) as Record<string, unknown>[];
+    expect(withDeprecated).toHaveLength(1);
+    expect(withDeprecated[0]?.id).toBe(1);
+  });
+});
+
+describe("checklist: structured memory_type", () => {
+  test("supports --type on add, update, list, and query", () => {
+    json("add", "routing rule alpha", "--type", "decision");
+    json("add", "routing rule beta", "--type", "gotcha");
+
+    const listed = json("list", "--type", "decision") as Record<string, unknown>[];
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.memory_type).toBe("decision");
+
+    const queried = json(
+      "query",
+      "routing",
+      "--type",
+      "decision",
+    ) as Record<string, unknown>[];
+    expect(queried).toHaveLength(1);
+    expect(queried[0]?.id).toBe(1);
+
+    const updated = json(
+      "update",
+      "1",
+      "routing rule alpha",
+      "--type",
+      "constraint",
+    ) as Record<string, unknown>;
+    expect(updated.memory_type).toBe("constraint");
+  });
+});
+
+describe("checklist: provenance fields", () => {
+  test("tracks source_agent, last_updated_by, created_at, and update_count", () => {
+    const created = json(
+      "add",
+      "provenance memory",
+      "--source-agent",
+      "claude-sonnet-4-6",
+    ) as Record<string, unknown>;
+
+    expect(created.source_agent).toBe("claude-sonnet-4-6");
+    expect(created.last_updated_by).toBe("claude-sonnet-4-6");
+    expect(created).toHaveProperty("created_at");
+    expect(created.update_count).toBe(0);
+
+    const updated = json(
+      "update",
+      "1",
+      "provenance memory revised",
+      "--updated-by",
+      "gpt-5-codex",
+    ) as Record<string, unknown>;
+    expect(updated.last_updated_by).toBe("gpt-5-codex");
+    expect(updated.update_count).toBe(1);
+  });
+});
+
+describe("checklist: certainty field", () => {
+  test("defaults certainty to soft and supports updates", () => {
+    const created = json("add", "certainty test") as Record<string, unknown>;
+    expect(created.certainty).toBe("soft");
+
+    const updated = json(
+      "update",
+      "1",
+      "certainty test",
+      "--certainty",
+      "hard",
+    ) as Record<string, unknown>;
+    expect(updated.certainty).toBe("hard");
+
+    const listed = json("list", "--certainty", "hard") as Record<string, unknown>[];
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.id).toBe(1);
+  });
+});
+
+describe("checklist: conflict detection on add", () => {
+  test("returns potential_conflicts in add response", () => {
+    json("add", "JWT middleware uses RS256 signatures", "--tags", "auth,jwt");
+
+    const created = json(
+      "add",
+      "Auth JWT middleware signs with RS256",
+      "--tags",
+      "auth",
+    ) as Record<string, unknown>;
+
+    const conflicts = created.potential_conflicts as Record<string, unknown>[];
+    expect(Array.isArray(conflicts)).toBe(true);
+    expect(conflicts.length).toBeGreaterThan(0);
+    expect(conflicts.some((item) => item.id === 1)).toBe(true);
+  });
+});
+
+describe("checklist: query result scoring", () => {
+  test("returns score on results and sorts descending", () => {
+    json(
+      "add",
+      "cache invalidation rules for auth responses",
+      "--tags",
+      "cache,auth",
+      "--certainty",
+      "hard",
+    );
+    json(
+      "add",
+      "cache invalidation note for auth responses",
+      "--tags",
+      "notes",
+      "--certainty",
+      "uncertain",
+    );
+
+    json(
+      "update",
+      "1",
+      "cache invalidation rules for auth responses",
+      "--updated-by",
+      "gpt-5-codex",
+    );
+    json(
+      "update",
+      "1",
+      "cache invalidation rules for auth responses",
+      "--updated-by",
+      "gpt-5-codex",
+    );
+
+    const result = json("query", "cache invalidation") as Record<string, unknown>[];
+    expect(result.length).toBeGreaterThanOrEqual(2);
+    expect(typeof result[0]?.score).toBe("number");
+    expect(typeof result[1]?.score).toBe("number");
+    expect(Number(result[0]?.score)).toBeGreaterThanOrEqual(Number(result[1]?.score));
+    expect(result[0]?.id).toBe(1);
+  });
+});
+
+describe("checklist: suggest --files", () => {
+  test("derives search terms from file paths and returns ranked memories", () => {
+    json(
+      "add",
+      "JWT auth middleware uses RS256",
+      "--tags",
+      "auth,jwt,middleware",
+    );
+    json("add", "Database migrations run on deploy", "--tags", "db,migrations");
+
+    const result = json(
+      "suggest",
+      "--files",
+      "src/auth/jwt.ts,src/middleware/session.ts",
+    ) as Record<string, unknown>;
+
+    const derivedTerms = result.derived_terms as string[];
+    const suggestions = result.results as Record<string, unknown>[];
+    expect(Array.isArray(derivedTerms)).toBe(true);
+    expect(derivedTerms).toContain("auth");
+    expect(derivedTerms).toContain("jwt");
+    expect(suggestions.length).toBeGreaterThan(0);
+    expect(suggestions[0]?.id).toBe(1);
+  });
+});
+
+describe("checklist: coverage command", () => {
+  test("reports uncovered paths and tag distribution", () => {
+    mkdirSync(join(testDir, "src", "db"), { recursive: true });
+    mkdirSync(join(testDir, "src", "workers"), { recursive: true });
+
+    json("add", "DB layer notes", "--tags", "db");
+
+    const result = json("coverage", "--root", ".") as Record<string, unknown>;
+    const uncovered = result.uncovered_paths as string[];
+    const distribution = result.tag_distribution as Record<string, unknown>;
+
+    expect(Array.isArray(uncovered)).toBe(true);
+    expect(uncovered).toContain("src/workers/");
+    expect(distribution.db).toBe(1);
+  });
+});
+
+describe("checklist: refs field", () => {
+  test("stores refs internally and returns refs as arrays on add/update", () => {
+    const created = json(
+      "add",
+      "refs example",
+      "--refs",
+      '["https://example.com/pr/1","docs/adr-001.md"]',
+    ) as Record<string, unknown>;
+    expect(created.refs).toEqual([
+      "https://example.com/pr/1",
+      "docs/adr-001.md",
+    ]);
+
+    const updated = json(
+      "update",
+      "1",
+      "refs example updated",
+      "--refs",
+      '["https://example.com/issues/2"]',
+    ) as Record<string, unknown>;
+    expect(updated.refs).toEqual(["https://example.com/issues/2"]);
+  });
+});
+
+describe("checklist: ttl and gc", () => {
+  test("gc --dry-run returns memories past TTL", () => {
+    json("add", "temporary migration note", "--expires-after-days", "1");
+    dbRun(
+      "UPDATE memories SET updated_at = datetime('now', '-3 days') WHERE id = 1",
+    );
+
+    const result = json("gc", "--dry-run") as Record<string, unknown>;
+    const expired = result.expired as Record<string, unknown>[];
+    expect(result.dry_run).toBe(true);
+    expect(result.count).toBe(1);
+    expect(expired).toHaveLength(1);
+    expect(expired[0]?.id).toBe(1);
+  });
+});
+
+describe("checklist: stats command", () => {
+  test("returns memory health breakdowns and stale/no-tag counts", () => {
+    json("add", "old architecture fact", "--type", "decision", "--certainty", "hard");
+    json(
+      "add",
+      "db gotcha",
+      "--tags",
+      "db,auth",
+      "--type",
+      "gotcha",
+      "--certainty",
+      "uncertain",
+    );
+
+    dbRun(
+      "UPDATE memories SET created_at = datetime('now', '-120 days'), updated_at = datetime('now', '-120 days') WHERE id = 1",
+    );
+
+    const stats = json("stats") as Record<string, unknown>;
+    const byType = stats.breakdown_by_memory_type as Record<string, unknown>;
+    const byCertainty = stats.breakdown_by_certainty as Record<string, unknown>;
+    const tags = stats.tag_frequency_map as Record<string, unknown>;
+    const oldest = stats.oldest_memory as Record<string, unknown>;
+
+    expect(stats.total_memories).toBe(2);
+    expect(byType.decision).toBe(1);
+    expect(byType.gotcha).toBe(1);
+    expect(byCertainty.hard).toBe(1);
+    expect(byCertainty.uncertain).toBe(1);
+    expect(tags.db).toBe(1);
+    expect(oldest.id).toBe(1);
+    expect(stats.memories_not_updated_over_90_days).toBe(1);
+    expect(stats.memories_with_no_tags).toBe(1);
+  });
+});
+
+describe("checklist: bulk import", () => {
+  test("returns per-entry success|conflict|skip statuses", () => {
+    json("add", "exact duplicate seed", "--tags", "seed", "--context", "ctx");
+    json("add", "JWT auth middleware uses RS256", "--tags", "auth,jwt");
+
+    const importPath = join(testDir, "memories.json");
+    writeFileSync(
+      importPath,
+      JSON.stringify([
+        { content: "exact duplicate seed", tags: "seed", context: "ctx" },
+        { content: "Auth middleware signs JWT with RS256", tags: "auth" },
+        {
+          content: "imported unique memory",
+          tags: "imported",
+          memory_type: "decision",
+          certainty: "hard",
+          refs: ["https://example.com/pr/2"],
+        },
+      ]),
+    );
+
+    const result = json("import", "memories.json") as Record<string, unknown>;
+    const entries = result.results as Record<string, unknown>[];
+    const statuses = entries.map((entry) => entry.status);
+
+    expect(statuses).toContain("skip");
+    expect(statuses).toContain("conflict");
+    expect(statuses).toContain("success");
+
+    const imported = json("list", "--tags", "imported") as Record<string, unknown>[];
+    expect(imported).toHaveLength(1);
+  });
+});
+
+describe("checklist: export command", () => {
+  test("exports active memories and supports type/tag/certainty/since filters", () => {
+    json(
+      "add",
+      "auth export target",
+      "--tags",
+      "auth",
+      "--type",
+      "decision",
+      "--certainty",
+      "hard",
+    );
+    json(
+      "add",
+      "deprecated export target",
+      "--tags",
+      "auth",
+      "--type",
+      "decision",
+      "--certainty",
+      "hard",
+    );
+    json("deprecate", "2");
+
+    const filtered = json(
+      "export",
+      "--tags",
+      "auth",
+      "--type",
+      "decision",
+      "--certainty",
+      "hard",
+    ) as Record<string, unknown>[];
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.id).toBe(1);
+    expect(filtered[0]?.status).toBe("active");
+
+    const future = json(
+      "export",
+      "--since",
+      "2999-01-01T00:00:00Z",
+    ) as Record<string, unknown>[];
+    expect(future).toEqual([]);
   });
 });
 

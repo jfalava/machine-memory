@@ -27,18 +27,47 @@ Run `machine-memory help` to get full usage information as JSON.
 # Store a memory
 machine-memory add "Auth uses JWT with RS256" --tags "auth,architecture" --context "Found in src/auth/jwt.ts"
 
+# Store richer metadata (type, certainty, provenance, refs, TTL hint)
+machine-memory add "Sessions are cached for 5m" \
+  --tags "auth,cache" \
+  --type "decision" \
+  --certainty "hard" \
+  --source-agent "gpt-5-codex" \
+  --refs '["docs/adr/session-cache.md","https://github.com/org/repo/pull/123"]' \
+  --expires-after-days 30
+
 # Full-text search
 machine-memory query "auth"
+machine-memory query "auth" --type "decision" --certainty "hard"
 
 # List all memories (or filter by tag)
 machine-memory list
 machine-memory list --tags "database"
+machine-memory list --type "gotcha" --certainty "soft"
 
 # Get a single memory by ID
 machine-memory get 1
 
 # Update a memory
 machine-memory update 1 "Auth uses JWT with RS256, keys in VAULT_* env vars" --tags "auth,security"
+machine-memory update 1 "Auth uses JWT with RS256" --certainty "hard" --updated-by "gpt-5-codex"
+
+# Deprecate / supersede stale memories
+machine-memory deprecate 12
+machine-memory deprecate 12 --superseded-by 42
+
+# Path-based suggestions for agents at task start
+machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts"
+
+# Coverage / health checks
+machine-memory coverage --root .
+machine-memory gc --dry-run
+machine-memory stats
+
+# Bulk sync
+machine-memory import memories.json
+machine-memory export
+machine-memory export --type "decision" --certainty "hard" --since "2026-02-01T00:00:00Z"
 
 # Delete a memory
 machine-memory delete 1
@@ -49,6 +78,65 @@ machine-memory version
 # Self-update to latest release
 machine-memory upgrade
 ```
+
+### Memory Schema (JSON fields)
+
+Each stored memory includes the original fields plus structured metadata:
+
+- `id`
+- `content`
+- `tags` (comma-separated string)
+- `context`
+- `memory_type` (`decision | convention | gotcha | preference | constraint`)
+- `certainty` (`hard | soft | uncertain`, defaults to `soft`)
+- `status` (`active | deprecated | superseded_by`, defaults to `active`)
+- `superseded_by` (ID or `null`)
+- `source_agent`
+- `last_updated_by`
+- `update_count`
+- `refs` (JSON array in CLI output; stored internally as JSON string)
+- `expires_after_days` (TTL hint; no auto-deprecation)
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- `query`, `list`, and `export` return only active memories by default.
+- Use `--include-deprecated` (or `--status ...` on `list`) to inspect deprecated/superseded entries.
+- `add` returns `potential_conflicts` using SQLite FTS5 so the caller can decide whether to proceed or deprecate/update instead.
+- `query` and `suggest` return a numeric `score` and are sorted descending by score.
+
+### Command Reference
+
+- `add <content>`
+  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`
+  - Returns inserted memory plus `potential_conflicts: []`
+- `query <search_term>`
+  - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`
+  - Returns ranked matches with `score`
+- `list`
+  - Flags: `--tags`, `--type`, `--certainty`, `--status`, `--include-deprecated`
+- `get <id>`
+- `update <id> <content>`
+  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, `--refs`, `--expires-after-days <n|null>`
+  - Increments `update_count`
+- `deprecate <id>`
+  - Flags: `--superseded-by <id>`, `--updated-by`
+  - Sets status to `deprecated` or `superseded_by`
+- `delete <id>`
+- `suggest --files "<csv paths>"`
+  - Derives keywords from file paths and runs FTS-based suggestions
+- `coverage [--root <path>]`
+  - Returns `uncovered_paths` and `tag_distribution`
+- `gc --dry-run`
+  - Returns active memories whose `updated_at + expires_after_days` is in the past
+- `stats`
+  - Returns totals, breakdowns, tag frequency, stale counts, etc.
+- `import <memories.json>`
+  - Accepts a JSON array matching the schema and returns per-entry `success | conflict | skip`
+- `export`
+  - Flags: `--tags`, `--type`, `--certainty`, `--since <ISO date>`
+  - Exports active memories by default
 
 ### What to store
 
@@ -71,22 +159,24 @@ This project uses `machine-memory` for persistent agent context stored at `.agen
 
 ### Before starting work
 
+- Run `machine-memory suggest --files "<paths you expect to touch>"` to get relevant memories before coding.
 - Run `machine-memory query <topic>` to check for relevant context about the area you're working on.
-- Run `machine-memory list` to see all stored project knowledge.
+- Run `machine-memory stats` (or `coverage --root .`) as a health check if you're doing larger work.
 - Run `machine-memory help` if you need to discover available commands.
 
 ### When to store memories
 
 After completing a task, store anything a future agent session would benefit from knowing:
 
-- `machine-memory add "description" --tags "tag1,tag2" --context "why this matters"`
+- `machine-memory add "description" --tags "tag1,tag2" --context "why this matters" --type "decision" --certainty "soft"`
 
 Store: architectural decisions, project conventions, non-obvious gotchas, environment/tooling notes, and user preferences.
 Do NOT store: things obvious from reading the code, temporary information, or duplicates of existing memories.
 
-### When to update or delete
+### When to update, deprecate, or delete
 
 - If a memory is outdated, update it: `machine-memory update <id> "new content"`
+- If a memory is replaced by a newer one, deprecate it: `machine-memory deprecate <old_id> --superseded-by <new_id>`
 - If a memory is wrong or no longer relevant, delete it: `machine-memory delete <id>`
 ```
 
