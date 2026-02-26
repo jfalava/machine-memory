@@ -16,7 +16,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const CLI = join(import.meta.dir, "index.ts");
+const CLI = join(import.meta.dir, "src", "app.ts");
 let testDir: string;
 const extraEnv: Record<string, string> = {};
 
