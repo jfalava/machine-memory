@@ -22,7 +22,7 @@ jobs:
             target: bun-linux-arm64
             outfile: dist/machine-memory-linux-arm64
             artifact_name: machine-memory-linux-arm64
-          - os: macos-14
+          - os: macos-latest
             target: bun-darwin-arm64
             outfile: dist/machine-memory-darwin-arm64
             artifact_name: machine-memory-darwin-arm64
