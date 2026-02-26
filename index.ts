@@ -58,8 +58,7 @@ function ensureDb(): Database {
 }
 
 function printJson(data: unknown) {
-  // eslint-disable-next-line no-console -- CLI output is the intended interface
-  console.log(JSON.stringify(data));
+  console.info(JSON.stringify(data));
 }
 
 function getFlagValue(args: string[], flag: string): string | undefined {

@@ -64,7 +64,9 @@ function json(
   ...args: string[]
 ): Record<string, unknown> | Record<string, unknown>[] {
   const { stdout } = exec(...args);
-  return parseJsonValue(stdout) as Record<string, unknown> | Record<string, unknown>[];
+  return parseJsonValue(stdout) as
+    | Record<string, unknown>
+    | Record<string, unknown>[];
 }
 
 beforeEach(() => {
