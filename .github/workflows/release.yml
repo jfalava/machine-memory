@@ -42,7 +42,7 @@ jobs:
         run: bun install
 
       - name: Build target
-        run: bun build --compile --target=${{ matrix.target }} index.ts --outfile ${{ matrix.outfile }}
+        run: bun build --compile --target=${{ matrix.target }} src/app.ts --outfile ${{ matrix.outfile }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
