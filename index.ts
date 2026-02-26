@@ -140,12 +140,49 @@ async function upgrade() {
 
 const [command, ...args] = process.argv.slice(2);
 
-if (!command) {
+if (!command || command === "help") {
   printJson({
-    error:
-      "No command provided. Commands: add, query, get, update, delete, list, version, upgrade",
+    name: "machine-memory",
+    version: VERSION,
+    description: "Persistent project-scoped memory for LLM agents. Stores facts, decisions, conventions, and gotchas in a local SQLite database so future agent sessions can recall them.",
+    database: ".agents/memory.db (relative to cwd)",
+    commands: {
+      help: "Show this help message",
+      add: {
+        usage: "add <content> [--tags <tags>] [--context <context>]",
+        description: "Store a memory. Content is the fact to remember. Tags are comma-separated categories. Context explains why this matters.",
+        examples: [
+          'add "Auth uses JWT with RS256" --tags "auth,architecture" --context "Found in src/auth/jwt.ts"',
+          'add "Always run bun db:migrate after pulling" --tags "conventions,database"',
+          'add "Users table has soft deletes via deleted_at column" --tags "database,gotchas"',
+        ],
+      },
+      query: {
+        usage: "query <search_term>",
+        description: "Full-text search across content, tags, and context. Returns matching memories ranked by relevance.",
+      },
+      list: {
+        usage: "list [--tags <tag>]",
+        description: "List all memories, optionally filtered by tag. Ordered by most recently updated.",
+      },
+      get: { usage: "get <id>", description: "Get a single memory by its ID." },
+      update: {
+        usage: "update <id> <content> [--tags <tags>] [--context <context>]",
+        description: "Update a memory's content. Tags and context are only changed if provided.",
+      },
+      delete: { usage: "delete <id>", description: "Delete a memory by ID." },
+      version: { usage: "version", description: "Print the current version." },
+      upgrade: { usage: "upgrade", description: "Self-update to the latest release from GitHub." },
+    },
+    what_to_store: [
+      "Architectural decisions (e.g. 'we chose Drizzle over Prisma because...')",
+      "Project conventions (e.g. 'all API routes return { data, error } shape')",
+      "Non-obvious gotchas (e.g. 'the users table uses UUIDs, not auto-increment')",
+      "Environment/tooling notes (e.g. 'run bun db:migrate after pulling main')",
+      "User preferences (e.g. 'user prefers explicit error handling over try/catch')",
+    ],
   });
-  process.exit(1);
+  process.exit(!command ? 1 : 0);
 }
 
 // Commands that don't need the database
@@ -269,7 +306,7 @@ switch (command) {
 
   default:
     printJson({
-      error: `Unknown command: ${command}. Commands: add, query, get, update, delete, list, version, upgrade`,
+      error: `Unknown command: ${command}. Run 'machine-memory help' for usage.`,
     });
     process.exit(1);
 }

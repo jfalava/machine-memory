@@ -14,6 +14,17 @@
     "browser": false,
     "es2022": true
   },
+  "globals": {
+    "Bun": "readonly"
+  },
+  "overrides": [
+    {
+      "files": ["*.test.ts"],
+      "rules": {
+        "no-shadow": "off"
+      }
+    }
+  ],
   "rules": {
     "typescript/no-explicit-any": "error",
     "typescript/no-unsafe-assignment": "error",
