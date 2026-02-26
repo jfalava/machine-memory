@@ -1,0 +1,31 @@
+{
+  "name": "machine-memory",
+  "version": "0.1.0",
+  "bin": {
+    "machine-memory": "index.ts"
+  },
+  "type": "module",
+  "module": "index.ts",
+  "scripts": {
+    "build": "bun build --compile index.ts --outfile machine-memory",
+    "build:all": "bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-x64 && bun run build:linux-arm64",
+    "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 index.ts --outfile dist/machine-memory-darwin-arm64",
+    "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 index.ts --outfile dist/machine-memory-darwin-x64",
+    "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 index.ts --outfile dist/machine-memory-linux-arm64",
+    "build:linux-x64": "bun build --compile --target=bun-linux-x64 index.ts --outfile dist/machine-memory-linux-x64",
+    "check": "tsgo --noEmit && oxlint --fix --type-aware",
+    "format": "oxfmt",
+    "lint": "oxlint --type-aware",
+    "typecheck": "tsgo --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.9",
+    "@typescript/native-preview": "7.0.0-dev.20260225.1",
+    "oxfmt": "0.35.0",
+    "oxlint": "1.50.0",
+    "oxlint-tsgolint": "0.15.0"
+  },
+  "peerDependencies": {
+    "typescript": "6.0.0-beta"
+  }
+}

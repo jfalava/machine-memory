@@ -1,0 +1,463 @@
+import { describe, test, expect, beforeEach, afterAll } from "bun:test";
+import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+const CLI = join(import.meta.dir, "index.ts");
+let testDir: string;
+const extraEnv: Record<string, string> = {};
+
+// Mock server for upgrade tests — node:http so we can .unref() it
+let mockHandler: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) => {
+  res.writeHead(500);
+  res.end();
+};
+const mockServer = createServer((req, res) => { mockHandler(req, res); });
+mockServer.listen(0);
+mockServer.unref();
+const mockPort = (mockServer.address() as { port: number }).port;
+
+function mockJson(res: ServerResponse, status: number, body: unknown) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
+function run(...args: string[]): { stdout: string; exitCode: number } {
+  const result = Bun.spawnSync(["bun", CLI, ...args], {
+    cwd: testDir,
+    env: { ...process.env, ...extraEnv },
+  });
+  return {
+    stdout: result.stdout.toString().trim(),
+    exitCode: result.exitCode,
+  };
+}
+
+function json(...args: string[]): Record<string, unknown> | Record<string, unknown>[] {
+  const { stdout } = run(...args);
+  return JSON.parse(stdout);
+}
+
+beforeEach(() => {
+  testDir = mkdtempSync(join(tmpdir(), "mm-test-"));
+});
+
+afterAll(() => {
+  mockServer.close();
+  if (testDir && existsSync(testDir)) {
+    rmSync(testDir, { recursive: true });
+  }
+});
+
+// --- Database creation ---
+
+describe("database initialization", () => {
+  test("creates .agents/memory.db on first command", () => {
+    run("list");
+    expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(true);
+  });
+
+  test("creates .agents directory if missing", () => {
+    expect(existsSync(join(testDir, ".agents"))).toBe(false);
+    run("list");
+    expect(existsSync(join(testDir, ".agents"))).toBe(true);
+  });
+});
+
+// --- No command ---
+
+describe("no command", () => {
+  test("exits with error when no command given", () => {
+    const result = run();
+    const parsed = JSON.parse(result.stdout);
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("No command provided");
+  });
+});
+
+// --- Unknown command ---
+
+describe("unknown command", () => {
+  test("exits with error for unknown command", () => {
+    const result = run("foo");
+    const parsed = JSON.parse(result.stdout);
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Unknown command: foo");
+  });
+});
+
+// --- version ---
+
+describe("version", () => {
+  test("returns version as JSON", () => {
+    const result = json("version");
+    expect(result).toHaveProperty("version");
+    expect(typeof (result as Record<string, unknown>).version).toBe("string");
+  });
+
+  test("does not create database", () => {
+    run("version");
+    expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(false);
+  });
+});
+
+// --- add ---
+
+describe("add", () => {
+  test("adds a memory and returns it with id", () => {
+    const result = json("add", "test content") as Record<string, unknown>;
+    expect(result.id).toBe(1);
+    expect(result.content).toBe("test content");
+    expect(result.tags).toBe("");
+    expect(result.context).toBe("");
+  });
+
+  test("adds a memory with tags", () => {
+    const result = json("add", "tagged", "--tags", "a,b") as Record<string, unknown>;
+    expect(result.tags).toBe("a,b");
+  });
+
+  test("adds a memory with context", () => {
+    const result = json("add", "with context", "--context", "some reason") as Record<string, unknown>;
+    expect(result.context).toBe("some reason");
+  });
+
+  test("adds a memory with tags and context", () => {
+    const result = json(
+      "add", "full", "--tags", "x", "--context", "y",
+    ) as Record<string, unknown>;
+    expect(result.tags).toBe("x");
+    expect(result.context).toBe("y");
+  });
+
+  test("auto-increments ids", () => {
+    const first = json("add", "first") as Record<string, unknown>;
+    const second = json("add", "second") as Record<string, unknown>;
+    expect(first.id).toBe(1);
+    expect(second.id).toBe(2);
+  });
+
+  test("errors when no content provided", () => {
+    const result = run("add");
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout).error).toContain("Usage:");
+  });
+});
+
+// --- get ---
+
+describe("get", () => {
+  test("retrieves a memory by id", () => {
+    json("add", "hello");
+    const result = json("get", "1") as Record<string, unknown>;
+    expect(result.content).toBe("hello");
+    expect(result.id).toBe(1);
+    expect(result).toHaveProperty("created_at");
+    expect(result).toHaveProperty("updated_at");
+  });
+
+  test("returns error for nonexistent id", () => {
+    const result = json("get", "999") as Record<string, unknown>;
+    expect(result.error).toBe("Not found");
+  });
+
+  test("errors when no id provided", () => {
+    const result = run("get");
+    expect(result.exitCode).toBe(1);
+  });
+});
+
+// --- update ---
+
+describe("update", () => {
+  test("updates content of a memory", () => {
+    json("add", "original");
+    const result = json("update", "1", "modified") as Record<string, unknown>;
+    expect(result.content).toBe("modified");
+  });
+
+  test("updates tags", () => {
+    json("add", "item", "--tags", "old");
+    const result = json("update", "1", "item", "--tags", "new") as Record<string, unknown>;
+    expect(result.tags).toBe("new");
+  });
+
+  test("updates context", () => {
+    json("add", "item", "--context", "old reason");
+    const result = json("update", "1", "item", "--context", "new reason") as Record<string, unknown>;
+    expect(result.context).toBe("new reason");
+  });
+
+  test("updates updated_at timestamp", () => {
+    json("add", "item");
+    const before = json("get", "1") as Record<string, unknown>;
+    // Small delay to ensure timestamp difference
+    Bun.sleepSync(1100);
+    json("update", "1", "changed");
+    const after = json("get", "1") as Record<string, unknown>;
+    expect(after.updated_at).not.toBe(before.updated_at);
+  });
+
+  test("preserves tags when not specified in update", () => {
+    json("add", "item", "--tags", "keep-me");
+    json("update", "1", "new content");
+    const result = json("get", "1") as Record<string, unknown>;
+    expect(result.tags).toBe("keep-me");
+  });
+
+  test("returns error for nonexistent id", () => {
+    const result = json("update", "999", "content") as Record<string, unknown>;
+    expect(result.error).toBe("Not found");
+  });
+
+  test("errors when missing arguments", () => {
+    const result = run("update");
+    expect(result.exitCode).toBe(1);
+  });
+});
+
+// --- delete ---
+
+describe("delete", () => {
+  test("deletes a memory", () => {
+    json("add", "to delete");
+    const result = json("delete", "1") as Record<string, unknown>;
+    expect(result.deleted).toBe(1);
+  });
+
+  test("memory is gone after delete", () => {
+    json("add", "gone");
+    json("delete", "1");
+    const result = json("get", "1") as Record<string, unknown>;
+    expect(result.error).toBe("Not found");
+  });
+
+  test("errors when no id provided", () => {
+    const result = run("delete");
+    expect(result.exitCode).toBe(1);
+  });
+});
+
+// --- list ---
+
+describe("list", () => {
+  test("returns empty array when no memories", () => {
+    const result = json("list");
+    expect(result).toEqual([]);
+  });
+
+  test("returns all memories", () => {
+    json("add", "first");
+    json("add", "second");
+    const result = json("list") as Record<string, unknown>[];
+    expect(result).toHaveLength(2);
+  });
+
+  test("orders by updated_at descending", () => {
+    json("add", "older");
+    Bun.sleepSync(1100);
+    json("add", "newer");
+    const result = json("list") as Record<string, unknown>[];
+    expect(result[0].content).toBe("newer");
+    expect(result[1].content).toBe("older");
+  });
+
+  test("filters by tag", () => {
+    json("add", "a", "--tags", "alpha");
+    json("add", "b", "--tags", "beta");
+    json("add", "c", "--tags", "alpha,gamma");
+    const result = json("list", "--tags", "alpha") as Record<string, unknown>[];
+    expect(result).toHaveLength(2);
+    expect(result.every((r) => String(r.tags).includes("alpha"))).toBe(true);
+  });
+
+  test("returns empty when tag filter matches nothing", () => {
+    json("add", "item", "--tags", "x");
+    const result = json("list", "--tags", "nonexistent");
+    expect(result).toEqual([]);
+  });
+});
+
+// --- query (FTS) ---
+
+describe("query", () => {
+  test("finds memories by content keyword", () => {
+    json("add", "the database uses PostgreSQL");
+    json("add", "auth uses JWT tokens");
+    const result = json("query", "JWT") as Record<string, unknown>[];
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toContain("JWT");
+  });
+
+  test("finds memories by tag keyword", () => {
+    json("add", "something", "--tags", "architecture");
+    json("add", "other", "--tags", "testing");
+    const result = json("query", "architecture") as Record<string, unknown>[];
+    expect(result).toHaveLength(1);
+  });
+
+  test("finds memories by context keyword", () => {
+    json("add", "item", "--context", "discovered in the migration scripts");
+    const result = json("query", "migration") as Record<string, unknown>[];
+    expect(result).toHaveLength(1);
+  });
+
+  test("returns empty array when nothing matches", () => {
+    json("add", "unrelated content");
+    const result = json("query", "xyznonexistent");
+    expect(result).toEqual([]);
+  });
+
+  test("errors when no search term provided", () => {
+    const result = run("query");
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("FTS stays in sync after update", () => {
+    json("add", "original keyword");
+    json("update", "1", "replacement term");
+    const old = json("query", "original") as Record<string, unknown>[];
+    const updated = json("query", "replacement") as Record<string, unknown>[];
+    expect(old).toHaveLength(0);
+    expect(updated).toHaveLength(1);
+  });
+
+  test("FTS stays in sync after delete", () => {
+    json("add", "searchable content");
+    json("delete", "1");
+    const result = json("query", "searchable");
+    expect(result).toEqual([]);
+  });
+});
+
+// --- JSON output format ---
+
+describe("output format", () => {
+  test("all output is valid JSON", () => {
+    const commands = [
+      ["add", "test"],
+      ["list"],
+      ["get", "1"],
+      ["query", "test"],
+      ["version"],
+    ];
+    for (const cmd of commands) {
+      const { stdout } = run(...cmd);
+      expect(() => JSON.parse(stdout)).not.toThrow();
+    }
+  });
+});
+
+// --- upgrade ---
+
+describe("upgrade", () => {
+  let fakeBinPath: string;
+
+  beforeEach(() => {
+    fakeBinPath = join(testDir, "machine-memory-fake");
+    writeFileSync(fakeBinPath, "original-binary-content");
+    extraEnv["MACHINE_MEMORY_API_URL"] = `http://localhost:${mockPort}`;
+    extraEnv["MACHINE_MEMORY_BIN_PATH"] = fakeBinPath;
+  });
+
+  test("reports already up to date when versions match", () => {
+    mockHandler = (_req, res) => {
+      mockJson(res, 200, { tag_name: "v0.1.0", assets: [] });
+    };
+    const result = json("upgrade") as Record<string, unknown>;
+    expect(result.message).toBe("Already up to date");
+    expect(result.version).toBe("0.1.0");
+  });
+
+  test("errors when API returns non-200", () => {
+    mockHandler = (_req, res) => {
+      res.writeHead(404);
+      res.end("Not Found");
+    };
+    const result = run("upgrade");
+    const parsed = JSON.parse(result.stdout);
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Failed to fetch latest release: 404");
+  });
+
+  test("errors when no matching binary for platform", () => {
+    mockHandler = (_req, res) => {
+      mockJson(res, 200, {
+        tag_name: "v99.0.0",
+        assets: [{ name: "machine-memory-fake-arch", browser_download_url: "" }],
+      });
+    };
+    const result = run("upgrade");
+    const parsed = JSON.parse(result.stdout);
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("No binary found");
+    expect(parsed.available).toEqual(["machine-memory-fake-arch"]);
+  });
+
+  test("errors when binary download fails", () => {
+    const platform = process.platform === "darwin" ? "darwin" : "linux";
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const assetName = `machine-memory-${platform}-${arch}`;
+
+    mockHandler = (req, res) => {
+      if (req.url?.includes("/releases/latest")) {
+        mockJson(res, 200, {
+          tag_name: "v99.0.0",
+          assets: [{
+            name: assetName,
+            browser_download_url: `http://localhost:${mockPort}/download`,
+          }],
+        });
+        return;
+      }
+      res.writeHead(500);
+      res.end("Server Error");
+    };
+    const result = run("upgrade");
+    const parsed = JSON.parse(result.stdout);
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Download failed: 500");
+  });
+
+  test("successfully downloads and replaces binary", () => {
+    const platform = process.platform === "darwin" ? "darwin" : "linux";
+    const arch = process.arch === "arm64" ? "arm64" : "x64";
+    const assetName = `machine-memory-${platform}-${arch}`;
+    const newContent = "new-binary-content-v2";
+
+    mockHandler = (req, res) => {
+      if (req.url?.includes("/releases/latest")) {
+        mockJson(res, 200, {
+          tag_name: "v2.0.0",
+          assets: [{
+            name: assetName,
+            browser_download_url: `http://localhost:${mockPort}/download`,
+          }],
+        });
+        return;
+      }
+      res.writeHead(200);
+      res.end(newContent);
+    };
+
+    const result = json("upgrade") as Record<string, unknown>;
+    expect(result.message).toBe("Upgraded");
+    expect(result.from).toBe("0.1.0");
+    expect(result.to).toBe("2.0.0");
+
+    const replaced = readFileSync(fakeBinPath, "utf-8");
+    expect(replaced).toBe(newContent);
+
+    expect(existsSync(`${fakeBinPath}.bak`)).toBe(false);
+    expect(existsSync(`${fakeBinPath}.tmp`)).toBe(false);
+  });
+
+  test("does not create database", () => {
+    mockHandler = (_req, res) => {
+      mockJson(res, 200, { tag_name: "v0.1.0", assets: [] });
+    };
+    run("upgrade");
+    expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(false);
+  });
+});
