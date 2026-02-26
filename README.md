@@ -99,34 +99,3 @@ machine-memory upgrade
 ```
 
 This checks GitHub releases for a newer version, downloads the correct binary for your platform, and replaces itself in-place.
-
-## Releasing
-
-1. Bump `VERSION` in `index.ts` and `version` in `package.json`
-2. Commit and tag:
-   ```sh
-   git tag v0.2.0
-   git push --tags
-   ```
-3. GitHub Actions builds binaries for darwin-arm64, darwin-x64, linux-x64, and linux-arm64, then creates a release
-
-## Development
-
-```sh
-bun install
-bun test        # run tests
-bun run build   # compile binary for current platform
-```
-
-### Cross-compilation
-
-```sh
-bun run build:all  # builds for all platforms into dist/
-```
-
-### Environment variables (for testing)
-
-| Variable                  | Purpose                              |
-| ------------------------- | ------------------------------------ |
-| `MACHINE_MEMORY_API_URL`  | Override GitHub API base URL         |
-| `MACHINE_MEMORY_BIN_PATH` | Override binary path for self-update |
