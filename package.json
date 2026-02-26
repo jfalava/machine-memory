@@ -13,7 +13,11 @@
     "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 src/app.ts --outfile dist/machine-memory-darwin-x64",
     "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/app.ts --outfile dist/machine-memory-linux-arm64",
     "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/app.ts --outfile dist/machine-memory-linux-x64",
-    "check": "tsgo --noEmit && oxlint --fix --type-aware && bun test",
+    "test": "bun test tests",
+    "test:unit": "bun test tests/cli.test.ts",
+    "test:binary:darwin-arm64": "bun run build:darwin-arm64 && bun test tests/binary.macos.test.ts",
+    "test:binary": "bun test tests/binary.macos.test.ts",
+    "check": "tsgo --noEmit && oxlint --fix --type-aware && bun test tests",
     "format": "oxfmt",
     "lint": "oxlint --type-aware",
     "typecheck": "tsgo --noEmit"
