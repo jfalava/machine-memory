@@ -64,7 +64,7 @@ This is **not** a general-purpose note-taking tool. It's for things an agent nee
 
 Copy this block into your project's `AGENTS.md` (or `CLAUDE.md`, `.cursorrules`, etc.):
 
-````markdown
+```markdown
 ## Project memory
 
 This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
@@ -88,7 +88,7 @@ Do NOT store: things obvious from reading the code, temporary information, or du
 
 - If a memory is outdated, update it: `machine-memory update <id> "new content"`
 - If a memory is wrong or no longer relevant, delete it: `machine-memory delete <id>`
-````
+```
 
 ## Self-update
 
@@ -126,7 +126,7 @@ bun run build:all  # builds for all platforms into dist/
 
 ### Environment variables (for testing)
 
-| Variable | Purpose |
-|---|---|
-| `MACHINE_MEMORY_API_URL` | Override GitHub API base URL |
+| Variable                  | Purpose                              |
+| ------------------------- | ------------------------------------ |
+| `MACHINE_MEMORY_API_URL`  | Override GitHub API base URL         |
 | `MACHINE_MEMORY_BIN_PATH` | Override binary path for self-update |

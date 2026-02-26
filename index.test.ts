@@ -1,6 +1,16 @@
 import { describe, test, expect, beforeEach, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,11 +19,16 @@ let testDir: string;
 const extraEnv: Record<string, string> = {};
 
 // Mock server for upgrade tests — node:http so we can .unref() it
-let mockHandler: (req: IncomingMessage, res: ServerResponse) => void = (_req, res) => {
+let mockHandler: (req: IncomingMessage, res: ServerResponse) => void = (
+  _req,
+  res,
+) => {
   res.writeHead(500);
   res.end();
 };
-const mockServer = createServer((req, res) => { mockHandler(req, res); });
+const mockServer = createServer((req, res) => {
+  mockHandler(req, res);
+});
 mockServer.listen(0);
 mockServer.unref();
 const mockPort = (mockServer.address() as { port: number }).port;
@@ -34,9 +49,22 @@ function exec(...args: string[]): { stdout: string; exitCode: number } {
   };
 }
 
-function json(...args: string[]): Record<string, unknown> | Record<string, unknown>[] {
+function parseJsonValue(text: string): unknown {
+  return JSON.parse(text) as unknown;
+}
+
+function asJsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Expected JSON object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function json(
+  ...args: string[]
+): Record<string, unknown> | Record<string, unknown>[] {
   const { stdout } = exec(...args);
-  return JSON.parse(stdout);
+  return parseJsonValue(stdout) as Record<string, unknown> | Record<string, unknown>[];
 }
 
 beforeEach(() => {
@@ -70,7 +98,7 @@ describe("database initialization", () => {
 describe("no command", () => {
   test("exits with error and shows help when no command given", () => {
     const result = exec();
-    const parsed = JSON.parse(result.stdout);
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.name).toBe("machine-memory");
     expect(parsed.commands).toBeDefined();
@@ -82,12 +110,13 @@ describe("no command", () => {
 describe("help", () => {
   test("returns help JSON with commands and guidance", () => {
     const result = exec("help");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    const commands = asJsonObject(parsed.commands);
     expect(result.exitCode).toBe(0);
     expect(parsed.name).toBe("machine-memory");
     expect(parsed.commands).toBeDefined();
-    expect(parsed.commands.add).toBeDefined();
-    expect(parsed.commands.query).toBeDefined();
+    expect(commands.add).toBeDefined();
+    expect(commands.query).toBeDefined();
     expect(parsed.what_to_store).toBeInstanceOf(Array);
   });
 
@@ -102,7 +131,7 @@ describe("help", () => {
 describe("unknown command", () => {
   test("exits with error for unknown command", () => {
     const result = exec("foo");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("Unknown command: foo");
   });
@@ -135,18 +164,31 @@ describe("add", () => {
   });
 
   test("adds a memory with tags", () => {
-    const result = json("add", "tagged", "--tags", "a,b") as Record<string, unknown>;
+    const result = json("add", "tagged", "--tags", "a,b") as Record<
+      string,
+      unknown
+    >;
     expect(result.tags).toBe("a,b");
   });
 
   test("adds a memory with context", () => {
-    const result = json("add", "with context", "--context", "some reason") as Record<string, unknown>;
+    const result = json(
+      "add",
+      "with context",
+      "--context",
+      "some reason",
+    ) as Record<string, unknown>;
     expect(result.context).toBe("some reason");
   });
 
   test("adds a memory with tags and context", () => {
     const result = json(
-      "add", "full", "--tags", "x", "--context", "y",
+      "add",
+      "full",
+      "--tags",
+      "x",
+      "--context",
+      "y",
     ) as Record<string, unknown>;
     expect(result.tags).toBe("x");
     expect(result.context).toBe("y");
@@ -162,7 +204,8 @@ describe("add", () => {
   test("errors when no content provided", () => {
     const result = exec("add");
     expect(result.exitCode).toBe(1);
-    expect(JSON.parse(result.stdout).error).toContain("Usage:");
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    expect(parsed.error).toContain("Usage:");
   });
 });
 
@@ -200,13 +243,22 @@ describe("update", () => {
 
   test("updates tags", () => {
     json("add", "item", "--tags", "old");
-    const result = json("update", "1", "item", "--tags", "new") as Record<string, unknown>;
+    const result = json("update", "1", "item", "--tags", "new") as Record<
+      string,
+      unknown
+    >;
     expect(result.tags).toBe("new");
   });
 
   test("updates context", () => {
     json("add", "item", "--context", "old reason");
-    const result = json("update", "1", "item", "--context", "new reason") as Record<string, unknown>;
+    const result = json(
+      "update",
+      "1",
+      "item",
+      "--context",
+      "new reason",
+    ) as Record<string, unknown>;
     expect(result.context).toBe("new reason");
   });
 
@@ -280,8 +332,15 @@ describe("list", () => {
     Bun.sleepSync(1100);
     json("add", "newer");
     const result = json("list") as Record<string, unknown>[];
-    expect(result[0].content).toBe("newer");
-    expect(result[1].content).toBe("older");
+    const newest = result[0];
+    const oldest = result[1];
+    expect(newest).toBeDefined();
+    expect(oldest).toBeDefined();
+    if (!newest || !oldest) {
+      throw new Error("Expected two memories in list result");
+    }
+    expect(newest.content).toBe("newer");
+    expect(oldest.content).toBe("older");
   });
 
   test("filters by tag", () => {
@@ -308,7 +367,12 @@ describe("query", () => {
     json("add", "auth uses JWT tokens");
     const result = json("query", "JWT") as Record<string, unknown>[];
     expect(result).toHaveLength(1);
-    expect(result[0].content).toContain("JWT");
+    const match = result[0];
+    expect(match).toBeDefined();
+    if (!match) {
+      throw new Error("Expected a query match");
+    }
+    expect(match.content).toContain("JWT");
   });
 
   test("finds memories by tag keyword", () => {
@@ -365,7 +429,9 @@ describe("output format", () => {
     ];
     for (const entry of commands) {
       const { stdout } = exec(...entry);
-      expect(() => JSON.parse(stdout)).not.toThrow();
+      expect(() => {
+        void parseJsonValue(stdout);
+      }).not.toThrow();
     }
   });
 });
@@ -398,7 +464,7 @@ describe.skip("upgrade", () => {
       res.end("Not Found");
     };
     const result = exec("upgrade");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("Failed to fetch latest release: 404");
   });
@@ -407,11 +473,13 @@ describe.skip("upgrade", () => {
     mockHandler = (_req, res) => {
       mockJson(res, 200, {
         tag_name: "v99.0.0",
-        assets: [{ name: "machine-memory-fake-arch", browser_download_url: "" }],
+        assets: [
+          { name: "machine-memory-fake-arch", browser_download_url: "" },
+        ],
       });
     };
     const result = exec("upgrade");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("No binary found");
     expect(parsed.available).toEqual(["machine-memory-fake-arch"]);
@@ -426,10 +494,12 @@ describe.skip("upgrade", () => {
       if (req.url?.includes("/releases/latest")) {
         mockJson(res, 200, {
           tag_name: "v99.0.0",
-          assets: [{
-            name: assetName,
-            browser_download_url: `http://localhost:${mockPort}/download`,
-          }],
+          assets: [
+            {
+              name: assetName,
+              browser_download_url: `http://localhost:${mockPort}/download`,
+            },
+          ],
         });
         return;
       }
@@ -437,7 +507,7 @@ describe.skip("upgrade", () => {
       res.end("Server Error");
     };
     const result = exec("upgrade");
-    const parsed = JSON.parse(result.stdout);
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("Download failed: 500");
   });
@@ -452,10 +522,12 @@ describe.skip("upgrade", () => {
       if (req.url?.includes("/releases/latest")) {
         mockJson(res, 200, {
           tag_name: "v2.0.0",
-          assets: [{
-            name: assetName,
-            browser_download_url: `http://localhost:${mockPort}/download`,
-          }],
+          assets: [
+            {
+              name: assetName,
+              browser_download_url: `http://localhost:${mockPort}/download`,
+            },
+          ],
         });
         return;
       }

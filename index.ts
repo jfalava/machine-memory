@@ -64,7 +64,9 @@ function printJson(data: unknown) {
 
 function getFlagValue(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
-  if (idx === -1 || idx + 1 >= args.length) {return undefined;}
+  if (idx === -1 || idx + 1 >= args.length) {
+    return undefined;
+  }
   return args[idx + 1];
 }
 
@@ -74,16 +76,15 @@ function getPlatformAssetName(): string {
   return `machine-memory-${platform}-${arch}`;
 }
 
-const API_BASE = process.env["MACHINE_MEMORY_API_URL"] ?? `https://api.github.com/repos/${REPO}`;
+const API_BASE =
+  process.env["MACHINE_MEMORY_API_URL"] ??
+  `https://api.github.com/repos/${REPO}`;
 const BIN_PATH = process.env["MACHINE_MEMORY_BIN_PATH"] ?? process.execPath;
 
 async function upgrade() {
-  const res = await fetch(
-    `${API_BASE}/releases/latest`,
-    {
-      headers: { Accept: "application/vnd.github+json" },
-    },
-  );
+  const res = await fetch(`${API_BASE}/releases/latest`, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
   if (!res.ok) {
     printJson({ error: `Failed to fetch latest release: ${res.status}` });
     process.exit(1);
@@ -131,7 +132,9 @@ async function upgrade() {
     if (existsSync(`${BIN_PATH}.bak`)) {
       renameSync(`${BIN_PATH}.bak`, BIN_PATH);
     }
-    if (existsSync(tmpPath)) {unlinkSync(tmpPath);}
+    if (existsSync(tmpPath)) {
+      unlinkSync(tmpPath);
+    }
     throw e;
   }
 
@@ -144,13 +147,15 @@ if (!command || command === "help") {
   printJson({
     name: "machine-memory",
     version: VERSION,
-    description: "Persistent project-scoped memory for LLM agents. Stores facts, decisions, conventions, and gotchas in a local SQLite database so future agent sessions can recall them.",
+    description:
+      "Persistent project-scoped memory for LLM agents. Stores facts, decisions, conventions, and gotchas in a local SQLite database so future agent sessions can recall them.",
     database: ".agents/memory.db (relative to cwd)",
     commands: {
       help: "Show this help message",
       add: {
         usage: "add <content> [--tags <tags>] [--context <context>]",
-        description: "Store a memory. Content is the fact to remember. Tags are comma-separated categories. Context explains why this matters.",
+        description:
+          "Store a memory. Content is the fact to remember. Tags are comma-separated categories. Context explains why this matters.",
         examples: [
           'add "Auth uses JWT with RS256" --tags "auth,architecture" --context "Found in src/auth/jwt.ts"',
           'add "Always run bun db:migrate after pulling" --tags "conventions,database"',
@@ -159,20 +164,26 @@ if (!command || command === "help") {
       },
       query: {
         usage: "query <search_term>",
-        description: "Full-text search across content, tags, and context. Returns matching memories ranked by relevance.",
+        description:
+          "Full-text search across content, tags, and context. Returns matching memories ranked by relevance.",
       },
       list: {
         usage: "list [--tags <tag>]",
-        description: "List all memories, optionally filtered by tag. Ordered by most recently updated.",
+        description:
+          "List all memories, optionally filtered by tag. Ordered by most recently updated.",
       },
       get: { usage: "get <id>", description: "Get a single memory by its ID." },
       update: {
         usage: "update <id> <content> [--tags <tags>] [--context <context>]",
-        description: "Update a memory's content. Tags and context are only changed if provided.",
+        description:
+          "Update a memory's content. Tags and context are only changed if provided.",
       },
       delete: { usage: "delete <id>", description: "Delete a memory by ID." },
       version: { usage: "version", description: "Print the current version." },
-      upgrade: { usage: "upgrade", description: "Self-update to the latest release from GitHub." },
+      upgrade: {
+        usage: "upgrade",
+        description: "Self-update to the latest release from GitHub.",
+      },
     },
     what_to_store: [
       "Architectural decisions (e.g. 'we chose Drizzle over Prisma because...')",
@@ -241,7 +252,9 @@ switch (command) {
       printJson({ error: "Usage: get <id>" });
       process.exit(1);
     }
-    const row = memoryDb.query("SELECT * FROM memories WHERE id = ?").get(Number(id));
+    const row = memoryDb
+      .query("SELECT * FROM memories WHERE id = ?")
+      .get(Number(id));
     printJson(row ?? { error: "Not found" });
     break;
   }
@@ -298,7 +311,9 @@ switch (command) {
         )
         .all(`%${tag}%`);
     } else {
-      rows = memoryDb.query("SELECT * FROM memories ORDER BY updated_at DESC").all();
+      rows = memoryDb
+        .query("SELECT * FROM memories ORDER BY updated_at DESC")
+        .all();
     }
     printJson(rows);
     break;
