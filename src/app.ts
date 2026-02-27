@@ -12,7 +12,7 @@ import {
   type MemoryStatus,
   type MemoryType,
 } from "./lib/constants";
-import { ensureDb } from "./lib/db";
+import { allWithRetry, ensureDb, getWithRetry, runWithRetry } from "./lib/db";
 import { upgrade } from "./lib/upgrade";
 
 function isMemoryType(value: string): value is MemoryType {
@@ -317,6 +317,59 @@ function parseCommonFilters(args: string[]): CommonFilters {
   };
 }
 
+type OutputMode = {
+  brief: boolean;
+  jsonMin: boolean;
+  noConflicts: boolean;
+};
+
+function parseOutputMode(args: string[]): OutputMode {
+  return {
+    brief: hasFlag(args, "--brief"),
+    jsonMin: hasFlag(args, "--json-min"),
+    noConflicts: hasFlag(args, "--no-conflicts"),
+  };
+}
+
+function hasMinimalOutput(mode: OutputMode): boolean {
+  return mode.brief || mode.jsonMin;
+}
+
+function compactMemoryView(
+  row: Record<string, unknown>,
+): Pick<Record<string, unknown>, "id" | "score" | "memory_type" | "certainty" | "tags"> {
+  return {
+    id: row.id,
+    score: row.score,
+    memory_type: row.memory_type,
+    certainty: row.certainty,
+    tags: row.tags,
+  };
+}
+
+function queryEmptyResultPayload(
+  term: string,
+  filters: CommonFilters,
+  queryTokens: string[],
+) {
+  return {
+    results: [],
+    search_term: term,
+    derived_terms: queryTokens,
+    filters: {
+      tags: filters.tag ?? null,
+      type: filters.memoryType ?? null,
+      certainty: filters.certainty ?? null,
+      include_deprecated: filters.includeDeprecated,
+    },
+    hints: [
+      "Try broader keywords or synonyms.",
+      "Use --include-deprecated to include superseded/archived memories.",
+      "Narrow with --tags/--type/--certainty when you know the scope.",
+    ],
+  };
+}
+
 function applySqlFilters(
   clauses: string[],
   params: (string | number)[],
@@ -349,7 +402,7 @@ function getMemoryById(
   database: Database,
   id: number,
 ): Record<string, unknown> | null {
-  const row = database.query("SELECT * FROM memories WHERE id = ?").get(id);
+  const row = getWithRetry(database, "SELECT * FROM memories WHERE id = ?", [id]);
   if (!row) {
     return null;
   }
@@ -376,16 +429,16 @@ function detectPotentialConflicts(
     params.push(options.excludeId);
   }
 
-  const rows = database
-    .query(
-      `SELECT m.*, bm25(memories_fts) AS fts_rank
-       FROM memories m
-       JOIN memories_fts ON m.id = memories_fts.rowid
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY bm25(memories_fts)
-       LIMIT ${Number(options.limit ?? 5)}`,
-    )
-    .all(...params);
+  const rows = allWithRetry(
+    database,
+    `SELECT m.*, bm25(memories_fts) AS fts_rank
+     FROM memories m
+     JOIN memories_fts ON m.id = memories_fts.rowid
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY bm25(memories_fts)
+     LIMIT ${Number(options.limit ?? 5)}`,
+    params,
+  );
 
   return shapeRowsWithScore(rows as unknown[], terms);
 }
@@ -394,16 +447,16 @@ function findExactDuplicate(
   database: Database,
   payload: { content: string; tags?: string; context?: string },
 ): Record<string, unknown> | null {
-  const row = database
-    .query(
-      `SELECT * FROM memories
-       WHERE status = 'active'
-         AND content = ?
-         AND tags = ?
-         AND context = ?
-       LIMIT 1`,
-    )
-    .get(payload.content, payload.tags ?? "", payload.context ?? "");
+  const row = getWithRetry(
+    database,
+    `SELECT * FROM memories
+     WHERE status = 'active'
+       AND content = ?
+       AND tags = ?
+       AND context = ?
+     LIMIT 1`,
+    [payload.content, payload.tags ?? "", payload.context ?? ""],
+  );
   return row ? normalizeSqliteRow(row) : null;
 }
 
@@ -521,11 +574,11 @@ if (!command || command === "help") {
       help: "Show this help message",
       add: {
         usage:
-          "add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>]",
+          "add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min]",
       },
       query: {
         usage:
-          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated]",
+          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--brief|--json-min]",
       },
       list: {
         usage:
@@ -540,7 +593,8 @@ if (!command || command === "help") {
         usage: "deprecate <id> [--superseded-by <id>] [--updated-by <name>]",
       },
       delete: { usage: "delete <id>" },
-      suggest: { usage: 'suggest --files "src/a.ts,src/b.ts"' },
+      suggest: { usage: 'suggest --files "src/a.ts,src/b.ts" [--brief|--json-min]' },
+      migrate: { usage: "migrate" },
       coverage: { usage: "coverage [--root <path>]" },
       gc: { usage: "gc --dry-run" },
       stats: { usage: "stats" },
@@ -561,7 +615,7 @@ if (!command || command === "help") {
       "Architectural decisions (e.g. 'we chose Drizzle over Prisma because...')",
       "Project conventions (e.g. 'all API routes return { data, error } shape')",
       "Non-obvious gotchas (e.g. 'the users table uses UUIDs, not auto-increment')",
-      "Environment/tooling notes (e.g. 'run bun db:migrate after pulling main')",
+      "Environment/tooling notes (e.g. 'run machine-memory migrate after pulling main')",
       "User preferences (e.g. 'user prefers explicit error handling over try/catch')",
     ],
   });
@@ -577,10 +631,50 @@ if (command === "upgrade") {
   process.exit(0);
 }
 
-const memoryDb = ensureDb();
+const dbCommands = new Set([
+  "add",
+  "query",
+  "list",
+  "get",
+  "update",
+  "deprecate",
+  "delete",
+  "suggest",
+  "coverage",
+  "gc",
+  "stats",
+  "import",
+  "export",
+  "migrate",
+]);
+const writeCommands = new Set(["add", "update", "deprecate", "delete", "import", "migrate"]);
+const outputMode = parseOutputMode(args);
+
+let memoryDb: Database | null = null;
+if (dbCommands.has(command)) {
+  try {
+    memoryDb = ensureDb(writeCommands.has(command) ? "write" : "read");
+  } catch (err) {
+    printJson({
+      error:
+        err instanceof Error
+          ? err.message
+          : "Unable to open machine-memory database.",
+    });
+    process.exit(1);
+  }
+}
+
+function requireDb(): Database {
+  if (!memoryDb) {
+    throw new Error("Database is not initialized for this command.");
+  }
+  return memoryDb;
+}
 
 switch (command) {
   case "add": {
+    const database = requireDb();
     const content = args[0];
     if (!content) {
       usageError(
@@ -596,14 +690,18 @@ switch (command) {
     const updatedBy = getFlagValue(args, "--updated-by") ?? sourceAgent;
     const refs = parseRefsFlag(args) ?? [];
     const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days");
+    const includeConflicts = !(outputMode.noConflicts || hasMinimalOutput(outputMode));
 
-    const potentialConflicts = detectPotentialConflicts(memoryDb, {
-      content,
-      tags,
-      context: memo,
-    });
+    const potentialConflicts = includeConflicts
+      ? detectPotentialConflicts(database, {
+          content,
+          tags,
+          context: memo,
+        })
+      : [];
 
-    const result = memoryDb.run(
+    const result = runWithRetry(
+      database,
       `INSERT INTO memories (
          content, tags, context, memory_type, certainty, status, superseded_by,
          source_agent, last_updated_by, update_count, refs, expires_after_days
@@ -621,20 +719,37 @@ switch (command) {
       ],
     );
 
-    const created = getMemoryById(memoryDb, Number(result.lastInsertRowid));
-    printJson({
+    const created = getMemoryById(database, Number(result.lastInsertRowid));
+    if (outputMode.jsonMin) {
+      printJson({ id: created?.id ?? result.lastInsertRowid });
+      break;
+    }
+    if (outputMode.brief) {
+      printJson({
+        id: created?.id ?? result.lastInsertRowid,
+        status: "created",
+        conflict_count: potentialConflicts.length,
+      });
+      break;
+    }
+
+    const payload: Record<string, unknown> = {
       ...(created ?? {
         id: result.lastInsertRowid,
         content,
         tags,
         context: memo,
       }),
-      potential_conflicts: potentialConflicts,
-    });
+    };
+    if (includeConflicts) {
+      payload.potential_conflicts = potentialConflicts;
+    }
+    printJson(payload);
     break;
   }
 
   case "query": {
+    const database = requireDb();
     const term = args[0];
     if (!term) {
       usageError("Usage: query <search_term>");
@@ -645,32 +760,50 @@ switch (command) {
     const params: (string | number)[] = [term];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
 
-    const rows = memoryDb
-      .query(
-        `SELECT m.*, bm25(memories_fts) AS fts_rank
-         FROM memories m
-         JOIN memories_fts ON m.id = memories_fts.rowid
-         WHERE ${clauses.join(" AND ")}
-         ORDER BY bm25(memories_fts)`,
-      )
-      .all(...params);
+    const rows = allWithRetry(
+      database,
+      `SELECT m.*, bm25(memories_fts) AS fts_rank
+       FROM memories m
+       JOIN memories_fts ON m.id = memories_fts.rowid
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY bm25(memories_fts)`,
+      params,
+    );
 
     const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
-    printJson(shapeRowsWithScore(rows as unknown[], queryTokens));
+    const results = shapeRowsWithScore(rows as unknown[], queryTokens);
+    if (results.length === 0) {
+      printJson(queryEmptyResultPayload(term, filters, queryTokens));
+      break;
+    }
+    if (outputMode.jsonMin) {
+      printJson({ count: results.length, ids: results.map((entry) => entry.id) });
+      break;
+    }
+    if (outputMode.brief) {
+      printJson({
+        count: results.length,
+        top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
+      });
+      break;
+    }
+    printJson(results);
     break;
   }
 
   case "get": {
+    const database = requireDb();
     const id = args[0];
     if (!id) {
       usageError("Usage: get <id>");
     }
-    const row = getMemoryById(memoryDb, Number(id));
+    const row = getMemoryById(database, Number(id));
     printJson(row ?? { error: "Not found" });
     break;
   }
 
   case "update": {
+    const database = requireDb();
     const id = args[0];
     const content = args[1];
     if (!id || !content) {
@@ -726,13 +859,14 @@ switch (command) {
     }
 
     params.push(Number(id));
-    memoryDb.run(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params);
-    const updated = getMemoryById(memoryDb, Number(id));
+    runWithRetry(database, `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params);
+    const updated = getMemoryById(database, Number(id));
     printJson(updated ?? { error: "Not found" });
     break;
   }
 
   case "deprecate": {
+    const database = requireDb();
     const id = args[0];
     if (!id) {
       usageError("Usage: deprecate <id> [--superseded-by <id>] [--updated-by <name>]");
@@ -759,37 +893,42 @@ switch (command) {
     }
     params.push(Number(id));
 
-    memoryDb.run(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params);
-    const row = getMemoryById(memoryDb, Number(id));
+    runWithRetry(database, `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params);
+    const row = getMemoryById(database, Number(id));
     printJson(row ?? { error: "Not found" });
     break;
   }
 
   case "delete": {
+    const database = requireDb();
     const id = args[0];
     if (!id) {
       usageError("Usage: delete <id>");
     }
-    memoryDb.run("DELETE FROM memories WHERE id = ?", [Number(id)]);
+    runWithRetry(database, "DELETE FROM memories WHERE id = ?", [Number(id)]);
     printJson({ deleted: Number(id) });
     break;
   }
 
   case "list": {
+    const database = requireDb();
     const filters = parseCommonFilters(args);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
 
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = memoryDb
-      .query(`SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`)
-      .all(...params);
+    const rows = allWithRetry(
+      database,
+      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
+      params,
+    );
     printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
     break;
   }
 
   case "suggest": {
+    const database = requireDb();
     const filesRaw = getFlagValue(args, "--files");
     if (!filesRaw) {
       usageError('Usage: suggest --files "src/auth/jwt.ts,src/middleware/session.ts"');
@@ -807,31 +946,48 @@ switch (command) {
     const params: (string | number)[] = [ftsQuery];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
 
-    const rows = memoryDb
-      .query(
-        `SELECT m.*, bm25(memories_fts) AS fts_rank
-         FROM memories m
-         JOIN memories_fts ON m.id = memories_fts.rowid
-         WHERE ${clauses.join(" AND ")}
-         ORDER BY bm25(memories_fts)
-         LIMIT 20`,
-      )
-      .all(...params);
+    const rows = allWithRetry(
+      database,
+      `SELECT m.*, bm25(memories_fts) AS fts_rank
+       FROM memories m
+       JOIN memories_fts ON m.id = memories_fts.rowid
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY bm25(memories_fts)
+       LIMIT 20`,
+      params,
+    );
+    const results = shapeRowsWithScore(rows as unknown[], derivedTerms);
+
+    if (outputMode.jsonMin) {
+      printJson({ count: results.length, ids: results.map((entry) => entry.id) });
+      break;
+    }
+    if (outputMode.brief) {
+      printJson({
+        files,
+        derived_terms: derivedTerms,
+        count: results.length,
+        top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
+      });
+      break;
+    }
 
     printJson({
       files,
       derived_terms: derivedTerms,
-      results: shapeRowsWithScore(rows as unknown[], derivedTerms),
+      results,
     });
     break;
   }
 
   case "coverage": {
+    const database = requireDb();
     const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
     const directories = collectDirectories(root);
-    const rows = memoryDb
-      .query("SELECT tags FROM memories WHERE status = 'active'")
-      .all() as { tags?: unknown }[];
+    const rows = allWithRetry(
+      database,
+      "SELECT tags FROM memories WHERE status = 'active'",
+    ) as { tags?: unknown }[];
 
     const tagDistribution: Record<string, number> = {};
     const tagSet = new Set<string>();
@@ -864,26 +1020,27 @@ switch (command) {
   }
 
   case "gc": {
+    const database = requireDb();
     const dryRun = hasFlag(args, "--dry-run");
     if (!dryRun) {
       usageError("Usage: gc --dry-run");
     }
-    const rows = memoryDb
-      .query(
-        `SELECT * FROM memories
-         WHERE status = 'active'
-           AND expires_after_days IS NOT NULL
-           AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
-         ORDER BY updated_at ASC`,
-      )
-      .all();
+    const rows = allWithRetry(
+      database,
+      `SELECT * FROM memories
+       WHERE status = 'active'
+         AND expires_after_days IS NOT NULL
+         AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
+       ORDER BY updated_at ASC`,
+    );
     const expired = (rows as unknown[]).map((row) => normalizeSqliteRow(row));
     printJson({ dry_run: true, count: expired.length, expired });
     break;
   }
 
   case "stats": {
-    const rows = memoryDb.query("SELECT * FROM memories").all() as unknown[];
+    const database = requireDb();
+    const rows = allWithRetry(database, "SELECT * FROM memories") as unknown[];
     const memories = rows.map((row) => normalizeSqliteRow(row));
 
     const byType: Record<string, number> = Object.fromEntries(
@@ -944,6 +1101,7 @@ switch (command) {
   }
 
   case "import": {
+    const database = requireDb();
     const path = args[0];
     if (!path) {
       usageError("Usage: import <memories.json>");
@@ -1046,7 +1204,7 @@ switch (command) {
         continue;
       }
 
-      const duplicate = findExactDuplicate(memoryDb, {
+      const duplicate = findExactDuplicate(database, {
         content,
         tags,
         context: memoContext,
@@ -1063,7 +1221,7 @@ switch (command) {
 
       const conflicts =
         statusRaw === "active"
-          ? detectPotentialConflicts(memoryDb, {
+          ? detectPotentialConflicts(database, {
               content,
               tags,
               context: memoContext,
@@ -1079,7 +1237,8 @@ switch (command) {
       }
 
       if (createdAt && updatedAt) {
-        const insert = memoryDb.run(
+        const insert = runWithRetry(
+          database,
           `INSERT INTO memories (
              content, tags, context, memory_type, status, superseded_by, source_agent,
              last_updated_by, update_count, certainty, refs, expires_after_days,
@@ -1106,7 +1265,8 @@ switch (command) {
         continue;
       }
 
-      const insert = memoryDb.run(
+      const insert = runWithRetry(
+        database,
         `INSERT INTO memories (
            content, tags, context, memory_type, status, superseded_by, source_agent,
            last_updated_by, update_count, certainty, refs, expires_after_days
@@ -1134,6 +1294,7 @@ switch (command) {
   }
 
   case "export": {
+    const database = requireDb();
     const filters = parseCommonFilters(args);
     const since = parseSinceDate(args);
     const clauses: string[] = [];
@@ -1144,10 +1305,20 @@ switch (command) {
       params.push(sqliteDateForComparison(since));
     }
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = memoryDb
-      .query(`SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`)
-      .all(...params);
+    const rows = allWithRetry(
+      database,
+      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
+      params,
+    );
     printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
+    break;
+  }
+
+  case "migrate": {
+    const database = requireDb();
+    printJson({ status: "ok", migrated: true });
+    database.close();
+    memoryDb = null;
     break;
   }
 
@@ -1158,4 +1329,6 @@ switch (command) {
     process.exit(1);
 }
 
-memoryDb.close();
+if (memoryDb) {
+  memoryDb.close();
+}

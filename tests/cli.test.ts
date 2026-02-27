@@ -166,6 +166,15 @@ describe("version", () => {
   });
 });
 
+describe("migrate", () => {
+  test("runs schema migration explicitly", () => {
+    const result = json("migrate") as Record<string, unknown>;
+    expect(result.status).toBe("ok");
+    expect(result.migrated).toBe(true);
+    expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(true);
+  });
+});
+
 // --- add ---
 
 describe("add", () => {
@@ -220,6 +229,23 @@ describe("add", () => {
     expect(result.exitCode).toBe(1);
     const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(parsed.error).toContain("Usage:");
+  });
+
+  test("supports --no-conflicts to suppress potential_conflicts payload", () => {
+    const result = json("add", "lean output", "--no-conflicts") as Record<
+      string,
+      unknown
+    >;
+    expect(result.id).toBe(1);
+    expect(result.potential_conflicts).toBeUndefined();
+  });
+
+  test("supports --json-min on add", () => {
+    const result = json("add", "json min output", "--json-min") as Record<
+      string,
+      unknown
+    >;
+    expect(result).toEqual({ id: 1 });
   });
 });
 
@@ -402,10 +428,13 @@ describe("query", () => {
     expect(result).toHaveLength(1);
   });
 
-  test("returns empty array when nothing matches", () => {
+  test("returns diagnostics when nothing matches", () => {
     json("add", "unrelated content");
-    const result = json("query", "xyznonexistent");
-    expect(result).toEqual([]);
+    const result = json("query", "xyznonexistent") as Record<string, unknown>;
+    expect(result.results).toEqual([]);
+    expect(result.search_term).toBe("xyznonexistent");
+    expect(Array.isArray(result.derived_terms)).toBe(true);
+    expect(Array.isArray(result.hints)).toBe(true);
   });
 
   test("errors when no search term provided", () => {
@@ -413,12 +442,26 @@ describe("query", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  test("supports --brief output on query", () => {
+    json("add", "JWT signing key policy", "--tags", "auth,jwt");
+    const result = json("query", "jwt", "--brief") as Record<string, unknown>;
+    expect(result.count).toBe(1);
+    expect(Array.isArray(result.top)).toBe(true);
+  });
+
+  test("supports --json-min output on query", () => {
+    json("add", "JWT signing key policy", "--tags", "auth,jwt");
+    const result = json("query", "jwt", "--json-min") as Record<string, unknown>;
+    expect(result.count).toBe(1);
+    expect(result.ids).toEqual([1]);
+  });
+
   test("FTS stays in sync after update", () => {
     json("add", "original keyword");
     json("update", "1", "replacement term");
-    const old = json("query", "original") as Record<string, unknown>[];
+    const old = json("query", "original") as Record<string, unknown>;
     const updated = json("query", "replacement") as Record<string, unknown>[];
-    expect(old).toHaveLength(0);
+    expect(old.results).toEqual([]);
     expect(updated).toHaveLength(1);
   });
 
@@ -426,7 +469,7 @@ describe("query", () => {
     json("add", "searchable content");
     json("delete", "1");
     const result = json("query", "searchable");
-    expect(result).toEqual([]);
+    expect((result as Record<string, unknown>).results).toEqual([]);
   });
 });
 
@@ -446,8 +489,8 @@ describe("checklist: deprecation and invalidation", () => {
     expect(deprecated.status).toBe("superseded_by");
     expect(deprecated.superseded_by).toBe(2);
 
-    const defaultQuery = json("query", "legacy") as Record<string, unknown>[];
-    expect(defaultQuery).toEqual([]);
+    const defaultQuery = json("query", "legacy") as Record<string, unknown>;
+    expect(defaultQuery.results).toEqual([]);
 
     const withDeprecated = json(
       "query",
@@ -618,6 +661,23 @@ describe("checklist: suggest --files", () => {
     expect(derivedTerms).toContain("jwt");
     expect(suggestions.length).toBeGreaterThan(0);
     expect(suggestions[0]?.id).toBe(1);
+  });
+
+  test("supports --json-min output on suggest", () => {
+    json(
+      "add",
+      "JWT auth middleware uses RS256",
+      "--tags",
+      "auth,jwt,middleware",
+    );
+    const result = json(
+      "suggest",
+      "--files",
+      "src/auth/jwt.ts,src/middleware/session.ts",
+      "--json-min",
+    ) as Record<string, unknown>;
+    expect(typeof result.count).toBe("number");
+    expect(Array.isArray(result.ids)).toBe(true);
   });
 });
 

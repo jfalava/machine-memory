@@ -2,7 +2,7 @@
 
 Persistent project-scoped memory for LLM agents. Stores facts, decisions, conventions, and gotchas in a local SQLite database so future agent sessions can recall them.
 
-The database lives at `.agents/memory.db` relative to the project root. It's meant to be committed to the repo so any agent working on the project has access to it.
+By default, the database lives at `.agents/memory.db` relative to the project root (git-ignored by default). You can override it with `MACHINE_MEMORY_DB_PATH` (absolute or cwd-relative path).
 
 ## Install
 
@@ -26,6 +26,9 @@ Run `machine-memory help` to get full usage information as JSON.
 ```sh
 # Store a memory
 machine-memory add "Auth uses JWT with RS256" --tags "auth,architecture" --context "Found in src/auth/jwt.ts"
+machine-memory add "Auth uses JWT with RS256" --no-conflicts
+machine-memory add "Auth uses JWT with RS256" --brief
+machine-memory add "Auth uses JWT with RS256" --json-min
 
 # Store richer metadata (type, certainty, provenance, refs, TTL hint)
 machine-memory add "Sessions are cached for 5m" \
@@ -39,6 +42,8 @@ machine-memory add "Sessions are cached for 5m" \
 # Full-text search
 machine-memory query "auth"
 machine-memory query "auth" --type "decision" --certainty "hard"
+machine-memory query "auth" --brief
+machine-memory query "auth" --json-min
 
 # List all memories (or filter by tag)
 machine-memory list
@@ -58,6 +63,11 @@ machine-memory deprecate 12 --superseded-by 42
 
 # Path-based suggestions for agents at task start
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts"
+machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --brief
+machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --json-min
+
+# Apply/repair schema migration explicitly
+machine-memory migrate
 
 # Coverage / health checks
 machine-memory coverage --root .
@@ -103,17 +113,19 @@ Notes:
 
 - `query`, `list`, and `export` return only active memories by default.
 - Use `--include-deprecated` (or `--status ...` on `list`) to inspect deprecated/superseded entries.
-- `add` returns `potential_conflicts` using SQLite FTS5 so the caller can decide whether to proceed or deprecate/update instead.
+- `add` returns `potential_conflicts` by default; use `--no-conflicts` to skip conflict search.
 - `query` and `suggest` return a numeric `score` and are sorted descending by score.
+- Empty `query` results return a diagnostic object with `derived_terms`, `filters`, and `hints`.
+- Reads open the DB in query-only mode; schema writes run via write commands and `migrate`.
 
 ### Command Reference
 
 - `add <content>`
-  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`
-  - Returns inserted memory plus `potential_conflicts: []`
+  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--no-conflicts`, `--brief`, `--json-min`
+  - Returns inserted memory (plus `potential_conflicts` unless `--no-conflicts`/minimal output)
 - `query <search_term>`
-  - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`
-  - Returns ranked matches with `score`
+  - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`, `--brief`, `--json-min`
+  - Returns ranked matches with `score`; empty results return diagnostics/hints
 - `list`
   - Flags: `--tags`, `--type`, `--certainty`, `--status`, `--include-deprecated`
 - `get <id>`
@@ -125,7 +137,10 @@ Notes:
   - Sets status to `deprecated` or `superseded_by`
 - `delete <id>`
 - `suggest --files "<csv paths>"`
+  - Flags: `--brief`, `--json-min`
   - Derives keywords from file paths and runs FTS-based suggestions
+- `migrate`
+  - Ensures schema/FTS/triggers are up to date
 - `coverage [--root <path>]`
   - Returns `uncovered_paths` and `tag_distribution`
 - `gc --dry-run`
@@ -145,7 +160,7 @@ This is **not** a general-purpose note-taking tool. It's for things an agent nee
 - **Architectural decisions** — "We chose Drizzle over Prisma because..."
 - **Project conventions** — "All API routes return `{ data, error }` shape"
 - **Non-obvious gotchas** — "The users table uses UUIDs, not auto-increment"
-- **Environment/tooling notes** — "Run `bun db:migrate` after pulling main"
+- **Environment/tooling notes** — "Run `machine-memory migrate` after pulling main"
 - **User preferences** — "User prefers explicit error handling over try/catch"
 
 ### What to add to your AGENTS.md

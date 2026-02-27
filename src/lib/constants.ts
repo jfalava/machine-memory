@@ -1,8 +1,13 @@
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 export const VERSION = "0.1.0";
 export const REPO = "jfalava/machine-memory";
-export const DB_PATH = resolve(process.cwd(), ".agents", "memory.db");
+const configuredDbPath = process.env["MACHINE_MEMORY_DB_PATH"];
+export const DB_PATH = configuredDbPath
+  ? isAbsolute(configuredDbPath)
+    ? configuredDbPath
+    : resolve(process.cwd(), configuredDbPath)
+  : resolve(process.cwd(), ".agents", "memory.db");
 
 export const MEMORY_TYPES = [
   "decision",
