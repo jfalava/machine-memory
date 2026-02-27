@@ -254,6 +254,16 @@ describe("add", () => {
     expect(result.context).toBe("y");
   });
 
+  test("adds a memory from --from-file", () => {
+    const filePath = join(testDir, "memory.txt");
+    writeFileSync(filePath, "line one\nline two");
+    const result = json("add", "--from-file", "memory.txt") as Record<
+      string,
+      unknown
+    >;
+    expect(result.content).toBe("line one\nline two");
+  });
+
   test("auto-increments ids", () => {
     const first = json("add", "first") as Record<string, unknown>;
     const second = json("add", "second") as Record<string, unknown>;
@@ -345,6 +355,31 @@ describe("update", () => {
       "new reason",
     ) as Record<string, unknown>;
     expect(result.context).toBe("new reason");
+  });
+
+  test("updates content from --from-file", () => {
+    json("add", "item");
+    const filePath = join(testDir, "updated.txt");
+    writeFileSync(filePath, "updated from file\nwith details");
+    const result = json(
+      "update",
+      "1",
+      "--from-file",
+      "updated.txt",
+    ) as Record<string, unknown>;
+    expect(result.content).toBe("updated from file\nwith details");
+  });
+
+  test("supports --match for fuzzy content updates", () => {
+    json("add", "Views schema has running/errored/finished states");
+    const result = json(
+      "update",
+      "--match",
+      "views schema",
+      "Views schema includes running, errored, and finished",
+    ) as Record<string, unknown>;
+    expect(result.id).toBe(1);
+    expect(result.content).toContain("running, errored, and finished");
   });
 
   test("updates updated_at timestamp", () => {
@@ -579,12 +614,22 @@ describe("checklist: deprecation and invalidation", () => {
     expect(withDeprecated).toHaveLength(1);
     expect(withDeprecated[0]?.id).toBe(1);
   });
+
+  test("supports --match on deprecate", () => {
+    json("add", "views schema snapshot");
+    const deprecated = json("deprecate", "--match", "views schema") as Record<
+      string,
+      unknown
+    >;
+    expect(deprecated.id).toBe(1);
+    expect(deprecated.status).toBe("deprecated");
+  });
 });
 
 describe("checklist: structured memory_type", () => {
   test("supports --type on add, update, list, and query", () => {
     json("add", "routing rule alpha", "--type", "decision");
-    json("add", "routing rule beta", "--type", "gotcha");
+    json("add", "routing rule beta", "--type", "reference");
 
     const listed = json("list", "--type", "decision") as Record<
       string,
@@ -605,9 +650,9 @@ describe("checklist: structured memory_type", () => {
       "1",
       "routing rule alpha",
       "--type",
-      "constraint",
+      "status",
     ) as Record<string, unknown>;
-    expect(updated.memory_type).toBe("constraint");
+    expect(updated.memory_type).toBe("status");
   });
 });
 
@@ -638,25 +683,44 @@ describe("checklist: provenance fields", () => {
 });
 
 describe("checklist: certainty field", () => {
-  test("defaults certainty to soft and supports updates", () => {
+  test("defaults certainty to inferred and supports updates", () => {
     const created = json("add", "certainty test") as Record<string, unknown>;
-    expect(created.certainty).toBe("soft");
+    expect(created.certainty).toBe("inferred");
 
     const updated = json(
       "update",
       "1",
       "certainty test",
       "--certainty",
-      "hard",
+      "verified",
     ) as Record<string, unknown>;
-    expect(updated.certainty).toBe("hard");
+    expect(updated.certainty).toBe("verified");
 
-    const listed = json("list", "--certainty", "hard") as Record<
+    const listed = json("list", "--certainty", "verified") as Record<
       string,
       unknown
     >[];
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe(1);
+  });
+
+  test("accepts legacy certainty aliases and normalizes output", () => {
+    const created = json(
+      "add",
+      "legacy certainty alias",
+      "--certainty",
+      "soft",
+    ) as Record<string, unknown>;
+    expect(created.certainty).toBe("inferred");
+
+    const updated = json(
+      "update",
+      "1",
+      "legacy certainty alias",
+      "--certainty",
+      "hard",
+    ) as Record<string, unknown>;
+    expect(updated.certainty).toBe("verified");
   });
 });
 
@@ -686,7 +750,7 @@ describe("checklist: query result scoring", () => {
       "--tags",
       "cache,auth",
       "--certainty",
-      "hard",
+      "verified",
     );
     json(
       "add",
@@ -694,7 +758,7 @@ describe("checklist: query result scoring", () => {
       "--tags",
       "notes",
       "--certainty",
-      "uncertain",
+      "speculative",
     );
 
     json(
@@ -888,7 +952,7 @@ describe("checklist: stats command", () => {
       "--type",
       "decision",
       "--certainty",
-      "hard",
+      "verified",
     );
     json(
       "add",
@@ -898,7 +962,7 @@ describe("checklist: stats command", () => {
       "--type",
       "gotcha",
       "--certainty",
-      "uncertain",
+      "speculative",
     );
 
     dbRun(
@@ -914,8 +978,8 @@ describe("checklist: stats command", () => {
     expect(stats.total_memories).toBe(2);
     expect(byType.decision).toBe(1);
     expect(byType.gotcha).toBe(1);
-    expect(byCertainty.hard).toBe(1);
-    expect(byCertainty.uncertain).toBe(1);
+    expect(byCertainty.verified).toBe(1);
+    expect(byCertainty.speculative).toBe(1);
     expect(tags.db).toBe(1);
     expect(oldest.id).toBe(1);
     expect(stats.memories_not_updated_over_90_days).toBe(1);
@@ -938,7 +1002,7 @@ describe("checklist: bulk import", () => {
           content: "imported unique memory",
           tags: "imported",
           memory_type: "decision",
-          certainty: "hard",
+          certainty: "verified",
           refs: ["https://example.com/pr/2"],
         },
       ]),
@@ -970,7 +1034,7 @@ describe("checklist: export command", () => {
       "--type",
       "decision",
       "--certainty",
-      "hard",
+      "verified",
     );
     json(
       "add",
@@ -980,7 +1044,7 @@ describe("checklist: export command", () => {
       "--type",
       "decision",
       "--certainty",
-      "hard",
+      "verified",
     );
     json("deprecate", "2");
 
@@ -991,7 +1055,7 @@ describe("checklist: export command", () => {
       "--type",
       "decision",
       "--certainty",
-      "hard",
+      "verified",
     ) as Record<string, unknown>[];
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.id).toBe(1);

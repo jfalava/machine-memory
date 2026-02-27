@@ -23,6 +23,42 @@ function isCertainty(value: string): value is Certainty {
   return (CERTAINTY_LEVELS as readonly string[]).includes(value);
 }
 
+const LEGACY_CERTAINTY_ALIASES: Record<string, Certainty> = {
+  hard: "verified",
+  soft: "inferred",
+  uncertain: "speculative",
+};
+
+function canonicalizeCertainty(raw: string): Certainty | undefined {
+  if (isCertainty(raw)) {
+    return raw;
+  }
+  return LEGACY_CERTAINTY_ALIASES[raw];
+}
+
+function certaintyStorageVariants(certainty: Certainty): string[] {
+  switch (certainty) {
+    case "verified":
+      return ["verified", "hard"];
+    case "inferred":
+      return ["inferred", "soft"];
+    case "speculative":
+      return ["speculative", "uncertain"];
+    default:
+      return [certainty];
+  }
+}
+
+function normalizeCertaintyValue(
+  value: unknown,
+  fallback: Certainty = "inferred",
+): Certainty {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+  return canonicalizeCertainty(value) ?? fallback;
+}
+
 function isMemoryStatus(value: string): value is MemoryStatus {
   return (MEMORY_STATUSES as readonly string[]).includes(value);
 }
@@ -52,13 +88,14 @@ function requireCertainty(
   if (raw === undefined) {
     return undefined;
   }
-  if (!isCertainty(raw)) {
+  const normalized = canonicalizeCertainty(raw);
+  if (!normalized) {
     printJson({
       error: `Invalid certainty '${raw}'. Expected one of: ${CERTAINTY_LEVELS.join(", ")}`,
     });
     process.exit(1);
   }
-  return raw;
+  return normalized;
 }
 
 function requireStatus(
@@ -139,6 +176,38 @@ function parseTags(tags: string): string[] {
     .filter(Boolean);
 }
 
+function collectPositionalArgs(
+  args: string[],
+  flagsWithValues: readonly string[],
+): string[] {
+  const flags = new Set(flagsWithValues);
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    if (token === undefined) {
+      continue;
+    }
+    if (flags.has(token)) {
+      i += 1;
+      continue;
+    }
+    if (token.startsWith("--")) {
+      continue;
+    }
+    positional.push(token);
+  }
+  return positional;
+}
+
+function parseContentFromFileFlag(args: string[]): string | undefined {
+  const path = getFlagValue(args, "--from-file");
+  if (path === undefined) {
+    return undefined;
+  }
+  const resolvedPath = assertFileExists(path);
+  return readFileSync(resolvedPath, "utf-8");
+}
+
 function stringValue(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
@@ -149,6 +218,7 @@ function normalizeSqliteRow(row: unknown): Record<string, unknown> {
   }
   const next = { ...(row as Record<string, unknown>) };
   next.refs = parseStoredRefs(next.refs);
+  next.certainty = normalizeCertaintyValue(next.certainty);
   if (next.update_count !== undefined) {
     next.update_count = Number(next.update_count ?? 0);
   }
@@ -243,10 +313,11 @@ function buildFtsQueryFromTerms(terms: string[]): string | undefined {
 }
 
 function certaintyWeight(certainty: unknown): number {
-  if (certainty === "hard") {
+  const normalized = normalizeCertaintyValue(certainty, "speculative");
+  if (normalized === "verified") {
     return 20;
   }
-  if (certainty === "soft") {
+  if (normalized === "inferred") {
     return 10;
   }
   return 2;
@@ -408,8 +479,16 @@ function applySqlFilters(
     params.push(filters.memoryType);
   }
   if (filters.certainty) {
-    clauses.push("certainty = ?");
-    params.push(filters.certainty);
+    const variants = certaintyStorageVariants(filters.certainty);
+    if (variants.length === 1) {
+      clauses.push("certainty = ?");
+      params.push(variants[0] ?? filters.certainty);
+    } else {
+      clauses.push(`certainty IN (${variants.map(() => "?").join(", ")})`);
+      for (const variant of variants) {
+        params.push(variant);
+      }
+    }
   }
   if (filters.status) {
     clauses.push("status = ?");
@@ -432,6 +511,30 @@ function getMemoryById(
     return null;
   }
   return normalizeSqliteRow(row);
+}
+
+function findMemoryByMatch(
+  database: Database,
+  query: string,
+): Record<string, unknown> | null {
+  const terms = extractTerms(query);
+  const ftsQuery = buildFtsQueryFromTerms(terms);
+  if (!ftsQuery) {
+    return null;
+  }
+  const rows = allWithRetry(
+    database,
+    `SELECT m.*, bm25(memories_fts) AS fts_rank
+     FROM memories m
+     JOIN memories_fts ON m.id = memories_fts.rowid
+     WHERE memories_fts MATCH ?
+       AND m.status = 'active'
+     ORDER BY bm25(memories_fts)
+     LIMIT 5`,
+    [ftsQuery],
+  ) as unknown[];
+  const ranked = shapeRowsWithScore(rows, terms);
+  return ranked[0] ?? null;
 }
 
 function detectPotentialConflicts(
@@ -656,6 +759,43 @@ function assertFileExists(path: string): string {
   return resolved;
 }
 
+const ADD_USAGE =
+  "add (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]";
+const UPDATE_USAGE =
+  "update (<id> | --match <query>) (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]";
+const DEPRECATE_USAGE =
+  "deprecate (<id> | --match <query>) [--superseded-by <id>] [--updated-by <name>]";
+
+const ADD_FLAGS_WITH_VALUES = [
+  "--tags",
+  "--context",
+  "--type",
+  "--certainty",
+  "--source-agent",
+  "--updated-by",
+  "--refs",
+  "--expires-after-days",
+  "--from-file",
+] as const;
+
+const UPDATE_FLAGS_WITH_VALUES = [
+  "--tags",
+  "--context",
+  "--type",
+  "--certainty",
+  "--updated-by",
+  "--refs",
+  "--expires-after-days",
+  "--from-file",
+  "--match",
+] as const;
+
+const DEPRECATE_FLAGS_WITH_VALUES = [
+  "--superseded-by",
+  "--updated-by",
+  "--match",
+] as const;
+
 const [command, ...args] = process.argv.slice(2);
 
 if (
@@ -668,13 +808,12 @@ if (
     name: "machine-memory",
     version: VERSION,
     description:
-      "Persistent project-scoped memory for LLM agents. Stores facts, decisions, conventions, and gotchas in a local SQLite database so future agent sessions can recall them.",
+      "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a local SQLite database so future agent sessions can recall them.",
     database: ".agents/memory.db (relative to cwd)",
     commands: {
       help: "Show this help message",
       add: {
-        usage:
-          "add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]",
+        usage: ADD_USAGE,
       },
       query: {
         usage:
@@ -686,11 +825,10 @@ if (
       },
       get: { usage: "get <id>" },
       update: {
-        usage:
-          "update <id> <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]",
+        usage: UPDATE_USAGE,
       },
       deprecate: {
-        usage: "deprecate <id> [--superseded-by <id>] [--updated-by <name>]",
+        usage: DEPRECATE_USAGE,
       },
       delete: { usage: "delete <id>" },
       suggest: {
@@ -716,7 +854,8 @@ if (
     },
     what_to_store: [
       "Architectural decisions (e.g. 'we chose Drizzle over Prisma because...')",
-      "Project conventions (e.g. 'all API routes return { data, error } shape')",
+      "Project references/docs (e.g. 'API fields for run status: running, errored, finished')",
+      "Point-in-time status snapshots (e.g. 'coverage audit: 82%, missing sdk/')",
       "Non-obvious gotchas (e.g. 'the users table uses UUIDs, not auto-increment')",
       "Environment/tooling notes (e.g. 'run machine-memory migrate after pulling main')",
       "User preferences (e.g. 'user prefers explicit error handling over try/catch')",
@@ -786,17 +925,21 @@ try {
   switch (command) {
     case "add": {
       const database = requireDb();
-      const content = args[0];
+      const positional = collectPositionalArgs(args, ADD_FLAGS_WITH_VALUES);
+      const contentFromArg = positional[0];
+      const contentFromFile = parseContentFromFileFlag(args);
+      if (contentFromArg && contentFromFile !== undefined) {
+        usageError(`Usage: ${ADD_USAGE}`);
+      }
+      const content = contentFromFile ?? contentFromArg;
       if (!content) {
-        usageError(
-          "Usage: add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]",
-        );
+        usageError(`Usage: ${ADD_USAGE}`);
       }
 
       const tags = getFlagValue(args, "--tags") ?? "";
       const memo = getFlagValue(args, "--context") ?? "";
       const memoryType = requireMemoryType(args) ?? "convention";
-      const certainty = requireCertainty(args) ?? "soft";
+      const certainty = requireCertainty(args) ?? "inferred";
       const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
       const updatedBy = getFlagValue(args, "--updated-by") ?? sourceAgent;
       const refs = parseRefsFlag(args) ?? [];
@@ -926,12 +1069,43 @@ try {
 
     case "update": {
       const database = requireDb();
-      const id = args[0];
-      const content = args[1];
-      if (!id || !content) {
-        usageError(
-          "Usage: update <id> <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]",
-        );
+      const positional = collectPositionalArgs(args, UPDATE_FLAGS_WITH_VALUES);
+      const matchQuery = getFlagValue(args, "--match");
+      const contentFromFile = parseContentFromFileFlag(args);
+
+      let targetId: number | undefined;
+      let contentFromArg: string | undefined;
+
+      if (matchQuery !== undefined) {
+        if (positional.length > 1) {
+          usageError(`Usage: ${UPDATE_USAGE}`);
+        }
+        contentFromArg = positional[0];
+        const matched = findMemoryByMatch(database, matchQuery);
+        if (!matched || typeof matched.id !== "number") {
+          usageError(`No active memory matched --match "${matchQuery}".`);
+        }
+        targetId = Number(matched.id);
+      } else {
+        const idRaw = positional[0];
+        contentFromArg = positional[1];
+        if (!idRaw) {
+          usageError(`Usage: ${UPDATE_USAGE}`);
+        }
+        const parsedId = Number(idRaw);
+        if (!Number.isInteger(parsedId)) {
+          usageError(`Invalid id: ${idRaw}`);
+        }
+        targetId = parsedId;
+      }
+
+      if (contentFromArg && contentFromFile !== undefined) {
+        usageError(`Usage: ${UPDATE_USAGE}`);
+      }
+
+      const content = contentFromFile ?? contentFromArg;
+      if (!content || targetId === undefined) {
+        usageError(`Usage: ${UPDATE_USAGE}`);
       }
 
       const tags = getFlagValue(args, "--tags");
@@ -980,27 +1154,46 @@ try {
         params.push(expiresAfterDays);
       }
 
-      params.push(Number(id));
+      params.push(targetId);
       runWithRetry(
         database,
         `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
         params,
       );
-      const updated = getMemoryById(database, Number(id));
+      const updated = getMemoryById(database, targetId);
       printJson(updated ?? { error: "Not found" });
       break;
     }
 
     case "deprecate": {
       const database = requireDb();
-      const id = args[0];
-      if (!id) {
-        usageError(
-          "Usage: deprecate <id> [--superseded-by <id>] [--updated-by <name>]",
-        );
+      const positional = collectPositionalArgs(args, DEPRECATE_FLAGS_WITH_VALUES);
+      const matchQuery = getFlagValue(args, "--match");
+
+      let targetId: number | undefined;
+      if (matchQuery !== undefined) {
+        if (positional.length > 0) {
+          usageError(`Usage: ${DEPRECATE_USAGE}`);
+        }
+        const matched = findMemoryByMatch(database, matchQuery);
+        if (!matched || typeof matched.id !== "number") {
+          usageError(`No active memory matched --match "${matchQuery}".`);
+        }
+        targetId = Number(matched.id);
+      } else {
+        const idRaw = positional[0];
+        if (!idRaw) {
+          usageError(`Usage: ${DEPRECATE_USAGE}`);
+        }
+        const parsedId = Number(idRaw);
+        if (!Number.isInteger(parsedId)) {
+          usageError(`Invalid id: ${idRaw}`);
+        }
+        targetId = parsedId;
       }
+
       const supersededBy = parseIntegerFlag(args, "--superseded-by");
-      if (supersededBy !== undefined && supersededBy === Number(id)) {
+      if (supersededBy !== undefined && supersededBy === targetId) {
         usageError("A memory cannot supersede itself.");
       }
       const updatedBy = getFlagValue(args, "--updated-by");
@@ -1019,14 +1212,14 @@ try {
         sets.push("last_updated_by = ?");
         params.push(updatedBy);
       }
-      params.push(Number(id));
+      params.push(targetId);
 
       runWithRetry(
         database,
         `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
         params,
       );
-      const row = getMemoryById(database, Number(id));
+      const row = getMemoryById(database, targetId);
       printJson(row ?? { error: "Not found" });
       break;
     }
@@ -1194,7 +1387,7 @@ try {
         const type = stringValue(memory.memory_type, "convention");
         byType[type] = (byType[type] ?? 0) + 1;
 
-        const certainty = stringValue(memory.certainty, "soft");
+        const certainty = normalizeCertaintyValue(memory.certainty);
         byCertainty[certainty] = (byCertainty[certainty] ?? 0) + 1;
 
         const tags = parseTags(stringValue(memory.tags));
@@ -1283,7 +1476,8 @@ try {
             ? entry.memory_type
             : "convention";
         const certaintyRaw =
-          typeof entry.certainty === "string" ? entry.certainty : "soft";
+          typeof entry.certainty === "string" ? entry.certainty : "inferred";
+        const certaintyNormalized = canonicalizeCertainty(certaintyRaw);
         const statusRaw =
           typeof entry.status === "string" ? entry.status : "active";
         const supersededBy =
@@ -1334,7 +1528,7 @@ try {
           });
           continue;
         }
-        if (!isCertainty(certaintyRaw)) {
+        if (!certaintyNormalized) {
           results.push({
             index,
             status: "skip",
@@ -1403,7 +1597,7 @@ try {
               sourceAgent,
               lastUpdatedBy,
               updateCount,
-              certaintyRaw,
+              certaintyNormalized,
               JSON.stringify(refs),
               expiresAfterDays,
               createdAt,
@@ -1434,7 +1628,7 @@ try {
             sourceAgent,
             lastUpdatedBy,
             updateCount,
-            certaintyRaw,
+            certaintyNormalized,
             JSON.stringify(refs),
             expiresAfterDays,
           ],

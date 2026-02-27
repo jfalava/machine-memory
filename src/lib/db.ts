@@ -140,7 +140,7 @@ function migrateSchema(database: Database) {
         source_agent TEXT DEFAULT '',
         last_updated_by TEXT DEFAULT '',
         update_count INTEGER NOT NULL DEFAULT 0,
-        certainty TEXT NOT NULL DEFAULT 'soft',
+        certainty TEXT NOT NULL DEFAULT 'inferred',
         refs TEXT NOT NULL DEFAULT '[]',
         expires_after_days INTEGER,
         created_at TEXT DEFAULT (datetime('now')),
@@ -265,7 +265,7 @@ function ensureMemoryTableColumns(database: Database) {
     },
     {
       name: "certainty",
-      sql: "ALTER TABLE memories ADD COLUMN certainty TEXT NOT NULL DEFAULT 'soft'",
+      sql: "ALTER TABLE memories ADD COLUMN certainty TEXT NOT NULL DEFAULT 'inferred'",
     },
     {
       name: "refs",
@@ -282,4 +282,17 @@ function ensureMemoryTableColumns(database: Database) {
       runWithRetry(database, migration.sql);
     }
   }
+
+  // Migrate legacy certainty values to the current vocabulary.
+  runWithRetry(
+    database,
+    `UPDATE memories
+       SET certainty = CASE certainty
+         WHEN 'hard' THEN 'verified'
+         WHEN 'soft' THEN 'inferred'
+         WHEN 'uncertain' THEN 'speculative'
+         ELSE certainty
+       END
+     WHERE certainty IN ('hard', 'soft', 'uncertain')`,
+  );
 }

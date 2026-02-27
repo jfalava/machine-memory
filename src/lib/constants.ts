@@ -16,9 +16,15 @@ export const MEMORY_TYPES = [
   "gotcha",
   "preference",
   "constraint",
+  "reference",
+  "status",
 ] as const;
 
-export const CERTAINTY_LEVELS = ["hard", "soft", "uncertain"] as const;
+export const CERTAINTY_LEVELS = [
+  "verified",
+  "inferred",
+  "speculative",
+] as const;
 export const MEMORY_STATUSES = [
   "active",
   "deprecated",

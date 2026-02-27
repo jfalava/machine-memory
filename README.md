@@ -1,6 +1,6 @@
 # machine-memory
 
-Persistent project-scoped memory for LLM agents. Stores facts, decisions, conventions, and gotchas in a local SQLite database so future agent sessions can recall them.
+Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a local SQLite database so future agent sessions can recall them.
 
 By default, the database lives at `.agents/memory.db` relative to the project root (git-ignored by default). You can override it with `MACHINE_MEMORY_DB_PATH` (absolute or cwd-relative path).
 
@@ -31,6 +31,7 @@ machine-memory add "Auth uses JWT with RS256" --no-conflicts
 machine-memory add "Auth uses JWT with RS256" --brief
 machine-memory add "Auth uses JWT with RS256" --json-min
 machine-memory add "Auth uses JWT with RS256" --quiet
+machine-memory add --from-file ./docs/api-field-notes.md --type "reference"
 ```
 
 #### Store richer metadata (type, certainty, provenance, refs, TTL hint)
@@ -39,7 +40,7 @@ machine-memory add "Auth uses JWT with RS256" --quiet
 machine-memory add "Sessions are cached for 5m" \
   --tags "auth,cache" \
   --type "decision" \
-  --certainty "hard" \
+  --certainty "verified" \
   --source-agent "gpt-5-codex" \
   --refs '["docs/adr/session-cache.md","https://github.com/org/repo/pull/123"]' \
   --expires-after-days 30
@@ -49,7 +50,7 @@ machine-memory add "Sessions are cached for 5m" \
 
 ```sh
 machine-memory query "auth"
-machine-memory query "auth" --type "decision" --certainty "hard"
+machine-memory query "auth" --type "decision" --certainty "verified"
 machine-memory query "non-english"
 machine-memory query "auth" --brief
 machine-memory query "auth" --json-min
@@ -61,7 +62,7 @@ machine-memory query "auth" --quiet
 ```sh
 machine-memory list
 machine-memory list --tags "database"
-machine-memory list --type "gotcha" --certainty "soft"
+machine-memory list --type "gotcha" --certainty "inferred"
 ```
 
 #### Get a single memory by ID
@@ -74,7 +75,8 @@ machine-memory get 1
 
 ```sh
 machine-memory update 1 "Auth uses JWT with RS256, keys in VAULT_* env vars" --tags "auth,security"
-machine-memory update 1 "Auth uses JWT with RS256" --certainty "hard" --updated-by "gpt-5-codex"
+machine-memory update 1 "Auth uses JWT with RS256" --certainty "verified" --updated-by "gpt-5-codex"
+machine-memory update --match "views schema" --from-file ./notes/views-schema.md --type "reference"
 ```
 
 #### Deprecate / supersede stale memories
@@ -82,6 +84,7 @@ machine-memory update 1 "Auth uses JWT with RS256" --certainty "hard" --updated-
 ```sh
 machine-memory deprecate 12
 machine-memory deprecate 12 --superseded-by 42
+machine-memory deprecate --match "legacy views status fields"
 ```
 
 #### Path-based suggestions for agents at task start
@@ -113,7 +116,7 @@ machine-memory stats
 ```sh
 machine-memory import memories.json
 machine-memory export
-machine-memory export --type "decision" --certainty "hard" --since "2026-02-01T00:00:00Z"
+machine-memory export --type "decision" --certainty "verified" --since "2026-02-01T00:00:00Z"
 ```
 
 #### Delete a memory
@@ -139,8 +142,8 @@ Each stored memory includes the original fields plus structured metadata:
 - `content`
 - `tags` (comma-separated string)
 - `context`
-- `memory_type` (`decision | convention | gotcha | preference | constraint`)
-- `certainty` (`hard | soft | uncertain`, defaults to `soft`)
+- `memory_type` (`decision | convention | gotcha | preference | constraint | reference | status`)
+- `certainty` (`verified | inferred | speculative`, defaults to `inferred`)
 - `status` (`active | deprecated | superseded_by`, defaults to `active`)
 - `superseded_by` (ID or `null`)
 - `source_agent`
@@ -163,8 +166,8 @@ Notes:
 
 ### Command Reference
 
-- `add <content>`
-  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--no-conflicts`, `--brief`, `--json-min`, `--quiet`
+- `add (<content> | --from-file <path>)`
+  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--from-file`, `--no-conflicts`, `--brief`, `--json-min`, `--quiet`
   - Returns inserted memory (plus `potential_conflicts` unless `--no-conflicts`/minimal output)
 - `query <search_term>`
   - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`, `--brief`, `--json-min`, `--quiet`
@@ -172,11 +175,11 @@ Notes:
 - `list`
   - Flags: `--tags`, `--type`, `--certainty`, `--status`, `--include-deprecated`
 - `get <id>`
-- `update <id> <content>`
-  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, `--refs`, `--expires-after-days <n|null>`
+- `update (<id> | --match <query>) (<content> | --from-file <path>)`
+  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, `--refs`, `--expires-after-days <n|null>`, `--match`, `--from-file`
   - Increments `update_count`
-- `deprecate <id>`
-  - Flags: `--superseded-by <id>`, `--updated-by`
+- `deprecate (<id> | --match <query>)`
+  - Flags: `--superseded-by <id>`, `--updated-by`, `--match`
   - Sets status to `deprecated` or `superseded_by`
 - `delete <id>`
 - `suggest --files "<csv paths>"`
@@ -202,6 +205,8 @@ Notes:
 This is **not** a general-purpose note-taking tool. It's for things an agent needs to remember across sessions:
 
 - **Architectural decisions** — "We chose Drizzle over Prisma because..."
+- **Reference docs/specs** — "Runs API status enum: `running | errored | finished`"
+- **Status snapshots** — "Coverage audit shows missing memory tags for `sdk/`"
 - **Project conventions** — "All API routes return `{ data, error }` shape"
 - **Non-obvious gotchas** — "The users table uses UUIDs, not auto-increment"
 - **Environment/tooling notes** — "Run `machine-memory migrate` after pulling main"
@@ -227,15 +232,15 @@ This project uses `machine-memory` for persistent agent context stored at `.agen
 
 After completing a task, store anything a future agent session would benefit from knowing:
 
-- `machine-memory add "description" --tags "tag1,tag2" --context "why this matters" --type "decision" --certainty "soft"`
+- `machine-memory add "description" --tags "tag1,tag2" --context "why this matters" --type "decision" --certainty "inferred"`
 
-Store: architectural decisions, project conventions, non-obvious gotchas, environment/tooling notes, and user preferences.
+Store: architectural decisions, reference docs/specs, status snapshots, project conventions, non-obvious gotchas, environment/tooling notes, and user preferences.
 Do NOT store: things obvious from reading the code, temporary information, or duplicates of existing memories.
 
 ### When to update, deprecate, or delete
 
-- If a memory is outdated, update it: `machine-memory update <id> "new content"`
-- If a memory is replaced by a newer one, deprecate it: `machine-memory deprecate <old_id> --superseded-by <new_id>`
+- If a memory is outdated, update it: `machine-memory update <id> "new content"` or `machine-memory update --match "topic" --from-file ./notes.md`
+- If a memory is replaced by a newer one, deprecate it: `machine-memory deprecate <old_id> --superseded-by <new_id>` or `machine-memory deprecate --match "old topic"`
 - If a memory is wrong or no longer relevant, delete it: `machine-memory delete <id>`
 ```
 
