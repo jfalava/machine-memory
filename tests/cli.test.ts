@@ -361,12 +361,10 @@ describe("update", () => {
     json("add", "item");
     const filePath = join(testDir, "updated.txt");
     writeFileSync(filePath, "updated from file\nwith details");
-    const result = json(
-      "update",
-      "1",
-      "--from-file",
-      "updated.txt",
-    ) as Record<string, unknown>;
+    const result = json("update", "1", "--from-file", "updated.txt") as Record<
+      string,
+      unknown
+    >;
     expect(result.content).toBe("updated from file\nwith details");
   });
 

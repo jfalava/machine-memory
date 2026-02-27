@@ -1167,7 +1167,10 @@ try {
 
     case "deprecate": {
       const database = requireDb();
-      const positional = collectPositionalArgs(args, DEPRECATE_FLAGS_WITH_VALUES);
+      const positional = collectPositionalArgs(
+        args,
+        DEPRECATE_FLAGS_WITH_VALUES,
+      );
       const matchQuery = getFlagValue(args, "--match");
 
       let targetId: number | undefined;
