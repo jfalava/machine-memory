@@ -321,6 +321,7 @@ type OutputMode = {
   brief: boolean;
   jsonMin: boolean;
   noConflicts: boolean;
+  quiet: boolean;
 };
 
 function parseOutputMode(args: string[]): OutputMode {
@@ -328,11 +329,12 @@ function parseOutputMode(args: string[]): OutputMode {
     brief: hasFlag(args, "--brief"),
     jsonMin: hasFlag(args, "--json-min"),
     noConflicts: hasFlag(args, "--no-conflicts"),
+    quiet: hasFlag(args, "--quiet"),
   };
 }
 
 function hasMinimalOutput(mode: OutputMode): boolean {
-  return mode.brief || mode.jsonMin;
+  return mode.brief || mode.jsonMin || mode.quiet;
 }
 
 function compactMemoryView(
@@ -530,6 +532,71 @@ function parseFileList(raw: string): string[] {
     .filter(Boolean);
 }
 
+function parseFileListJson(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+      throw new Error("Expected JSON string array");
+    }
+    return (parsed as string[]).map((item) => item.trim()).filter(Boolean);
+  } catch {
+    usageError(
+      'Invalid --files-json value. Provide a JSON array of paths, e.g. --files-json \'["src/a.ts","src/b.ts"]\'.',
+    );
+  }
+}
+
+function parseSuggestFiles(args: string[]): string[] {
+  const filesRaw = getFlagValue(args, "--files");
+  const filesJsonRaw = getFlagValue(args, "--files-json");
+  if (!filesRaw && !filesJsonRaw) {
+    usageError(
+      'Usage: suggest --files "src/auth/jwt.ts,src/middleware/session.ts" OR --files-json \'["src/auth/jwt.ts","src/middleware/session.ts"]\'',
+    );
+  }
+  if (filesRaw && filesJsonRaw) {
+    usageError("Use either --files or --files-json, not both.");
+  }
+  return filesJsonRaw ? parseFileListJson(filesJsonRaw) : parseFileList(filesRaw ?? "");
+}
+
+function parseSqliteErrorDetails(err: unknown): {
+  kind: "fts_parse" | "sqlite" | "unknown";
+  message: string;
+  hint?: string;
+} {
+  if (!(err instanceof Error)) {
+    return {
+      kind: "unknown",
+      message: "Unexpected failure while running command.",
+    };
+  }
+  const lower = err.message.toLowerCase();
+  if (
+    lower.includes("no such column") ||
+    lower.includes("no such table") ||
+    lower.includes("fts5: syntax error") ||
+    lower.includes("malformed match expression")
+  ) {
+    return {
+      kind: "fts_parse",
+      message: "Search query could not be parsed by SQLite FTS.",
+      hint: "Try simpler terms without punctuation, or wrap file paths in --files-json for shell-safe input.",
+    };
+  }
+  if (lower.includes("sqlite")) {
+    return {
+      kind: "sqlite",
+      message: "SQLite command failed.",
+      hint: "Retry once; if this persists, run `machine-memory migrate` and verify DB permissions/path.",
+    };
+  }
+  return {
+    kind: "unknown",
+    message: err.message,
+  };
+}
+
 function parseSinceDate(args: string[]): string | undefined {
   const value = getFlagValue(args, "--since");
   if (value === undefined) {
@@ -563,7 +630,7 @@ function assertFileExists(path: string): string {
 
 const [command, ...args] = process.argv.slice(2);
 
-if (!command || command === "help") {
+if (!command || command === "help" || command === "--help" || command === "-h") {
   printJson({
     name: "machine-memory",
     version: VERSION,
@@ -574,11 +641,11 @@ if (!command || command === "help") {
       help: "Show this help message",
       add: {
         usage:
-          "add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min]",
+          "add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]",
       },
       query: {
         usage:
-          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--brief|--json-min]",
+          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--brief|--json-min|--quiet]",
       },
       list: {
         usage:
@@ -593,7 +660,10 @@ if (!command || command === "help") {
         usage: "deprecate <id> [--superseded-by <id>] [--updated-by <name>]",
       },
       delete: { usage: "delete <id>" },
-      suggest: { usage: 'suggest --files "src/a.ts,src/b.ts" [--brief|--json-min]' },
+      suggest: {
+        usage:
+          'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--brief|--json-min|--quiet]',
+      },
       migrate: { usage: "migrate" },
       coverage: { usage: "coverage [--root <path>]" },
       gc: { usage: "gc --dry-run" },
@@ -672,13 +742,14 @@ function requireDb(): Database {
   return memoryDb;
 }
 
-switch (command) {
+try {
+  switch (command) {
   case "add": {
     const database = requireDb();
     const content = args[0];
     if (!content) {
       usageError(
-        "Usage: add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>]",
+        "Usage: add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]",
       );
     }
 
@@ -720,7 +791,7 @@ switch (command) {
     );
 
     const created = getMemoryById(database, Number(result.lastInsertRowid));
-    if (outputMode.jsonMin) {
+    if (outputMode.jsonMin || outputMode.quiet) {
       printJson({ id: created?.id ?? result.lastInsertRowid });
       break;
     }
@@ -756,8 +827,15 @@ switch (command) {
     }
 
     const filters = parseCommonFilters(args);
+    const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
+    const ftsQuery = buildFtsQueryFromTerms(queryTokens);
+    if (!ftsQuery) {
+      printJson(queryEmptyResultPayload(term, filters, queryTokens));
+      break;
+    }
+
     const clauses = ["memories_fts MATCH ?"];
-    const params: (string | number)[] = [term];
+    const params: (string | number)[] = [ftsQuery];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
 
     const rows = allWithRetry(
@@ -766,17 +844,16 @@ switch (command) {
        FROM memories m
        JOIN memories_fts ON m.id = memories_fts.rowid
        WHERE ${clauses.join(" AND ")}
-       ORDER BY bm25(memories_fts)`,
+      ORDER BY bm25(memories_fts)`,
       params,
     );
 
-    const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
     const results = shapeRowsWithScore(rows as unknown[], queryTokens);
     if (results.length === 0) {
       printJson(queryEmptyResultPayload(term, filters, queryTokens));
       break;
     }
-    if (outputMode.jsonMin) {
+    if (outputMode.jsonMin || outputMode.quiet) {
       printJson({ count: results.length, ids: results.map((entry) => entry.id) });
       break;
     }
@@ -929,11 +1006,7 @@ switch (command) {
 
   case "suggest": {
     const database = requireDb();
-    const filesRaw = getFlagValue(args, "--files");
-    if (!filesRaw) {
-      usageError('Usage: suggest --files "src/auth/jwt.ts,src/middleware/session.ts"');
-    }
-    const files = parseFileList(filesRaw);
+    const files = parseSuggestFiles(args);
     const derivedTerms = extractPathTermsFromFiles(files);
     const ftsQuery = buildFtsQueryFromTerms(derivedTerms);
     if (!ftsQuery) {
@@ -958,7 +1031,7 @@ switch (command) {
     );
     const results = shapeRowsWithScore(rows as unknown[], derivedTerms);
 
-    if (outputMode.jsonMin) {
+    if (outputMode.jsonMin || outputMode.quiet) {
       printJson({ count: results.length, ids: results.map((entry) => entry.id) });
       break;
     }
@@ -1080,11 +1153,12 @@ switch (command) {
       }
 
       const updatedMs = sqliteDateToMs(memory.updated_at);
-      if (updatedMs !== null) {
-        const ageDays = (now - updatedMs) / (1000 * 60 * 60 * 24);
-        if (ageDays > 90) {
-          staleCount += 1;
-        }
+      if (updatedMs === null) {
+        continue;
+      }
+      const ageDays = (now - updatedMs) / (1000 * 60 * 60 * 24);
+      if (ageDays > 90) {
+        staleCount += 1;
       }
     }
 
@@ -1322,13 +1396,28 @@ switch (command) {
     break;
   }
 
-  default:
-    printJson({
-      error: `Unknown command: ${command}. Run 'machine-memory help' for usage.`,
-    });
-    process.exit(1);
-}
-
-if (memoryDb) {
-  memoryDb.close();
+    default:
+      printJson({
+        error: `Unknown command: ${command}. Run 'machine-memory help' for usage.`,
+      });
+      process.exit(1);
+  }
+} catch (err) {
+  const details = parseSqliteErrorDetails(err);
+  const payload: Record<string, unknown> = {
+    error: details.message,
+    command,
+  };
+  if (details.hint) {
+    payload.hint = details.hint;
+  }
+  if (err instanceof Error) {
+    payload.details = err.message;
+  }
+  printJson(payload);
+  process.exit(1);
+} finally {
+  if (memoryDb) {
+    memoryDb.close();
+  }
 }

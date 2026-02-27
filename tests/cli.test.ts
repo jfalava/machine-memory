@@ -134,8 +134,21 @@ describe("help", () => {
     expect(parsed.what_to_store).toBeInstanceOf(Array);
   });
 
+  test("supports --help alias", () => {
+    const result = exec("--help");
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    expect(result.exitCode).toBe(0);
+    expect(parsed.name).toBe("machine-memory");
+    expect(parsed.commands).toBeDefined();
+  });
+
   test("does not create database", () => {
     exec("help");
+    expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(false);
+  });
+
+  test("--help does not create database", () => {
+    exec("--help");
     expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(false);
   });
 });
@@ -242,6 +255,14 @@ describe("add", () => {
 
   test("supports --json-min on add", () => {
     const result = json("add", "json min output", "--json-min") as Record<
+      string,
+      unknown
+    >;
+    expect(result).toEqual({ id: 1 });
+  });
+
+  test("supports --quiet on add", () => {
+    const result = json("add", "quiet output", "--quiet") as Record<
       string,
       unknown
     >;
@@ -454,6 +475,32 @@ describe("query", () => {
     const result = json("query", "jwt", "--json-min") as Record<string, unknown>;
     expect(result.count).toBe(1);
     expect(result.ids).toEqual([1]);
+  });
+
+  test("handles hyphenated search terms safely", () => {
+    json("add", "Non-English docs require locale fallback", "--tags", "blog,non-english");
+    const one = json("query", "non-english") as Record<string, unknown>[];
+    expect(one).toHaveLength(1);
+    const two = json("query", "blog non-english tags") as Record<string, unknown>[];
+    expect(two).toHaveLength(1);
+  });
+
+  test("supports --quiet output on query", () => {
+    json("add", "JWT signing key policy", "--tags", "auth,jwt");
+    const result = json("query", "jwt", "--quiet") as Record<string, unknown>;
+    expect(result.count).toBe(1);
+    expect(result.ids).toEqual([1]);
+  });
+
+  test("returns actionable error payload when FTS schema is missing", () => {
+    json("add", "temporary content");
+    dbRun("DROP TABLE memories_fts");
+    const result = exec("query", "temporary");
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Search query could not be parsed by SQLite FTS");
+    expect(typeof parsed.hint).toBe("string");
+    expect(typeof parsed.details).toBe("string");
   });
 
   test("FTS stays in sync after update", () => {
@@ -679,6 +726,60 @@ describe("checklist: suggest --files", () => {
     expect(typeof result.count).toBe("number");
     expect(Array.isArray(result.ids)).toBe(true);
   });
+
+  test("supports --files-json for shell-safe paths", () => {
+    json(
+      "add",
+      "Dynamic blog slug route conventions",
+      "--tags",
+      "blog,slug,nextjs",
+    );
+    const result = json(
+      "suggest",
+      "--files-json",
+      '["src/app/blog/$slug.tsx","src/app/blog/[slug]/page.tsx"]',
+      "--json-min",
+    ) as Record<string, unknown>;
+    expect(typeof result.count).toBe("number");
+    expect(Array.isArray(result.ids)).toBe(true);
+  });
+
+  test("supports --quiet output on suggest", () => {
+    json(
+      "add",
+      "JWT auth middleware uses RS256",
+      "--tags",
+      "auth,jwt,middleware",
+    );
+    const result = json(
+      "suggest",
+      "--files",
+      "src/auth/jwt.ts,src/middleware/session.ts",
+      "--quiet",
+    ) as Record<string, unknown>;
+    expect(typeof result.count).toBe("number");
+    expect(Array.isArray(result.ids)).toBe(true);
+  });
+
+  test("errors when both --files and --files-json are provided", () => {
+    const result = exec(
+      "suggest",
+      "--files",
+      "src/auth/jwt.ts",
+      "--files-json",
+      '["src/auth/jwt.ts"]',
+    );
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Use either --files or --files-json");
+  });
+
+  test("errors on invalid --files-json payload", () => {
+    const result = exec("suggest", "--files-json", "[not-json]");
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Invalid --files-json value");
+  });
 });
 
 describe("checklist: coverage command", () => {
@@ -876,8 +977,7 @@ describe("output format", () => {
 
 // --- upgrade ---
 
-// TODO: mock server (Bun.serve / node:http) keeps the event loop alive and hangs bun test
-describe.skip("upgrade", () => {
+describe("upgrade", () => {
   let fakeBinPath: string;
 
   beforeEach(() => {

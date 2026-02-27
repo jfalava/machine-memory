@@ -19,7 +19,7 @@ bun run build
 
 All output is JSON — designed to be parsed by an LLM agent, not read by a human.
 
-Run `machine-memory help` to get full usage information as JSON.
+Run `machine-memory help` (or `machine-memory --help`) to get full usage information as JSON.
 
 ### Commands
 
@@ -29,6 +29,7 @@ machine-memory add "Auth uses JWT with RS256" --tags "auth,architecture" --conte
 machine-memory add "Auth uses JWT with RS256" --no-conflicts
 machine-memory add "Auth uses JWT with RS256" --brief
 machine-memory add "Auth uses JWT with RS256" --json-min
+machine-memory add "Auth uses JWT with RS256" --quiet
 
 # Store richer metadata (type, certainty, provenance, refs, TTL hint)
 machine-memory add "Sessions are cached for 5m" \
@@ -42,8 +43,10 @@ machine-memory add "Sessions are cached for 5m" \
 # Full-text search
 machine-memory query "auth"
 machine-memory query "auth" --type "decision" --certainty "hard"
+machine-memory query "non-english"
 machine-memory query "auth" --brief
 machine-memory query "auth" --json-min
+machine-memory query "auth" --quiet
 
 # List all memories (or filter by tag)
 machine-memory list
@@ -65,6 +68,8 @@ machine-memory deprecate 12 --superseded-by 42
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts"
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --brief
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --json-min
+machine-memory suggest --files-json '["src/app/blog/$slug.tsx","src/app/blog/[slug]/page.tsx"]'
+machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --quiet
 
 # Apply/repair schema migration explicitly
 machine-memory migrate
@@ -117,14 +122,15 @@ Notes:
 - `query` and `suggest` return a numeric `score` and are sorted descending by score.
 - Empty `query` results return a diagnostic object with `derived_terms`, `filters`, and `hints`.
 - Reads open the DB in query-only mode; schema writes run via write commands and `migrate`.
+- For shell-expanded paths like `$slug.tsx`, prefer single quotes or `--files-json`.
 
 ### Command Reference
 
 - `add <content>`
-  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--no-conflicts`, `--brief`, `--json-min`
+  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--no-conflicts`, `--brief`, `--json-min`, `--quiet`
   - Returns inserted memory (plus `potential_conflicts` unless `--no-conflicts`/minimal output)
 - `query <search_term>`
-  - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`, `--brief`, `--json-min`
+  - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`, `--brief`, `--json-min`, `--quiet`
   - Returns ranked matches with `score`; empty results return diagnostics/hints
 - `list`
   - Flags: `--tags`, `--type`, `--certainty`, `--status`, `--include-deprecated`
@@ -137,7 +143,8 @@ Notes:
   - Sets status to `deprecated` or `superseded_by`
 - `delete <id>`
 - `suggest --files "<csv paths>"`
-  - Flags: `--brief`, `--json-min`
+  - Alternate input: `--files-json '["path/one.ts","path/two.ts"]'` (shell-safe for `$` paths)
+  - Flags: `--brief`, `--json-min`, `--quiet`
   - Derives keywords from file paths and runs FTS-based suggestions
 - `migrate`
   - Ensures schema/FTS/triggers are up to date
