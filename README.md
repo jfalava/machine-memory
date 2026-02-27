@@ -239,7 +239,8 @@ Do NOT store: things obvious from reading the code, temporary information, or du
 - If a memory is wrong or no longer relevant, delete it: `machine-memory delete <id>`
 ```
 
-> [!NOTE] Add the following to your `.gitignore` (the `.db-shm` and `.db-wal` files are SQLite runtime artifacts):  
+> [!NOTE]
+> Add the following to your `.gitignore` (the `.db-shm` and `.db-wal` files are SQLite runtime artifacts):  
 > `.agents/memory.db-shm`  
 > `.agents/memory.db-wal`
 
