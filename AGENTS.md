@@ -2,12 +2,6 @@
 
 This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
 
-Add the following to your `.gitignore` (the `.db-shm` and `.db-wal` files are SQLite runtime artifacts):
-
-```gitignore
-**/memory.db-*
-```
-
 ## Before starting work
 
 - Run `machine-memory suggest --files "<paths you expect to touch>"` to get relevant memories before coding.
