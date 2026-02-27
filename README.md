@@ -23,15 +23,19 @@ Run `machine-memory help` (or `machine-memory --help`) to get full usage informa
 
 ### Commands
 
+#### Store a memory
+
 ```sh
-# Store a memory
 machine-memory add "Auth uses JWT with RS256" --tags "auth,architecture" --context "Found in src/auth/jwt.ts"
 machine-memory add "Auth uses JWT with RS256" --no-conflicts
 machine-memory add "Auth uses JWT with RS256" --brief
 machine-memory add "Auth uses JWT with RS256" --json-min
 machine-memory add "Auth uses JWT with RS256" --quiet
+```
 
-# Store richer metadata (type, certainty, provenance, refs, TTL hint)
+#### Store richer metadata (type, certainty, provenance, refs, TTL hint)
+
+```sh
 machine-memory add "Sessions are cached for 5m" \
   --tags "auth,cache" \
   --type "decision" \
@@ -39,55 +43,88 @@ machine-memory add "Sessions are cached for 5m" \
   --source-agent "gpt-5-codex" \
   --refs '["docs/adr/session-cache.md","https://github.com/org/repo/pull/123"]' \
   --expires-after-days 30
+```
 
-# Full-text search
+#### Full-text search
+
+```sh
 machine-memory query "auth"
 machine-memory query "auth" --type "decision" --certainty "hard"
 machine-memory query "non-english"
 machine-memory query "auth" --brief
 machine-memory query "auth" --json-min
 machine-memory query "auth" --quiet
+```
 
-# List all memories (or filter by tag)
+#### List all memories (or filter by tag)
+
+```sh
 machine-memory list
 machine-memory list --tags "database"
 machine-memory list --type "gotcha" --certainty "soft"
+```
 
-# Get a single memory by ID
+#### Get a single memory by ID
+
+```sh
 machine-memory get 1
+```
 
-# Update a memory
+#### Update a memory
+
+```sh
 machine-memory update 1 "Auth uses JWT with RS256, keys in VAULT_* env vars" --tags "auth,security"
 machine-memory update 1 "Auth uses JWT with RS256" --certainty "hard" --updated-by "gpt-5-codex"
+```
 
-# Deprecate / supersede stale memories
+#### Deprecate / supersede stale memories
+
+```sh
 machine-memory deprecate 12
 machine-memory deprecate 12 --superseded-by 42
+```
 
-# Path-based suggestions for agents at task start
+#### Path-based suggestions for agents at task start
+
+```sh
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts"
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --brief
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --json-min
 machine-memory suggest --files-json '["src/app/blog/$slug.tsx","src/app/blog/[slug]/page.tsx"]'
 machine-memory suggest --files "src/auth/jwt.ts,src/middleware/session.ts" --quiet
+```
 
-# Apply/repair schema migration explicitly
+#### Apply/repair schema migration explicitly
+
+```sh
 machine-memory migrate
+```
 
-# Coverage / health checks
+#### Coverage / health checks
+
+```sh
 machine-memory coverage --root .
 machine-memory gc --dry-run
 machine-memory stats
+```
 
-# Bulk sync
+#### Bulk sync
+
+```sh
 machine-memory import memories.json
 machine-memory export
 machine-memory export --type "decision" --certainty "hard" --since "2026-02-01T00:00:00Z"
+```
 
-# Delete a memory
+#### Delete a memory
+
+```sh
 machine-memory delete 1
+```
 
-# Show version
+#### Show version
+
+```sh
 machine-memory version
 
 # Self-update to latest release
