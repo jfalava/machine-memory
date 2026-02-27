@@ -51,6 +51,20 @@ function exec(...args: string[]): { stdout: string; exitCode: number } {
   };
 }
 
+async function execAsync(
+  ...args: string[]
+): Promise<{ stdout: string; exitCode: number }> {
+  const child = Bun.spawn(["bun", CLI, ...args], {
+    cwd: testDir,
+    env: { ...process.env, ...extraEnv },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stdout = await new Response(child.stdout).text();
+  const exitCode = await child.exited;
+  return { stdout: stdout.trim(), exitCode };
+}
+
 function parseJsonValue(text: string): unknown {
   return JSON.parse(text) as unknown;
 }
@@ -66,6 +80,15 @@ function json(
   ...args: string[]
 ): Record<string, unknown> | Record<string, unknown>[] {
   const { stdout } = exec(...args);
+  return parseJsonValue(stdout) as
+    | Record<string, unknown>
+    | Record<string, unknown>[];
+}
+
+async function jsonAsync(
+  ...args: string[]
+): Promise<Record<string, unknown> | Record<string, unknown>[]> {
+  const { stdout } = await execAsync(...args);
   return parseJsonValue(stdout) as
     | Record<string, unknown>
     | Record<string, unknown>[];
@@ -492,15 +515,14 @@ describe("query", () => {
     expect(result.ids).toEqual([1]);
   });
 
-  test("returns actionable error payload when FTS schema is missing", () => {
+  test("returns actionable error payload when schema is missing", () => {
     json("add", "temporary content");
     dbRun("DROP TABLE memories_fts");
     const result = exec("query", "temporary");
     const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
-    expect(parsed.error).toContain("Search query could not be parsed by SQLite FTS");
-    expect(typeof parsed.hint).toBe("string");
-    expect(typeof parsed.details).toBe("string");
+    expect(parsed.error).toContain("Database schema is outdated");
+    expect(parsed.error).toContain("machine-memory migrate");
   });
 
   test("FTS stays in sync after update", () => {
@@ -987,27 +1009,27 @@ describe("upgrade", () => {
     extraEnv["MACHINE_MEMORY_BIN_PATH"] = fakeBinPath;
   });
 
-  test("reports already up to date when versions match", () => {
+  test("reports already up to date when versions match", async () => {
     mockHandler = (_req, res) => {
       mockJson(res, 200, { tag_name: "v0.1.0", assets: [] });
     };
-    const result = json("upgrade") as Record<string, unknown>;
+    const result = (await jsonAsync("upgrade")) as Record<string, unknown>;
     expect(result.message).toBe("Already up to date");
     expect(result.version).toBe("0.1.0");
   });
 
-  test("errors when API returns non-200", () => {
+  test("errors when API returns non-200", async () => {
     mockHandler = (_req, res) => {
       res.writeHead(404);
       res.end("Not Found");
     };
-    const result = exec("upgrade");
+    const result = await execAsync("upgrade");
     const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("Failed to fetch latest release: 404");
   });
 
-  test("errors when no matching binary for platform", () => {
+  test("errors when no matching binary for platform", async () => {
     mockHandler = (_req, res) => {
       mockJson(res, 200, {
         tag_name: "v99.0.0",
@@ -1016,14 +1038,14 @@ describe("upgrade", () => {
         ],
       });
     };
-    const result = exec("upgrade");
+    const result = await execAsync("upgrade");
     const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("No binary found");
     expect(parsed.available).toEqual(["machine-memory-fake-arch"]);
   });
 
-  test("errors when binary download fails", () => {
+  test("errors when binary download fails", async () => {
     const platform = process.platform === "darwin" ? "darwin" : "linux";
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const assetName = `machine-memory-${platform}-${arch}`;
@@ -1044,13 +1066,13 @@ describe("upgrade", () => {
       res.writeHead(500);
       res.end("Server Error");
     };
-    const result = exec("upgrade");
+    const result = await execAsync("upgrade");
     const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("Download failed: 500");
   });
 
-  test("successfully downloads and replaces binary", () => {
+  test("successfully downloads and replaces binary", async () => {
     const platform = process.platform === "darwin" ? "darwin" : "linux";
     const arch = process.arch === "arm64" ? "arm64" : "x64";
     const assetName = `machine-memory-${platform}-${arch}`;
@@ -1073,7 +1095,7 @@ describe("upgrade", () => {
       res.end(newContent);
     };
 
-    const result = json("upgrade") as Record<string, unknown>;
+    const result = (await jsonAsync("upgrade")) as Record<string, unknown>;
     expect(result.message).toBe("Upgraded");
     expect(result.from).toBe("0.1.0");
     expect(result.to).toBe("2.0.0");
@@ -1085,11 +1107,11 @@ describe("upgrade", () => {
     expect(existsSync(`${fakeBinPath}.tmp`)).toBe(false);
   });
 
-  test("does not create database", () => {
+  test("does not create database", async () => {
     mockHandler = (_req, res) => {
       mockJson(res, 200, { tag_name: "v0.1.0", assets: [] });
     };
-    exec("upgrade");
+    await execAsync("upgrade");
     expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(false);
   });
 });
