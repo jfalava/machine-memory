@@ -1,9 +1,4 @@
-import {
-  chmodSync,
-  existsSync,
-  renameSync,
-  unlinkSync,
-} from "node:fs";
+import { chmodSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { printJson } from "./cli";
 import { REPO, VERSION } from "./constants";
 

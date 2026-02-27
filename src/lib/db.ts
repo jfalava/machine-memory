@@ -4,9 +4,13 @@ import { existsSync, mkdirSync } from "node:fs";
 import { DB_PATH } from "./constants";
 
 const SCHEMA_VERSION = 1;
-const BUSY_TIMEOUT_MS = Number(process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000);
+const BUSY_TIMEOUT_MS = Number(
+  process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
+);
 const BUSY_RETRIES = Number(process.env["MACHINE_MEMORY_BUSY_RETRIES"] ?? 6);
-const BUSY_BACKOFF_MS = Number(process.env["MACHINE_MEMORY_BUSY_BACKOFF_MS"] ?? 25);
+const BUSY_BACKOFF_MS = Number(
+  process.env["MACHINE_MEMORY_BUSY_BACKOFF_MS"] ?? 25,
+);
 
 export type DbAccessMode = "read" | "write";
 
@@ -17,7 +21,10 @@ export function ensureDb(mode: DbAccessMode = "write"): Database {
   }
 
   const instance = new Database(DB_PATH);
-  runWithRetry(instance, `PRAGMA busy_timeout = ${Math.max(0, BUSY_TIMEOUT_MS)}`);
+  runWithRetry(
+    instance,
+    `PRAGMA busy_timeout = ${Math.max(0, BUSY_TIMEOUT_MS)}`,
+  );
 
   if (mode === "write") {
     migrateSchema(instance);
@@ -77,7 +84,8 @@ function isBusyError(err: unknown): boolean {
   if (candidate.code === "SQLITE_BUSY" || candidate.code === "SQLITE_LOCKED") {
     return true;
   }
-  const message = typeof candidate.message === "string" ? candidate.message : "";
+  const message =
+    typeof candidate.message === "string" ? candidate.message : "";
   return message.toLowerCase().includes("database is locked");
 }
 
@@ -181,7 +189,10 @@ function migrateSchema(database: Database) {
     `,
     );
     if (needsFtsRebuild) {
-      runWithRetry(database, "INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')");
+      runWithRetry(
+        database,
+        "INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')",
+      );
     }
     runWithRetry(database, `PRAGMA user_version = ${SCHEMA_VERSION}`);
     runWithRetry(database, "COMMIT");

@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 let testDir: string;
 
 const macArch = process.arch === "arm64" ? "arm64" : "x64";
-const BIN = join(import.meta.dir, "..", "dist", `machine-memory-darwin-${macArch}`);
+const BIN = join(
+  import.meta.dir,
+  "..",
+  "dist",
+  `machine-memory-darwin-${macArch}`,
+);
 
 function execBin(...args: string[]) {
   const result = Bun.spawnSync([BIN, ...args], {

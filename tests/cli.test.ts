@@ -15,6 +15,7 @@ import {
 } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { VERSION } from "../src/lib/constants";
 
 const CLI = join(import.meta.dir, "..", "src", "app.ts");
 let testDir: string;
@@ -190,10 +191,10 @@ describe("unknown command", () => {
 // --- version ---
 
 describe("version", () => {
-  test("returns version as JSON", () => {
-    const result = json("version");
+  test("returns version as JSON matching package.json", () => {
+    const result = json("version") as Record<string, unknown>;
     expect(result).toHaveProperty("version");
-    expect(typeof (result as Record<string, unknown>).version).toBe("string");
+    expect(result.version).toBe(VERSION);
   });
 
   test("does not create database", () => {
@@ -495,16 +496,27 @@ describe("query", () => {
 
   test("supports --json-min output on query", () => {
     json("add", "JWT signing key policy", "--tags", "auth,jwt");
-    const result = json("query", "jwt", "--json-min") as Record<string, unknown>;
+    const result = json("query", "jwt", "--json-min") as Record<
+      string,
+      unknown
+    >;
     expect(result.count).toBe(1);
     expect(result.ids).toEqual([1]);
   });
 
   test("handles hyphenated search terms safely", () => {
-    json("add", "Non-English docs require locale fallback", "--tags", "blog,non-english");
+    json(
+      "add",
+      "Non-English docs require locale fallback",
+      "--tags",
+      "blog,non-english",
+    );
     const one = json("query", "non-english") as Record<string, unknown>[];
     expect(one).toHaveLength(1);
-    const two = json("query", "blog non-english tags") as Record<string, unknown>[];
+    const two = json("query", "blog non-english tags") as Record<
+      string,
+      unknown
+    >[];
     expect(two).toHaveLength(1);
   });
 
@@ -549,12 +561,10 @@ describe("checklist: deprecation and invalidation", () => {
     json("add", "legacy auth token format");
     json("add", "new auth token format");
 
-    const deprecated = json(
-      "deprecate",
-      "1",
-      "--superseded-by",
-      "2",
-    ) as Record<string, unknown>;
+    const deprecated = json("deprecate", "1", "--superseded-by", "2") as Record<
+      string,
+      unknown
+    >;
     expect(deprecated.status).toBe("superseded_by");
     expect(deprecated.superseded_by).toBe(2);
 
@@ -576,16 +586,17 @@ describe("checklist: structured memory_type", () => {
     json("add", "routing rule alpha", "--type", "decision");
     json("add", "routing rule beta", "--type", "gotcha");
 
-    const listed = json("list", "--type", "decision") as Record<string, unknown>[];
+    const listed = json("list", "--type", "decision") as Record<
+      string,
+      unknown
+    >[];
     expect(listed).toHaveLength(1);
     expect(listed[0]?.memory_type).toBe("decision");
 
-    const queried = json(
-      "query",
-      "routing",
-      "--type",
-      "decision",
-    ) as Record<string, unknown>[];
+    const queried = json("query", "routing", "--type", "decision") as Record<
+      string,
+      unknown
+    >[];
     expect(queried).toHaveLength(1);
     expect(queried[0]?.id).toBe(1);
 
@@ -640,7 +651,10 @@ describe("checklist: certainty field", () => {
     ) as Record<string, unknown>;
     expect(updated.certainty).toBe("hard");
 
-    const listed = json("list", "--certainty", "hard") as Record<string, unknown>[];
+    const listed = json("list", "--certainty", "hard") as Record<
+      string,
+      unknown
+    >[];
     expect(listed).toHaveLength(1);
     expect(listed[0]?.id).toBe(1);
   });
@@ -698,11 +712,16 @@ describe("checklist: query result scoring", () => {
       "gpt-5-codex",
     );
 
-    const result = json("query", "cache invalidation") as Record<string, unknown>[];
+    const result = json("query", "cache invalidation") as Record<
+      string,
+      unknown
+    >[];
     expect(result.length).toBeGreaterThanOrEqual(2);
     expect(typeof result[0]?.score).toBe("number");
     expect(typeof result[1]?.score).toBe("number");
-    expect(Number(result[0]?.score)).toBeGreaterThanOrEqual(Number(result[1]?.score));
+    expect(Number(result[0]?.score)).toBeGreaterThanOrEqual(
+      Number(result[1]?.score),
+    );
     expect(result[0]?.id).toBe(1);
   });
 });
@@ -863,7 +882,14 @@ describe("checklist: ttl and gc", () => {
 
 describe("checklist: stats command", () => {
   test("returns memory health breakdowns and stale/no-tag counts", () => {
-    json("add", "old architecture fact", "--type", "decision", "--certainty", "hard");
+    json(
+      "add",
+      "old architecture fact",
+      "--type",
+      "decision",
+      "--certainty",
+      "hard",
+    );
     json(
       "add",
       "db gotcha",
@@ -926,7 +952,10 @@ describe("checklist: bulk import", () => {
     expect(statuses).toContain("conflict");
     expect(statuses).toContain("success");
 
-    const imported = json("list", "--tags", "imported") as Record<string, unknown>[];
+    const imported = json("list", "--tags", "imported") as Record<
+      string,
+      unknown
+    >[];
     expect(imported).toHaveLength(1);
   });
 });
@@ -968,11 +997,10 @@ describe("checklist: export command", () => {
     expect(filtered[0]?.id).toBe(1);
     expect(filtered[0]?.status).toBe("active");
 
-    const future = json(
-      "export",
-      "--since",
-      "2999-01-01T00:00:00Z",
-    ) as Record<string, unknown>[];
+    const future = json("export", "--since", "2999-01-01T00:00:00Z") as Record<
+      string,
+      unknown
+    >[];
     expect(future).toEqual([]);
   });
 });
@@ -1011,11 +1039,11 @@ describe("upgrade", () => {
 
   test("reports already up to date when versions match", async () => {
     mockHandler = (_req, res) => {
-      mockJson(res, 200, { tag_name: "v0.1.0", assets: [] });
+      mockJson(res, 200, { tag_name: `v${VERSION}`, assets: [] });
     };
     const result = (await jsonAsync("upgrade")) as Record<string, unknown>;
     expect(result.message).toBe("Already up to date");
-    expect(result.version).toBe("0.1.0");
+    expect(result.version).toBe(VERSION);
   });
 
   test("errors when API returns non-200", async () => {
@@ -1097,7 +1125,7 @@ describe("upgrade", () => {
 
     const result = (await jsonAsync("upgrade")) as Record<string, unknown>;
     expect(result.message).toBe("Upgraded");
-    expect(result.from).toBe("0.1.0");
+    expect(result.from).toBe(VERSION);
     expect(result.to).toBe("2.0.0");
 
     const replaced = readFileSync(fakeBinPath, "utf-8");
@@ -1109,7 +1137,7 @@ describe("upgrade", () => {
 
   test("does not create database", async () => {
     mockHandler = (_req, res) => {
-      mockJson(res, 200, { tag_name: "v0.1.0", assets: [] });
+      mockJson(res, 200, { tag_name: `v${VERSION}`, assets: [] });
     };
     await execAsync("upgrade");
     expect(existsSync(join(testDir, ".agents", "memory.db"))).toBe(false);

@@ -1,6 +1,7 @@
 import { isAbsolute, resolve } from "node:path";
+import pkg from "../../package.json";
 
-export const VERSION = "0.1.0";
+export const VERSION = pkg.version;
 export const REPO = "jfalava/machine-memory";
 const configuredDbPath = process.env["MACHINE_MEMORY_DB_PATH"];
 export const DB_PATH = configuredDbPath
@@ -18,7 +19,11 @@ export const MEMORY_TYPES = [
 ] as const;
 
 export const CERTAINTY_LEVELS = ["hard", "soft", "uncertain"] as const;
-export const MEMORY_STATUSES = ["active", "deprecated", "superseded_by"] as const;
+export const MEMORY_STATUSES = [
+  "active",
+  "deprecated",
+  "superseded_by",
+] as const;
 
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 export type Certainty = (typeof CERTAINTY_LEVELS)[number];

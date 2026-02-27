@@ -27,7 +27,10 @@ function isMemoryStatus(value: string): value is MemoryStatus {
   return (MEMORY_STATUSES as readonly string[]).includes(value);
 }
 
-function requireMemoryType(args: string[], flag = "--type"): MemoryType | undefined {
+function requireMemoryType(
+  args: string[],
+  flag = "--type",
+): MemoryType | undefined {
   const raw = getFlagValue(args, flag);
   if (raw === undefined) {
     return undefined;
@@ -58,7 +61,10 @@ function requireCertainty(
   return raw;
 }
 
-function requireStatus(args: string[], flag = "--status"): MemoryStatus | undefined {
+function requireStatus(
+  args: string[],
+  flag = "--status",
+): MemoryStatus | undefined {
   const raw = getFlagValue(args, flag);
   if (raw === undefined) {
     return undefined;
@@ -103,7 +109,10 @@ function parseRefsFlag(args: string[]): string[] | undefined {
 function parseRefsValue(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== "string")
+    ) {
       throw new Error("Expected JSON string array");
     }
     return (parsed as string[]).slice();
@@ -146,7 +155,10 @@ function normalizeSqliteRow(row: unknown): Record<string, unknown> {
   if (next.superseded_by !== undefined && next.superseded_by !== null) {
     next.superseded_by = Number(next.superseded_by);
   }
-  if (next.expires_after_days !== undefined && next.expires_after_days !== null) {
+  if (
+    next.expires_after_days !== undefined &&
+    next.expires_after_days !== null
+  ) {
     next.expires_after_days = Number(next.expires_after_days);
   }
   return next;
@@ -161,7 +173,10 @@ function parseStoredRefs(value: unknown): string[] {
   }
   try {
     const parsed = JSON.parse(value) as unknown;
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+    if (
+      Array.isArray(parsed) &&
+      parsed.every((item) => typeof item === "string")
+    ) {
       return parsed as string[];
     }
     return [];
@@ -280,7 +295,10 @@ function ftsWeight(ftsRank: unknown): number {
   return Number(transformed.toFixed(3));
 }
 
-function scoreMemory(row: Record<string, unknown>, queryTokens: string[]): number {
+function scoreMemory(
+  row: Record<string, unknown>,
+  queryTokens: string[],
+): number {
   const score =
     recencyWeight(row.updated_at) +
     tagExactnessWeight(row.tags, queryTokens) +
@@ -339,7 +357,10 @@ function hasMinimalOutput(mode: OutputMode): boolean {
 
 function compactMemoryView(
   row: Record<string, unknown>,
-): Pick<Record<string, unknown>, "id" | "score" | "memory_type" | "certainty" | "tags"> {
+): Pick<
+  Record<string, unknown>,
+  "id" | "score" | "memory_type" | "certainty" | "tags"
+> {
   return {
     id: row.id,
     score: row.score,
@@ -404,7 +425,9 @@ function getMemoryById(
   database: Database,
   id: number,
 ): Record<string, unknown> | null {
-  const row = getWithRetry(database, "SELECT * FROM memories WHERE id = ?", [id]);
+  const row = getWithRetry(database, "SELECT * FROM memories WHERE id = ?", [
+    id,
+  ]);
   if (!row) {
     return null;
   }
@@ -535,7 +558,10 @@ function parseFileList(raw: string): string[] {
 function parseFileListJson(raw: string): string[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string")) {
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((item) => typeof item !== "string")
+    ) {
       throw new Error("Expected JSON string array");
     }
     return (parsed as string[]).map((item) => item.trim()).filter(Boolean);
@@ -557,7 +583,9 @@ function parseSuggestFiles(args: string[]): string[] {
   if (filesRaw && filesJsonRaw) {
     usageError("Use either --files or --files-json, not both.");
   }
-  return filesJsonRaw ? parseFileListJson(filesJsonRaw) : parseFileList(filesRaw ?? "");
+  return filesJsonRaw
+    ? parseFileListJson(filesJsonRaw)
+    : parseFileList(filesRaw ?? "");
 }
 
 function parseSqliteErrorDetails(err: unknown): {
@@ -630,7 +658,12 @@ function assertFileExists(path: string): string {
 
 const [command, ...args] = process.argv.slice(2);
 
-if (!command || command === "help" || command === "--help" || command === "-h") {
+if (
+  !command ||
+  command === "help" ||
+  command === "--help" ||
+  command === "-h"
+) {
   printJson({
     name: "machine-memory",
     version: VERSION,
@@ -717,7 +750,14 @@ const dbCommands = new Set([
   "export",
   "migrate",
 ]);
-const writeCommands = new Set(["add", "update", "deprecate", "delete", "import", "migrate"]);
+const writeCommands = new Set([
+  "add",
+  "update",
+  "deprecate",
+  "delete",
+  "import",
+  "migrate",
+]);
 const outputMode = parseOutputMode(args);
 
 let memoryDb: Database | null = null;
@@ -744,580 +784,646 @@ function requireDb(): Database {
 
 try {
   switch (command) {
-  case "add": {
-    const database = requireDb();
-    const content = args[0];
-    if (!content) {
-      usageError(
-        "Usage: add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]",
+    case "add": {
+      const database = requireDb();
+      const content = args[0];
+      if (!content) {
+        usageError(
+          "Usage: add <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]",
+        );
+      }
+
+      const tags = getFlagValue(args, "--tags") ?? "";
+      const memo = getFlagValue(args, "--context") ?? "";
+      const memoryType = requireMemoryType(args) ?? "convention";
+      const certainty = requireCertainty(args) ?? "soft";
+      const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
+      const updatedBy = getFlagValue(args, "--updated-by") ?? sourceAgent;
+      const refs = parseRefsFlag(args) ?? [];
+      const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days");
+      const includeConflicts = !(
+        outputMode.noConflicts || hasMinimalOutput(outputMode)
       );
-    }
 
-    const tags = getFlagValue(args, "--tags") ?? "";
-    const memo = getFlagValue(args, "--context") ?? "";
-    const memoryType = requireMemoryType(args) ?? "convention";
-    const certainty = requireCertainty(args) ?? "soft";
-    const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
-    const updatedBy = getFlagValue(args, "--updated-by") ?? sourceAgent;
-    const refs = parseRefsFlag(args) ?? [];
-    const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days");
-    const includeConflicts = !(outputMode.noConflicts || hasMinimalOutput(outputMode));
+      const potentialConflicts = includeConflicts
+        ? detectPotentialConflicts(database, {
+            content,
+            tags,
+            context: memo,
+          })
+        : [];
 
-    const potentialConflicts = includeConflicts
-      ? detectPotentialConflicts(database, {
-          content,
-          tags,
-          context: memo,
-        })
-      : [];
-
-    const result = runWithRetry(
-      database,
-      `INSERT INTO memories (
+      const result = runWithRetry(
+        database,
+        `INSERT INTO memories (
          content, tags, context, memory_type, certainty, status, superseded_by,
          source_agent, last_updated_by, update_count, refs, expires_after_days
        ) VALUES (?, ?, ?, ?, ?, 'active', NULL, ?, ?, 0, ?, ?)`,
-      [
-        content,
-        tags,
-        memo,
-        memoryType,
-        certainty,
-        sourceAgent,
-        updatedBy,
-        JSON.stringify(refs),
-        expiresAfterDays ?? null,
-      ],
-    );
+        [
+          content,
+          tags,
+          memo,
+          memoryType,
+          certainty,
+          sourceAgent,
+          updatedBy,
+          JSON.stringify(refs),
+          expiresAfterDays ?? null,
+        ],
+      );
 
-    const created = getMemoryById(database, Number(result.lastInsertRowid));
-    if (outputMode.jsonMin || outputMode.quiet) {
-      printJson({ id: created?.id ?? result.lastInsertRowid });
-      break;
-    }
-    if (outputMode.brief) {
-      printJson({
-        id: created?.id ?? result.lastInsertRowid,
-        status: "created",
-        conflict_count: potentialConflicts.length,
-      });
-      break;
-    }
+      const created = getMemoryById(database, Number(result.lastInsertRowid));
+      if (outputMode.jsonMin || outputMode.quiet) {
+        printJson({ id: created?.id ?? result.lastInsertRowid });
+        break;
+      }
+      if (outputMode.brief) {
+        printJson({
+          id: created?.id ?? result.lastInsertRowid,
+          status: "created",
+          conflict_count: potentialConflicts.length,
+        });
+        break;
+      }
 
-    const payload: Record<string, unknown> = {
-      ...(created ?? {
-        id: result.lastInsertRowid,
-        content,
-        tags,
-        context: memo,
-      }),
-    };
-    if (includeConflicts) {
-      payload.potential_conflicts = potentialConflicts;
-    }
-    printJson(payload);
-    break;
-  }
-
-  case "query": {
-    const database = requireDb();
-    const term = args[0];
-    if (!term) {
-      usageError("Usage: query <search_term>");
-    }
-
-    const filters = parseCommonFilters(args);
-    const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
-    const ftsQuery = buildFtsQueryFromTerms(queryTokens);
-    if (!ftsQuery) {
-      printJson(queryEmptyResultPayload(term, filters, queryTokens));
+      const payload: Record<string, unknown> = {
+        ...(created ?? {
+          id: result.lastInsertRowid,
+          content,
+          tags,
+          context: memo,
+        }),
+      };
+      if (includeConflicts) {
+        payload.potential_conflicts = potentialConflicts;
+      }
+      printJson(payload);
       break;
     }
 
-    const clauses = ["memories_fts MATCH ?"];
-    const params: (string | number)[] = [ftsQuery];
-    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+    case "query": {
+      const database = requireDb();
+      const term = args[0];
+      if (!term) {
+        usageError("Usage: query <search_term>");
+      }
 
-    const rows = allWithRetry(
-      database,
-      `SELECT m.*, bm25(memories_fts) AS fts_rank
+      const filters = parseCommonFilters(args);
+      const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
+      const ftsQuery = buildFtsQueryFromTerms(queryTokens);
+      if (!ftsQuery) {
+        printJson(queryEmptyResultPayload(term, filters, queryTokens));
+        break;
+      }
+
+      const clauses = ["memories_fts MATCH ?"];
+      const params: (string | number)[] = [ftsQuery];
+      applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+
+      const rows = allWithRetry(
+        database,
+        `SELECT m.*, bm25(memories_fts) AS fts_rank
        FROM memories m
        JOIN memories_fts ON m.id = memories_fts.rowid
        WHERE ${clauses.join(" AND ")}
       ORDER BY bm25(memories_fts)`,
-      params,
-    );
-
-    const results = shapeRowsWithScore(rows as unknown[], queryTokens);
-    if (results.length === 0) {
-      printJson(queryEmptyResultPayload(term, filters, queryTokens));
-      break;
-    }
-    if (outputMode.jsonMin || outputMode.quiet) {
-      printJson({ count: results.length, ids: results.map((entry) => entry.id) });
-      break;
-    }
-    if (outputMode.brief) {
-      printJson({
-        count: results.length,
-        top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
-      });
-      break;
-    }
-    printJson(results);
-    break;
-  }
-
-  case "get": {
-    const database = requireDb();
-    const id = args[0];
-    if (!id) {
-      usageError("Usage: get <id>");
-    }
-    const row = getMemoryById(database, Number(id));
-    printJson(row ?? { error: "Not found" });
-    break;
-  }
-
-  case "update": {
-    const database = requireDb();
-    const id = args[0];
-    const content = args[1];
-    if (!id || !content) {
-      usageError(
-        "Usage: update <id> <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]",
+        params,
       );
-    }
 
-    const tags = getFlagValue(args, "--tags");
-    const memo = getFlagValue(args, "--context");
-    const memoryType = requireMemoryType(args);
-    const certainty = requireCertainty(args);
-    const updatedBy = getFlagValue(args, "--updated-by");
-    const refs = parseRefsFlag(args);
-    const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days", {
-      allowNullLiteral: true,
-    });
-
-    const sets = [
-      "content = ?",
-      "updated_at = datetime('now')",
-      "update_count = COALESCE(update_count, 0) + 1",
-    ];
-    const params: (string | number | null)[] = [content];
-
-    if (tags !== undefined) {
-      sets.push("tags = ?");
-      params.push(tags);
-    }
-    if (memo !== undefined) {
-      sets.push("context = ?");
-      params.push(memo);
-    }
-    if (memoryType !== undefined) {
-      sets.push("memory_type = ?");
-      params.push(memoryType);
-    }
-    if (certainty !== undefined) {
-      sets.push("certainty = ?");
-      params.push(certainty);
-    }
-    if (updatedBy !== undefined) {
-      sets.push("last_updated_by = ?");
-      params.push(updatedBy);
-    }
-    if (refs !== undefined) {
-      sets.push("refs = ?");
-      params.push(JSON.stringify(refs));
-    }
-    if (expiresAfterDays !== undefined) {
-      sets.push("expires_after_days = ?");
-      params.push(expiresAfterDays);
-    }
-
-    params.push(Number(id));
-    runWithRetry(database, `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params);
-    const updated = getMemoryById(database, Number(id));
-    printJson(updated ?? { error: "Not found" });
-    break;
-  }
-
-  case "deprecate": {
-    const database = requireDb();
-    const id = args[0];
-    if (!id) {
-      usageError("Usage: deprecate <id> [--superseded-by <id>] [--updated-by <name>]");
-    }
-    const supersededBy = parseIntegerFlag(args, "--superseded-by");
-    if (supersededBy !== undefined && supersededBy === Number(id)) {
-      usageError("A memory cannot supersede itself.");
-    }
-    const updatedBy = getFlagValue(args, "--updated-by");
-
-    const sets = [
-      "status = ?",
-      "superseded_by = ?",
-      "updated_at = datetime('now')",
-      "update_count = COALESCE(update_count, 0) + 1",
-    ];
-    const params: (string | number | null)[] = [
-      supersededBy !== undefined ? "superseded_by" : "deprecated",
-      supersededBy ?? null,
-    ];
-    if (updatedBy !== undefined) {
-      sets.push("last_updated_by = ?");
-      params.push(updatedBy);
-    }
-    params.push(Number(id));
-
-    runWithRetry(database, `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, params);
-    const row = getMemoryById(database, Number(id));
-    printJson(row ?? { error: "Not found" });
-    break;
-  }
-
-  case "delete": {
-    const database = requireDb();
-    const id = args[0];
-    if (!id) {
-      usageError("Usage: delete <id>");
-    }
-    runWithRetry(database, "DELETE FROM memories WHERE id = ?", [Number(id)]);
-    printJson({ deleted: Number(id) });
-    break;
-  }
-
-  case "list": {
-    const database = requireDb();
-    const filters = parseCommonFilters(args);
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
-
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = allWithRetry(
-      database,
-      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
-      params,
-    );
-    printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
-    break;
-  }
-
-  case "suggest": {
-    const database = requireDb();
-    const files = parseSuggestFiles(args);
-    const derivedTerms = extractPathTermsFromFiles(files);
-    const ftsQuery = buildFtsQueryFromTerms(derivedTerms);
-    if (!ftsQuery) {
-      printJson({ files, derived_terms: [], results: [] });
+      const results = shapeRowsWithScore(rows as unknown[], queryTokens);
+      if (results.length === 0) {
+        printJson(queryEmptyResultPayload(term, filters, queryTokens));
+        break;
+      }
+      if (outputMode.jsonMin || outputMode.quiet) {
+        printJson({
+          count: results.length,
+          ids: results.map((entry) => entry.id),
+        });
+        break;
+      }
+      if (outputMode.brief) {
+        printJson({
+          count: results.length,
+          top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
+        });
+        break;
+      }
+      printJson(results);
       break;
     }
 
-    const filters = parseCommonFilters(args);
-    const clauses = ["memories_fts MATCH ?"];
-    const params: (string | number)[] = [ftsQuery];
-    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+    case "get": {
+      const database = requireDb();
+      const id = args[0];
+      if (!id) {
+        usageError("Usage: get <id>");
+      }
+      const row = getMemoryById(database, Number(id));
+      printJson(row ?? { error: "Not found" });
+      break;
+    }
 
-    const rows = allWithRetry(
-      database,
-      `SELECT m.*, bm25(memories_fts) AS fts_rank
+    case "update": {
+      const database = requireDb();
+      const id = args[0];
+      const content = args[1];
+      if (!id || !content) {
+        usageError(
+          "Usage: update <id> <content> [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]",
+        );
+      }
+
+      const tags = getFlagValue(args, "--tags");
+      const memo = getFlagValue(args, "--context");
+      const memoryType = requireMemoryType(args);
+      const certainty = requireCertainty(args);
+      const updatedBy = getFlagValue(args, "--updated-by");
+      const refs = parseRefsFlag(args);
+      const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days", {
+        allowNullLiteral: true,
+      });
+
+      const sets = [
+        "content = ?",
+        "updated_at = datetime('now')",
+        "update_count = COALESCE(update_count, 0) + 1",
+      ];
+      const params: (string | number | null)[] = [content];
+
+      if (tags !== undefined) {
+        sets.push("tags = ?");
+        params.push(tags);
+      }
+      if (memo !== undefined) {
+        sets.push("context = ?");
+        params.push(memo);
+      }
+      if (memoryType !== undefined) {
+        sets.push("memory_type = ?");
+        params.push(memoryType);
+      }
+      if (certainty !== undefined) {
+        sets.push("certainty = ?");
+        params.push(certainty);
+      }
+      if (updatedBy !== undefined) {
+        sets.push("last_updated_by = ?");
+        params.push(updatedBy);
+      }
+      if (refs !== undefined) {
+        sets.push("refs = ?");
+        params.push(JSON.stringify(refs));
+      }
+      if (expiresAfterDays !== undefined) {
+        sets.push("expires_after_days = ?");
+        params.push(expiresAfterDays);
+      }
+
+      params.push(Number(id));
+      runWithRetry(
+        database,
+        `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
+        params,
+      );
+      const updated = getMemoryById(database, Number(id));
+      printJson(updated ?? { error: "Not found" });
+      break;
+    }
+
+    case "deprecate": {
+      const database = requireDb();
+      const id = args[0];
+      if (!id) {
+        usageError(
+          "Usage: deprecate <id> [--superseded-by <id>] [--updated-by <name>]",
+        );
+      }
+      const supersededBy = parseIntegerFlag(args, "--superseded-by");
+      if (supersededBy !== undefined && supersededBy === Number(id)) {
+        usageError("A memory cannot supersede itself.");
+      }
+      const updatedBy = getFlagValue(args, "--updated-by");
+
+      const sets = [
+        "status = ?",
+        "superseded_by = ?",
+        "updated_at = datetime('now')",
+        "update_count = COALESCE(update_count, 0) + 1",
+      ];
+      const params: (string | number | null)[] = [
+        supersededBy !== undefined ? "superseded_by" : "deprecated",
+        supersededBy ?? null,
+      ];
+      if (updatedBy !== undefined) {
+        sets.push("last_updated_by = ?");
+        params.push(updatedBy);
+      }
+      params.push(Number(id));
+
+      runWithRetry(
+        database,
+        `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
+        params,
+      );
+      const row = getMemoryById(database, Number(id));
+      printJson(row ?? { error: "Not found" });
+      break;
+    }
+
+    case "delete": {
+      const database = requireDb();
+      const id = args[0];
+      if (!id) {
+        usageError("Usage: delete <id>");
+      }
+      runWithRetry(database, "DELETE FROM memories WHERE id = ?", [Number(id)]);
+      printJson({ deleted: Number(id) });
+      break;
+    }
+
+    case "list": {
+      const database = requireDb();
+      const filters = parseCommonFilters(args);
+      const clauses: string[] = [];
+      const params: (string | number)[] = [];
+      applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+
+      const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const rows = allWithRetry(
+        database,
+        `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
+        params,
+      );
+      printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
+      break;
+    }
+
+    case "suggest": {
+      const database = requireDb();
+      const files = parseSuggestFiles(args);
+      const derivedTerms = extractPathTermsFromFiles(files);
+      const ftsQuery = buildFtsQueryFromTerms(derivedTerms);
+      if (!ftsQuery) {
+        printJson({ files, derived_terms: [], results: [] });
+        break;
+      }
+
+      const filters = parseCommonFilters(args);
+      const clauses = ["memories_fts MATCH ?"];
+      const params: (string | number)[] = [ftsQuery];
+      applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+
+      const rows = allWithRetry(
+        database,
+        `SELECT m.*, bm25(memories_fts) AS fts_rank
        FROM memories m
        JOIN memories_fts ON m.id = memories_fts.rowid
        WHERE ${clauses.join(" AND ")}
        ORDER BY bm25(memories_fts)
        LIMIT 20`,
-      params,
-    );
-    const results = shapeRowsWithScore(rows as unknown[], derivedTerms);
+        params,
+      );
+      const results = shapeRowsWithScore(rows as unknown[], derivedTerms);
 
-    if (outputMode.jsonMin || outputMode.quiet) {
-      printJson({ count: results.length, ids: results.map((entry) => entry.id) });
-      break;
-    }
-    if (outputMode.brief) {
+      if (outputMode.jsonMin || outputMode.quiet) {
+        printJson({
+          count: results.length,
+          ids: results.map((entry) => entry.id),
+        });
+        break;
+      }
+      if (outputMode.brief) {
+        printJson({
+          files,
+          derived_terms: derivedTerms,
+          count: results.length,
+          top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
+        });
+        break;
+      }
+
       printJson({
         files,
         derived_terms: derivedTerms,
-        count: results.length,
-        top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
+        results,
       });
       break;
     }
 
-    printJson({
-      files,
-      derived_terms: derivedTerms,
-      results,
-    });
-    break;
-  }
+    case "coverage": {
+      const database = requireDb();
+      const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
+      const directories = collectDirectories(root);
+      const rows = allWithRetry(
+        database,
+        "SELECT tags FROM memories WHERE status = 'active'",
+      ) as { tags?: unknown }[];
 
-  case "coverage": {
-    const database = requireDb();
-    const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
-    const directories = collectDirectories(root);
-    const rows = allWithRetry(
-      database,
-      "SELECT tags FROM memories WHERE status = 'active'",
-    ) as { tags?: unknown }[];
-
-    const tagDistribution: Record<string, number> = {};
-    const tagSet = new Set<string>();
-    for (const row of rows) {
-      const tags = parseTags(stringValue(row.tags));
-      for (const tag of tags) {
-        tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
-        tagSet.add(tag.toLowerCase());
+      const tagDistribution: Record<string, number> = {};
+      const tagSet = new Set<string>();
+      for (const row of rows) {
+        const tags = parseTags(stringValue(row.tags));
+        for (const tag of tags) {
+          tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
+          tagSet.add(tag.toLowerCase());
+        }
       }
+
+      const uncoveredPaths = directories.filter((dir) => {
+        const parts = dir
+          .replace(/\/$/, "")
+          .split("/")
+          .map((part) => part.toLowerCase())
+          .filter(Boolean);
+        if (parts.length === 0) {
+          return false;
+        }
+        return !parts.some((part) => tagSet.has(part));
+      });
+
+      printJson({
+        root,
+        uncovered_paths: uncoveredPaths,
+        tag_distribution: tagDistribution,
+      });
+      break;
     }
 
-    const uncoveredPaths = directories.filter((dir) => {
-      const parts = dir
-        .replace(/\/$/, "")
-        .split("/")
-        .map((part) => part.toLowerCase())
-        .filter(Boolean);
-      if (parts.length === 0) {
-        return false;
+    case "gc": {
+      const database = requireDb();
+      const dryRun = hasFlag(args, "--dry-run");
+      if (!dryRun) {
+        usageError("Usage: gc --dry-run");
       }
-      return !parts.some((part) => tagSet.has(part));
-    });
-
-    printJson({
-      root,
-      uncovered_paths: uncoveredPaths,
-      tag_distribution: tagDistribution,
-    });
-    break;
-  }
-
-  case "gc": {
-    const database = requireDb();
-    const dryRun = hasFlag(args, "--dry-run");
-    if (!dryRun) {
-      usageError("Usage: gc --dry-run");
-    }
-    const rows = allWithRetry(
-      database,
-      `SELECT * FROM memories
+      const rows = allWithRetry(
+        database,
+        `SELECT * FROM memories
        WHERE status = 'active'
          AND expires_after_days IS NOT NULL
          AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
        ORDER BY updated_at ASC`,
-    );
-    const expired = (rows as unknown[]).map((row) => normalizeSqliteRow(row));
-    printJson({ dry_run: true, count: expired.length, expired });
-    break;
-  }
-
-  case "stats": {
-    const database = requireDb();
-    const rows = allWithRetry(database, "SELECT * FROM memories") as unknown[];
-    const memories = rows.map((row) => normalizeSqliteRow(row));
-
-    const byType: Record<string, number> = Object.fromEntries(
-      MEMORY_TYPES.map((type) => [type, 0]),
-    );
-    const byCertainty: Record<string, number> = Object.fromEntries(
-      CERTAINTY_LEVELS.map((level) => [level, 0]),
-    );
-    const tagFrequency: Record<string, number> = {};
-
-    let oldest: Record<string, unknown> | null = null;
-    let staleCount = 0;
-    let noTagsCount = 0;
-    const now = Date.now();
-
-    for (const memory of memories) {
-      const type = stringValue(memory.memory_type, "convention");
-      byType[type] = (byType[type] ?? 0) + 1;
-
-      const certainty = stringValue(memory.certainty, "soft");
-      byCertainty[certainty] = (byCertainty[certainty] ?? 0) + 1;
-
-      const tags = parseTags(stringValue(memory.tags));
-      if (tags.length === 0) {
-        noTagsCount += 1;
-      }
-      for (const tag of tags) {
-        tagFrequency[tag] = (tagFrequency[tag] ?? 0) + 1;
-      }
-
-      if (
-        !oldest ||
-        (sqliteDateToMs(memory.created_at) ?? Number.POSITIVE_INFINITY) <
-          (sqliteDateToMs(oldest.created_at) ?? Number.POSITIVE_INFINITY)
-      ) {
-        oldest = memory;
-      }
-
-      const updatedMs = sqliteDateToMs(memory.updated_at);
-      if (updatedMs === null) {
-        continue;
-      }
-      const ageDays = (now - updatedMs) / (1000 * 60 * 60 * 24);
-      if (ageDays > 90) {
-        staleCount += 1;
-      }
+      );
+      const expired = (rows as unknown[]).map((row) => normalizeSqliteRow(row));
+      printJson({ dry_run: true, count: expired.length, expired });
+      break;
     }
 
-    printJson({
-      total_memories: memories.length,
-      breakdown_by_memory_type: byType,
-      breakdown_by_certainty: byCertainty,
-      tag_frequency_map: tagFrequency,
-      oldest_memory: oldest,
-      memories_not_updated_over_90_days: staleCount,
-      memories_with_no_tags: noTagsCount,
-    });
-    break;
-  }
+    case "stats": {
+      const database = requireDb();
+      const rows = allWithRetry(
+        database,
+        "SELECT * FROM memories",
+      ) as unknown[];
+      const memories = rows.map((row) => normalizeSqliteRow(row));
 
-  case "import": {
-    const database = requireDb();
-    const path = args[0];
-    if (!path) {
-      usageError("Usage: import <memories.json>");
-    }
-    const filePath = assertFileExists(path);
+      const byType: Record<string, number> = Object.fromEntries(
+        MEMORY_TYPES.map((type) => [type, 0]),
+      );
+      const byCertainty: Record<string, number> = Object.fromEntries(
+        CERTAINTY_LEVELS.map((level) => [level, 0]),
+      );
+      const tagFrequency: Record<string, number> = {};
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
-    } catch (parseError) {
+      let oldest: Record<string, unknown> | null = null;
+      let staleCount = 0;
+      let noTagsCount = 0;
+      const now = Date.now();
+
+      for (const memory of memories) {
+        const type = stringValue(memory.memory_type, "convention");
+        byType[type] = (byType[type] ?? 0) + 1;
+
+        const certainty = stringValue(memory.certainty, "soft");
+        byCertainty[certainty] = (byCertainty[certainty] ?? 0) + 1;
+
+        const tags = parseTags(stringValue(memory.tags));
+        if (tags.length === 0) {
+          noTagsCount += 1;
+        }
+        for (const tag of tags) {
+          tagFrequency[tag] = (tagFrequency[tag] ?? 0) + 1;
+        }
+
+        if (
+          !oldest ||
+          (sqliteDateToMs(memory.created_at) ?? Number.POSITIVE_INFINITY) <
+            (sqliteDateToMs(oldest.created_at) ?? Number.POSITIVE_INFINITY)
+        ) {
+          oldest = memory;
+        }
+
+        const updatedMs = sqliteDateToMs(memory.updated_at);
+        if (updatedMs === null) {
+          continue;
+        }
+        const ageDays = (now - updatedMs) / (1000 * 60 * 60 * 24);
+        if (ageDays > 90) {
+          staleCount += 1;
+        }
+      }
+
       printJson({
-        error: `Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+        total_memories: memories.length,
+        breakdown_by_memory_type: byType,
+        breakdown_by_certainty: byCertainty,
+        tag_frequency_map: tagFrequency,
+        oldest_memory: oldest,
+        memories_not_updated_over_90_days: staleCount,
+        memories_with_no_tags: noTagsCount,
       });
-      process.exit(1);
+      break;
     }
 
-    if (!Array.isArray(parsed)) {
-      usageError("Import file must contain a JSON array.");
-    }
-
-    const results: Record<string, unknown>[] = [];
-
-    for (const [index, rawEntry] of parsed.entries()) {
-      if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
-        results.push({ index, status: "skip", reason: "invalid_entry" });
-        continue;
+    case "import": {
+      const database = requireDb();
+      const path = args[0];
+      if (!path) {
+        usageError("Usage: import <memories.json>");
       }
-      const entry = rawEntry as Record<string, unknown>;
-      const content = typeof entry.content === "string" ? entry.content : "";
-      if (!content) {
-        results.push({ index, status: "skip", reason: "missing_content" });
-        continue;
-      }
+      const filePath = assertFileExists(path);
 
-      const tags = typeof entry.tags === "string" ? entry.tags : "";
-      const memoContext = typeof entry.context === "string" ? entry.context : "";
-      const memoryTypeRaw =
-        typeof entry.memory_type === "string" ? entry.memory_type : "convention";
-      const certaintyRaw =
-        typeof entry.certainty === "string" ? entry.certainty : "soft";
-      const statusRaw = typeof entry.status === "string" ? entry.status : "active";
-      const supersededBy =
-        typeof entry.superseded_by === "number" && Number.isInteger(entry.superseded_by)
-          ? entry.superseded_by
-          : null;
-      const sourceAgent =
-        typeof entry.source_agent === "string" ? entry.source_agent : "";
-      const lastUpdatedBy =
-        typeof entry.last_updated_by === "string"
-          ? entry.last_updated_by
-          : sourceAgent;
-      const updateCount =
-        typeof entry.update_count === "number" && Number.isInteger(entry.update_count)
-          ? entry.update_count
-          : 0;
-      const refs = Array.isArray(entry.refs)
-        ? (entry.refs.filter((item): item is string => typeof item === "string"))
-        : typeof entry.refs === "string"
-          ? parseStoredRefs(entry.refs)
-          : [];
-      const expiresAfterDays =
-        typeof entry.expires_after_days === "number" &&
-        Number.isInteger(entry.expires_after_days)
-          ? entry.expires_after_days
-          : null;
-      const createdAt =
-        typeof entry.created_at === "string" && !Number.isNaN(Date.parse(entry.created_at))
-          ? sqliteDateForComparison(entry.created_at)
-          : undefined;
-      const updatedAt =
-        typeof entry.updated_at === "string" && !Number.isNaN(Date.parse(entry.updated_at))
-          ? sqliteDateForComparison(entry.updated_at)
-          : undefined;
-
-      if (!isMemoryType(memoryTypeRaw)) {
-        results.push({
-          index,
-          status: "skip",
-          reason: "invalid_memory_type",
-          memory_type: memoryTypeRaw,
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
+      } catch (parseError) {
+        printJson({
+          error: `Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
         });
-        continue;
-      }
-      if (!isCertainty(certaintyRaw)) {
-        results.push({
-          index,
-          status: "skip",
-          reason: "invalid_certainty",
-          certainty: certaintyRaw,
-        });
-        continue;
-      }
-      if (!isMemoryStatus(statusRaw)) {
-        results.push({
-          index,
-          status: "skip",
-          reason: "invalid_status",
-          status_value: statusRaw,
-        });
-        continue;
+        process.exit(1);
       }
 
-      const duplicate = findExactDuplicate(database, {
-        content,
-        tags,
-        context: memoContext,
-      });
-      if (duplicate) {
-        results.push({
-          index,
-          status: "skip",
-          reason: "exact_duplicate",
-          existing_id: duplicate.id,
-        });
-        continue;
+      if (!Array.isArray(parsed)) {
+        usageError("Import file must contain a JSON array.");
       }
 
-      const conflicts =
-        statusRaw === "active"
-          ? detectPotentialConflicts(database, {
-              content,
-              tags,
-              context: memoContext,
-            })
-          : [];
-      if (conflicts.length > 0) {
-        results.push({
-          index,
-          status: "conflict",
-          potential_conflicts: conflicts,
-        });
-        continue;
-      }
+      const results: Record<string, unknown>[] = [];
 
-      if (createdAt && updatedAt) {
-        const insert = runWithRetry(
-          database,
-          `INSERT INTO memories (
+      for (const [index, rawEntry] of parsed.entries()) {
+        if (
+          !rawEntry ||
+          typeof rawEntry !== "object" ||
+          Array.isArray(rawEntry)
+        ) {
+          results.push({ index, status: "skip", reason: "invalid_entry" });
+          continue;
+        }
+        const entry = rawEntry as Record<string, unknown>;
+        const content = typeof entry.content === "string" ? entry.content : "";
+        if (!content) {
+          results.push({ index, status: "skip", reason: "missing_content" });
+          continue;
+        }
+
+        const tags = typeof entry.tags === "string" ? entry.tags : "";
+        const memoContext =
+          typeof entry.context === "string" ? entry.context : "";
+        const memoryTypeRaw =
+          typeof entry.memory_type === "string"
+            ? entry.memory_type
+            : "convention";
+        const certaintyRaw =
+          typeof entry.certainty === "string" ? entry.certainty : "soft";
+        const statusRaw =
+          typeof entry.status === "string" ? entry.status : "active";
+        const supersededBy =
+          typeof entry.superseded_by === "number" &&
+          Number.isInteger(entry.superseded_by)
+            ? entry.superseded_by
+            : null;
+        const sourceAgent =
+          typeof entry.source_agent === "string" ? entry.source_agent : "";
+        const lastUpdatedBy =
+          typeof entry.last_updated_by === "string"
+            ? entry.last_updated_by
+            : sourceAgent;
+        const updateCount =
+          typeof entry.update_count === "number" &&
+          Number.isInteger(entry.update_count)
+            ? entry.update_count
+            : 0;
+        const refs = Array.isArray(entry.refs)
+          ? entry.refs.filter(
+              (item): item is string => typeof item === "string",
+            )
+          : typeof entry.refs === "string"
+            ? parseStoredRefs(entry.refs)
+            : [];
+        const expiresAfterDays =
+          typeof entry.expires_after_days === "number" &&
+          Number.isInteger(entry.expires_after_days)
+            ? entry.expires_after_days
+            : null;
+        const createdAt =
+          typeof entry.created_at === "string" &&
+          !Number.isNaN(Date.parse(entry.created_at))
+            ? sqliteDateForComparison(entry.created_at)
+            : undefined;
+        const updatedAt =
+          typeof entry.updated_at === "string" &&
+          !Number.isNaN(Date.parse(entry.updated_at))
+            ? sqliteDateForComparison(entry.updated_at)
+            : undefined;
+
+        if (!isMemoryType(memoryTypeRaw)) {
+          results.push({
+            index,
+            status: "skip",
+            reason: "invalid_memory_type",
+            memory_type: memoryTypeRaw,
+          });
+          continue;
+        }
+        if (!isCertainty(certaintyRaw)) {
+          results.push({
+            index,
+            status: "skip",
+            reason: "invalid_certainty",
+            certainty: certaintyRaw,
+          });
+          continue;
+        }
+        if (!isMemoryStatus(statusRaw)) {
+          results.push({
+            index,
+            status: "skip",
+            reason: "invalid_status",
+            status_value: statusRaw,
+          });
+          continue;
+        }
+
+        const duplicate = findExactDuplicate(database, {
+          content,
+          tags,
+          context: memoContext,
+        });
+        if (duplicate) {
+          results.push({
+            index,
+            status: "skip",
+            reason: "exact_duplicate",
+            existing_id: duplicate.id,
+          });
+          continue;
+        }
+
+        const conflicts =
+          statusRaw === "active"
+            ? detectPotentialConflicts(database, {
+                content,
+                tags,
+                context: memoContext,
+              })
+            : [];
+        if (conflicts.length > 0) {
+          results.push({
+            index,
+            status: "conflict",
+            potential_conflicts: conflicts,
+          });
+          continue;
+        }
+
+        if (createdAt && updatedAt) {
+          const insert = runWithRetry(
+            database,
+            `INSERT INTO memories (
              content, tags, context, memory_type, status, superseded_by, source_agent,
              last_updated_by, update_count, certainty, refs, expires_after_days,
              created_at, updated_at
            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              content,
+              tags,
+              memoContext,
+              memoryTypeRaw,
+              statusRaw,
+              supersededBy,
+              sourceAgent,
+              lastUpdatedBy,
+              updateCount,
+              certaintyRaw,
+              JSON.stringify(refs),
+              expiresAfterDays,
+              createdAt,
+              updatedAt,
+            ],
+          );
+          results.push({
+            index,
+            status: "success",
+            id: insert.lastInsertRowid,
+          });
+          continue;
+        }
+
+        const insert = runWithRetry(
+          database,
+          `INSERT INTO memories (
+           content, tags, context, memory_type, status, superseded_by, source_agent,
+           last_updated_by, update_count, certainty, refs, expires_after_days
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             content,
             tags,
@@ -1331,70 +1437,43 @@ try {
             certaintyRaw,
             JSON.stringify(refs),
             expiresAfterDays,
-            createdAt,
-            updatedAt,
           ],
         );
         results.push({ index, status: "success", id: insert.lastInsertRowid });
-        continue;
       }
 
-      const insert = runWithRetry(
+      printJson({ results });
+      break;
+    }
+
+    case "export": {
+      const database = requireDb();
+      const filters = parseCommonFilters(args);
+      const since = parseSinceDate(args);
+      const clauses: string[] = [];
+      const params: (string | number)[] = [];
+      applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+      if (since) {
+        clauses.push("updated_at >= ?");
+        params.push(sqliteDateForComparison(since));
+      }
+      const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+      const rows = allWithRetry(
         database,
-        `INSERT INTO memories (
-           content, tags, context, memory_type, status, superseded_by, source_agent,
-           last_updated_by, update_count, certainty, refs, expires_after_days
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          content,
-          tags,
-          memoContext,
-          memoryTypeRaw,
-          statusRaw,
-          supersededBy,
-          sourceAgent,
-          lastUpdatedBy,
-          updateCount,
-          certaintyRaw,
-          JSON.stringify(refs),
-          expiresAfterDays,
-        ],
+        `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
+        params,
       );
-      results.push({ index, status: "success", id: insert.lastInsertRowid });
+      printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
+      break;
     }
 
-    printJson({ results });
-    break;
-  }
-
-  case "export": {
-    const database = requireDb();
-    const filters = parseCommonFilters(args);
-    const since = parseSinceDate(args);
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
-    if (since) {
-      clauses.push("updated_at >= ?");
-      params.push(sqliteDateForComparison(since));
+    case "migrate": {
+      const database = requireDb();
+      printJson({ status: "ok", migrated: true });
+      database.close();
+      memoryDb = null;
+      break;
     }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = allWithRetry(
-      database,
-      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
-      params,
-    );
-    printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
-    break;
-  }
-
-  case "migrate": {
-    const database = requireDb();
-    printJson({ status: "ok", migrated: true });
-    database.close();
-    memoryDb = null;
-    break;
-  }
 
     default:
       printJson({
