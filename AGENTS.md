@@ -1,0 +1,30 @@
+# Project memory
+
+This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
+
+Add the following to your `.gitignore` (the `.db-shm` and `.db-wal` files are SQLite runtime artifacts):
+
+    .agents/memory.db-shm
+    .agents/memory.db-wal
+
+## Before starting work
+
+- Run `machine-memory suggest --files "<paths you expect to touch>"` to get relevant memories before coding.
+- Run `machine-memory query <topic>` to check for relevant context about the area you're working on.
+- Run `machine-memory stats` (or `coverage --root .`) as a health check if you're doing larger work.
+- Run `machine-memory help` if you need to discover available commands.
+
+## When to store memories
+
+After completing a task, store anything a future agent session would benefit from knowing:
+
+- `machine-memory add "description" --tags "tag1,tag2" --context "why this matters" --type "decision" --certainty "soft"`
+
+Store: architectural decisions, project conventions, non-obvious gotchas, environment/tooling notes, and user preferences.
+Do NOT store: things obvious from reading the code, temporary information, or duplicates of existing memories.
+
+## When to update, deprecate, or delete
+
+- If a memory is outdated, update it: `machine-memory update <id> "new content"`
+- If a memory is replaced by a newer one, deprecate it: `machine-memory deprecate <old_id> --superseded-by <new_id>`
+- If a memory is wrong or no longer relevant, delete it: `machine-memory delete <id>`
