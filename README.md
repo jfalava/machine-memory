@@ -179,6 +179,11 @@ Copy this block into your project's `AGENTS.md` (or `CLAUDE.md`, `.cursorrules`,
 
 This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
 
+Add the following to your `.gitignore` (the `.db-shm` and `.db-wal` files are SQLite runtime artifacts):
+
+    .agents/memory.db-shm
+    .agents/memory.db-wal
+
 ### Before starting work
 
 - Run `machine-memory suggest --files "<paths you expect to touch>"` to get relevant memories before coding.
