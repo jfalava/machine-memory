@@ -34,7 +34,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .DS_Store
 
 # machine-memory local sqlite artifacts
-.agents/*.db
-.agents/*.db-*
-memory.db
-memory.db-*
+**/memory.db-*
