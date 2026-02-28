@@ -17,7 +17,8 @@ bun run build
 
 ## Usage
 
-All output is JSON — designed to be parsed by an LLM agent, not read by a human.
+Default output is JSON — designed to be parsed by an LLM agent.  
+`--brief` on `query`, `list`, and `suggest` emits compact text lines for fast scanning.
 
 Run `machine-memory help` (or `machine-memory --help`) to get full usage information as JSON.
 
@@ -31,6 +32,7 @@ machine-memory add "Auth uses JWT with RS256" --no-conflicts
 machine-memory add "Auth uses JWT with RS256" --brief
 machine-memory add "Auth uses JWT with RS256" --json-min
 machine-memory add "Auth uses JWT with RS256" --quiet
+machine-memory add "Schema contract lives in SDK" --path "sdk/src/schema.ts"
 machine-memory add --from-file ./docs/api-field-notes.md --type "reference"
 ```
 
@@ -63,6 +65,7 @@ machine-memory query "auth" --quiet
 machine-memory list
 machine-memory list --tags "database"
 machine-memory list --type "gotcha" --certainty "inferred"
+machine-memory list --brief
 ```
 
 #### Get a single memory by ID
@@ -75,6 +78,7 @@ machine-memory get 1
 
 ```sh
 machine-memory update 1 "Auth uses JWT with RS256, keys in VAULT_* env vars" --tags "auth,security"
+machine-memory update 1,4,7 "Resolved after migration v2"
 machine-memory update 1 "Auth uses JWT with RS256" --certainty "verified" --updated-by "gpt-5-codex"
 machine-memory update --match "views schema" --from-file ./notes/views-schema.md --type "reference"
 ```
@@ -83,8 +87,25 @@ machine-memory update --match "views schema" --from-file ./notes/views-schema.md
 
 ```sh
 machine-memory deprecate 12
+machine-memory deprecate 1,4,7 --superseded-by 12
 machine-memory deprecate 12 --superseded-by 42
 machine-memory deprecate --match "legacy views status fields"
+```
+
+#### Verify inferred facts against stored memory
+
+```sh
+machine-memory verify 12 "Auth currently uses RS256 JWT signatures"
+machine-memory diff 12 "Auth now uses EdDSA JWT signatures"
+```
+
+#### Path-to-tag mapping for consistent tagging
+
+```sh
+machine-memory tag-map set "sdk/src/schema.ts" "schema,types"
+machine-memory tag-map suggest "sdk/src/schema.ts"
+machine-memory tag-map list
+machine-memory tag-map delete "sdk/src/schema.ts"
 ```
 
 #### Path-based suggestions for agents at task start
@@ -159,7 +180,9 @@ Notes:
 - `query`, `list`, and `export` return only active memories by default.
 - Use `--include-deprecated` (or `--status ...` on `list`) to inspect deprecated/superseded entries.
 - `add` returns `potential_conflicts` by default; use `--no-conflicts` to skip conflict search.
+- Adding a new `--type status` memory with overlapping tags returns `status_cascade` with a suggested `deprecate` command.
 - `query` and `suggest` return a numeric `score` and are sorted descending by score.
+- `--brief` lines use: `[ID] <Certainty> <Type>: <Content> (#Tags)`.
 - Empty `query` results return a diagnostic object with `derived_terms`, `filters`, and `hints`.
 - Reads open the DB in query-only mode; schema writes run via write commands and `migrate`.
 - For shell-expanded paths like `$slug.tsx`, prefer single quotes or `--files-json`.
@@ -167,25 +190,32 @@ Notes:
 ### Command Reference
 
 - `add (<content> | --from-file <path>)`
-  - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--from-file`, `--no-conflicts`, `--brief`, `--json-min`, `--quiet`
+  - Flags: `--tags`, `--path`, `--context`, `--type`, `--certainty`, `--source-agent`, `--updated-by`, `--refs`, `--expires-after-days`, `--from-file`, `--no-conflicts`, `--brief`, `--json-min`, `--quiet`
   - Returns inserted memory (plus `potential_conflicts` unless `--no-conflicts`/minimal output)
+  - For `--type status`, returns `status_cascade` when older active status memories share tags
 - `query <search_term>`
   - Flags: `--tags`, `--type`, `--certainty`, `--include-deprecated`, `--brief`, `--json-min`, `--quiet`
   - Returns ranked matches with `score`; empty results return diagnostics/hints
 - `list`
-  - Flags: `--tags`, `--type`, `--certainty`, `--status`, `--include-deprecated`
+  - Flags: `--tags`, `--type`, `--certainty`, `--status`, `--include-deprecated`, `--brief`
 - `get <id>`
-- `update (<id> | --match <query>) (<content> | --from-file <path>)`
+- `update (<id|id,id,...> | --match <query>) (<content> | --from-file <path>)`
   - Flags: `--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, `--refs`, `--expires-after-days <n|null>`, `--match`, `--from-file`
   - Increments `update_count`
-- `deprecate (<id> | --match <query>)`
+- `deprecate (<id|id,id,...> | --match <query>)`
   - Flags: `--superseded-by <id>`, `--updated-by`, `--match`
   - Sets status to `deprecated` or `superseded_by`
-- `delete <id>`
+- `delete <id|id,id,...>`
 - `suggest --files "<csv paths>"`
   - Alternate input: `--files-json '["path/one.ts","path/two.ts"]'` (shell-safe for `$` paths)
   - Flags: `--brief`, `--json-min`, `--quiet`
-  - Derives keywords from file paths and runs FTS-based suggestions
+  - Derives keywords from file paths and merges FTS with path-neighborhood matches
+- `verify <id> <fact>`
+  - Returns `ok: true|false` and `result: consistent|conflict`
+- `diff <id> <new_content>`
+  - Returns `conflict`, `similarity`, and term-level changes
+- `tag-map <list|set|delete|suggest>`
+  - Stores path-prefix to tag mappings in `.agents/path-tags.json`
 - `migrate`
   - Ensures schema/FTS/triggers are up to date
 - `coverage [--root <path>]`

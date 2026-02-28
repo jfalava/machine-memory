@@ -1,5 +1,11 @@
 import { Database } from "bun:sqlite";
-import { resolve, relative, sep } from "node:path";
+import {
+  resolve,
+  relative,
+  sep,
+  dirname as pathDirname,
+  extname,
+} from "node:path";
 import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { getFlagValue, hasFlag, printJson, usageError } from "./lib/cli";
 import {
@@ -13,6 +19,13 @@ import {
   type MemoryType,
 } from "./lib/constants";
 import { allWithRetry, ensureDb, getWithRetry, runWithRetry } from "./lib/db";
+import {
+  deletePathTagMapEntry,
+  loadPathTagMap,
+  pathTagMapFilePath,
+  suggestTagsForPath,
+  upsertPathTagMapEntry,
+} from "./lib/path-tags";
 import { upgrade } from "./lib/upgrade";
 
 function isMemoryType(value: string): value is MemoryType {
@@ -174,6 +187,35 @@ function parseTags(tags: string): string[] {
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function uniqueLowerPreserveOrder(values: string[]): string[] {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const cleaned = value.trim();
+    if (!cleaned) {
+      continue;
+    }
+    const lowered = cleaned.toLowerCase();
+    if (seen.has(lowered)) {
+      continue;
+    }
+    seen.add(lowered);
+    unique.push(cleaned);
+  }
+  return unique;
+}
+
+function mergeTagValues(
+  explicitTags: string | undefined,
+  mappedTags: string[],
+) {
+  const merged = uniqueLowerPreserveOrder([
+    ...parseTags(explicitTags ?? ""),
+    ...mappedTags,
+  ]);
+  return merged.join(",");
 }
 
 function collectPositionalArgs(
@@ -426,19 +468,25 @@ function hasMinimalOutput(mode: OutputMode): boolean {
   return mode.brief || mode.jsonMin || mode.quiet;
 }
 
-function compactMemoryView(
-  row: Record<string, unknown>,
-): Pick<
-  Record<string, unknown>,
-  "id" | "score" | "memory_type" | "certainty" | "tags"
-> {
-  return {
-    id: row.id,
-    score: row.score,
-    memory_type: row.memory_type,
-    certainty: row.certainty,
-    tags: row.tags,
-  };
+function briefTagText(tags: unknown): string {
+  const parsed = parseTags(stringValue(tags));
+  if (parsed.length === 0) {
+    return "(#none)";
+  }
+  return `(${parsed.map((tag) => `#${tag}`).join(" ")})`;
+}
+
+function formatBriefMemoryLine(row: Record<string, unknown>): string {
+  const id = Number(row.id ?? 0);
+  const certainty = normalizeCertaintyValue(row.certainty);
+  const type = stringValue(row.memory_type, "convention");
+  const content = stringValue(row.content).replace(/\s+/g, " ").trim();
+  return `[${id}] <${certainty}> <${type}>: ${content} ${briefTagText(row.tags)}`;
+}
+
+function printBriefLines(rows: Record<string, unknown>[]) {
+  const lines = rows.map((row) => formatBriefMemoryLine(row));
+  console.info(lines.join("\n"));
 }
 
 function queryEmptyResultPayload(
@@ -691,6 +739,207 @@ function parseSuggestFiles(args: string[]): string[] {
     : parseFileList(filesRaw ?? "");
 }
 
+function parseIdSpec(raw: string): number[] {
+  const values = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (values.length === 0) {
+    usageError(`Invalid id: ${raw}`);
+  }
+  const parsed = values.map((entry) => Number(entry));
+  if (parsed.some((id) => !Number.isInteger(id) || id <= 0)) {
+    usageError(`Invalid id list: ${raw}`);
+  }
+  return uniqueLowerPreserveOrder(parsed.map((id) => String(id))).map((id) =>
+    Number(id),
+  );
+}
+
+type FactCheckResult = {
+  similarity: number;
+  conflict: boolean;
+  addedTerms: string[];
+  removedTerms: string[];
+};
+
+function setFromTerms(input: string): Set<string> {
+  return new Set(extractTerms(input));
+}
+
+function termsDifference(source: Set<string>, against: Set<string>): string[] {
+  return [...source].filter((term) => !against.has(term));
+}
+
+function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
+  if (left.size === 0 && right.size === 0) {
+    return 1;
+  }
+  const intersection = [...left].filter((term) => right.has(term)).length;
+  const union = new Set([...left, ...right]).size;
+  return union === 0 ? 0 : Number((intersection / union).toFixed(3));
+}
+
+function hasNegation(text: string): boolean {
+  const lower = text.toLowerCase();
+  return /\b(not|no|never|without|cannot|can't)\b/.test(lower);
+}
+
+function compareFact(stored: string, candidate: string): FactCheckResult {
+  const storedTerms = setFromTerms(stored);
+  const candidateTerms = setFromTerms(candidate);
+  const similarity = jaccardSimilarity(storedTerms, candidateTerms);
+  const negationMismatch = hasNegation(stored) !== hasNegation(candidate);
+  const addedTerms = termsDifference(candidateTerms, storedTerms).slice(0, 12);
+  const removedTerms = termsDifference(storedTerms, candidateTerms).slice(
+    0,
+    12,
+  );
+  return {
+    similarity,
+    conflict: negationMismatch || similarity < 0.35,
+    addedTerms,
+    removedTerms,
+  };
+}
+
+type SuggestNeighborhood = {
+  tagHints: string[];
+  pathHints: string[];
+  terms: string[];
+};
+
+function normalizedPathForMatching(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\/+/, "");
+}
+
+function deriveNeighborhoodFromFiles(files: string[]): SuggestNeighborhood {
+  const ignoredSegments = new Set([
+    "src",
+    "lib",
+    "app",
+    "apps",
+    "test",
+    "tests",
+  ]);
+  const tagHints: string[] = [];
+  const pathHints: string[] = [];
+
+  for (const filePath of files) {
+    const normalized = normalizedPathForMatching(filePath);
+    const directory = pathDirname(normalized).replaceAll("\\", "/");
+    if (directory && directory !== ".") {
+      pathHints.push(`${directory}/`);
+      const extension = extname(normalized).replace(/^\./, "");
+      if (extension) {
+        pathHints.push(`${directory}/%.${extension}`);
+      }
+      const segments = directory.split("/").filter(Boolean);
+      for (const segment of segments) {
+        if (!ignoredSegments.has(segment.toLowerCase())) {
+          tagHints.push(segment);
+        }
+      }
+    }
+  }
+
+  const uniqueTagHints = uniqueLowerPreserveOrder(tagHints);
+  const uniquePathHints = uniqueLowerPreserveOrder(pathHints);
+  const terms = extractTerms([...uniqueTagHints, ...uniquePathHints].join(" "));
+  return { tagHints: uniqueTagHints, pathHints: uniquePathHints, terms };
+}
+
+function queryNeighborhoodMatches(
+  database: Database,
+  neighborhood: SuggestNeighborhood,
+  filters: CommonFilters,
+): Record<string, unknown>[] {
+  const orClauses: string[] = [];
+  const params: (string | number)[] = [];
+
+  for (const tagHint of neighborhood.tagHints.slice(0, 10)) {
+    orClauses.push("LOWER(m.tags) LIKE ?");
+    params.push(`%${tagHint.toLowerCase()}%`);
+  }
+  for (const pathHint of neighborhood.pathHints.slice(0, 10)) {
+    const lowered = `%${pathHint.toLowerCase()}%`;
+    orClauses.push("LOWER(m.content) LIKE ?");
+    params.push(lowered);
+    orClauses.push("LOWER(m.context) LIKE ?");
+    params.push(lowered);
+    orClauses.push("LOWER(m.refs) LIKE ?");
+    params.push(lowered);
+  }
+  if (orClauses.length === 0) {
+    return [];
+  }
+
+  const clauses = [`(${orClauses.join(" OR ")})`];
+  applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+  const rows = allWithRetry(
+    database,
+    `SELECT m.*, 0 AS fts_rank
+     FROM memories m
+     WHERE ${clauses.join(" AND ")}
+     ORDER BY m.updated_at DESC, m.id DESC
+     LIMIT 30`,
+    params,
+  ) as unknown[];
+  return shapeRowsWithScore(rows, neighborhood.terms);
+}
+
+function mergeSuggestionResults(
+  primary: Record<string, unknown>[],
+  secondary: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const byId = new Map<number, Record<string, unknown>>();
+  for (const row of primary) {
+    byId.set(Number(row.id), row);
+  }
+  for (const row of secondary) {
+    const id = Number(row.id);
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, { ...row, score: Number(row.score ?? 0) + 12 });
+      continue;
+    }
+    const existingScore = Number(existing.score ?? 0);
+    const nextScore = Math.max(existingScore, Number(row.score ?? 0) + 12);
+    byId.set(id, { ...existing, score: Number(nextScore.toFixed(3)) });
+  }
+  return [...byId.values()]
+    .sort((left, right) => Number(right.score) - Number(left.score))
+    .slice(0, 20);
+}
+
+function findStatusCascadeCandidates(
+  database: Database,
+  tags: string,
+  excludeId: number,
+): Record<string, unknown>[] {
+  const tagSet = new Set(parseTags(tags).map((tag) => tag.toLowerCase()));
+  if (tagSet.size === 0) {
+    return [];
+  }
+  const rows = allWithRetry(
+    database,
+    `SELECT * FROM memories
+     WHERE status = 'active'
+       AND memory_type = 'status'
+       AND id != ?
+     ORDER BY updated_at DESC, id DESC`,
+    [excludeId],
+  ) as unknown[];
+  return rows
+    .map((row) => normalizeSqliteRow(row))
+    .filter((row) => {
+      const memoryTags = parseTags(stringValue(row.tags)).map((tag) =>
+        tag.toLowerCase(),
+      );
+      return memoryTags.some((tag) => tagSet.has(tag));
+    });
+}
+
 function parseSqliteErrorDetails(err: unknown): {
   kind: "fts_parse" | "sqlite" | "unknown";
   message: string;
@@ -760,15 +1009,16 @@ function assertFileExists(path: string): string {
 }
 
 const ADD_USAGE =
-  "add (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]";
+  "add (<content> | --from-file <path>) [--path <file_path>] [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]";
 const UPDATE_USAGE =
-  "update (<id> | --match <query>) (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]";
+  "update (<id|id,id,...> | --match <query>) (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]";
 const DEPRECATE_USAGE =
-  "deprecate (<id> | --match <query>) [--superseded-by <id>] [--updated-by <name>]";
+  "deprecate (<id|id,id,...> | --match <query>) [--superseded-by <id>] [--updated-by <name>]";
 
 const ADD_FLAGS_WITH_VALUES = [
   "--tags",
   "--context",
+  "--path",
   "--type",
   "--certainty",
   "--source-agent",
@@ -821,7 +1071,7 @@ if (
       },
       list: {
         usage:
-          "list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated]",
+          "list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--brief]",
       },
       get: { usage: "get <id>" },
       update: {
@@ -830,10 +1080,16 @@ if (
       deprecate: {
         usage: DEPRECATE_USAGE,
       },
-      delete: { usage: "delete <id>" },
+      delete: { usage: "delete <id|id,id,...>" },
       suggest: {
         usage:
           'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--brief|--json-min|--quiet]',
+      },
+      verify: { usage: "verify <id> <fact>" },
+      diff: { usage: "diff <id> <new_content>" },
+      "tag-map": {
+        usage:
+          "tag-map <list|set|delete|suggest> [path_prefix] [tags_csv|path]",
       },
       migrate: { usage: "migrate" },
       coverage: { usage: "coverage [--root <path>]" },
@@ -882,6 +1138,8 @@ const dbCommands = new Set([
   "deprecate",
   "delete",
   "suggest",
+  "verify",
+  "diff",
   "coverage",
   "gc",
   "stats",
@@ -923,6 +1181,66 @@ function requireDb(): Database {
 
 try {
   switch (command) {
+    case "tag-map": {
+      const action = args[0];
+      if (action === "list") {
+        const map = loadPathTagMap();
+        printJson({
+          file: pathTagMapFilePath(),
+          mappings: Object.entries(map).map(([path_prefix, tags]) => ({
+            path_prefix,
+            tags,
+          })),
+        });
+        break;
+      }
+      if (action === "set") {
+        const pathPrefix = args[1];
+        const tagsRaw = args[2];
+        if (!pathPrefix || !tagsRaw) {
+          usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
+        }
+        const tags = parseTags(tagsRaw);
+        if (tags.length === 0) {
+          usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
+        }
+        upsertPathTagMapEntry(pathPrefix, tags);
+        printJson({
+          status: "ok",
+          path_prefix: pathPrefix,
+          tags,
+          file: pathTagMapFilePath(),
+        });
+        break;
+      }
+      if (action === "delete") {
+        const pathPrefix = args[1];
+        if (!pathPrefix) {
+          usageError("Usage: tag-map delete <path_prefix>");
+        }
+        const current = loadPathTagMap();
+        const existed = Object.hasOwn(current, pathPrefix);
+        deletePathTagMapEntry(pathPrefix);
+        printJson({
+          status: existed ? "deleted" : "not_found",
+          path_prefix: pathPrefix,
+          file: pathTagMapFilePath(),
+        });
+        break;
+      }
+      if (action === "suggest") {
+        const filePath = args[1];
+        if (!filePath) {
+          usageError("Usage: tag-map suggest <path>");
+        }
+        const tags = suggestTagsForPath(filePath);
+        printJson({ path: filePath, tags });
+        break;
+      }
+      usageError("Usage: tag-map <list|set|delete|suggest> [args]");
+      break;
+    }
+
     case "add": {
       const database = requireDb();
       const positional = collectPositionalArgs(args, ADD_FLAGS_WITH_VALUES);
@@ -936,7 +1254,10 @@ try {
         usageError(`Usage: ${ADD_USAGE}`);
       }
 
-      const tags = getFlagValue(args, "--tags") ?? "";
+      const explicitTags = getFlagValue(args, "--tags");
+      const pathContext = getFlagValue(args, "--path");
+      const mappedTags = pathContext ? suggestTagsForPath(pathContext) : [];
+      const tags = mergeTagValues(explicitTags, mappedTags);
       const memo = getFlagValue(args, "--context") ?? "";
       const memoryType = requireMemoryType(args) ?? "convention";
       const certainty = requireCertainty(args) ?? "inferred";
@@ -976,15 +1297,22 @@ try {
       );
 
       const created = getMemoryById(database, Number(result.lastInsertRowid));
+      const createdId = Number(created?.id ?? result.lastInsertRowid);
+      const statusCascade =
+        memoryType === "status"
+          ? findStatusCascadeCandidates(database, tags, createdId)
+          : [];
+
       if (outputMode.jsonMin || outputMode.quiet) {
-        printJson({ id: created?.id ?? result.lastInsertRowid });
+        printJson({ id: createdId });
         break;
       }
       if (outputMode.brief) {
         printJson({
-          id: created?.id ?? result.lastInsertRowid,
+          id: createdId,
           status: "created",
           conflict_count: potentialConflicts.length,
+          status_cascade_count: statusCascade.length,
         });
         break;
       }
@@ -997,8 +1325,18 @@ try {
           context: memo,
         }),
       };
+      if (mappedTags.length > 0) {
+        payload.path_tag_suggestions = mappedTags;
+      }
       if (includeConflicts) {
         payload.potential_conflicts = potentialConflicts;
+      }
+      if (statusCascade.length > 0) {
+        const staleIds = statusCascade.map((item) => Number(item.id));
+        payload.status_cascade = {
+          overlapping_ids: staleIds,
+          suggested_command: `machine-memory deprecate ${staleIds.join(",")} --superseded-by ${createdId}`,
+        };
       }
       printJson(payload);
       break;
@@ -1015,6 +1353,10 @@ try {
       const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
       const ftsQuery = buildFtsQueryFromTerms(queryTokens);
       if (!ftsQuery) {
+        if (outputMode.brief) {
+          printBriefLines([]);
+          break;
+        }
         printJson(queryEmptyResultPayload(term, filters, queryTokens));
         break;
       }
@@ -1035,6 +1377,10 @@ try {
 
       const results = shapeRowsWithScore(rows as unknown[], queryTokens);
       if (results.length === 0) {
+        if (outputMode.brief) {
+          printBriefLines([]);
+          break;
+        }
         printJson(queryEmptyResultPayload(term, filters, queryTokens));
         break;
       }
@@ -1046,10 +1392,7 @@ try {
         break;
       }
       if (outputMode.brief) {
-        printJson({
-          count: results.length,
-          top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
-        });
+        printBriefLines(results);
         break;
       }
       printJson(results);
@@ -1073,7 +1416,7 @@ try {
       const matchQuery = getFlagValue(args, "--match");
       const contentFromFile = parseContentFromFileFlag(args);
 
-      let targetId: number | undefined;
+      let targetIds: number[] = [];
       let contentFromArg: string | undefined;
 
       if (matchQuery !== undefined) {
@@ -1085,18 +1428,14 @@ try {
         if (!matched || typeof matched.id !== "number") {
           usageError(`No active memory matched --match "${matchQuery}".`);
         }
-        targetId = Number(matched.id);
+        targetIds = [Number(matched.id)];
       } else {
         const idRaw = positional[0];
-        contentFromArg = positional[1];
+        contentFromArg = positional.slice(1).join(" ");
         if (!idRaw) {
           usageError(`Usage: ${UPDATE_USAGE}`);
         }
-        const parsedId = Number(idRaw);
-        if (!Number.isInteger(parsedId)) {
-          usageError(`Invalid id: ${idRaw}`);
-        }
-        targetId = parsedId;
+        targetIds = parseIdSpec(idRaw);
       }
 
       if (contentFromArg && contentFromFile !== undefined) {
@@ -1104,7 +1443,7 @@ try {
       }
 
       const content = contentFromFile ?? contentFromArg;
-      if (!content || targetId === undefined) {
+      if (!content || targetIds.length === 0) {
         usageError(`Usage: ${UPDATE_USAGE}`);
       }
 
@@ -1154,14 +1493,32 @@ try {
         params.push(expiresAfterDays);
       }
 
-      params.push(targetId);
-      runWithRetry(
-        database,
-        `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
-        params,
-      );
-      const updated = getMemoryById(database, targetId);
-      printJson(updated ?? { error: "Not found" });
+      const updatedRows: Record<string, unknown>[] = [];
+      const missingIds: number[] = [];
+      for (const targetId of targetIds) {
+        runWithRetry(
+          database,
+          `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
+          [...params, targetId],
+        );
+        const updated = getMemoryById(database, targetId);
+        if (updated) {
+          updatedRows.push(updated);
+        } else {
+          missingIds.push(targetId);
+        }
+      }
+
+      if (targetIds.length === 1) {
+        printJson(updatedRows[0] ?? { error: "Not found" });
+        break;
+      }
+
+      printJson({
+        updated: updatedRows,
+        not_found: missingIds,
+        count: updatedRows.length,
+      });
       break;
     }
 
@@ -1173,7 +1530,7 @@ try {
       );
       const matchQuery = getFlagValue(args, "--match");
 
-      let targetId: number | undefined;
+      let targetIds: number[] = [];
       if (matchQuery !== undefined) {
         if (positional.length > 0) {
           usageError(`Usage: ${DEPRECATE_USAGE}`);
@@ -1182,21 +1539,20 @@ try {
         if (!matched || typeof matched.id !== "number") {
           usageError(`No active memory matched --match "${matchQuery}".`);
         }
-        targetId = Number(matched.id);
+        targetIds = [Number(matched.id)];
       } else {
-        const idRaw = positional[0];
-        if (!idRaw) {
+        const idRaw = positional.join(",");
+        if (!idRaw.trim()) {
           usageError(`Usage: ${DEPRECATE_USAGE}`);
         }
-        const parsedId = Number(idRaw);
-        if (!Number.isInteger(parsedId)) {
-          usageError(`Invalid id: ${idRaw}`);
-        }
-        targetId = parsedId;
+        targetIds = parseIdSpec(idRaw);
       }
 
       const supersededBy = parseIntegerFlag(args, "--superseded-by");
-      if (supersededBy !== undefined && supersededBy === targetId) {
+      if (
+        supersededBy !== undefined &&
+        targetIds.some((targetId) => supersededBy === targetId)
+      ) {
         usageError("A memory cannot supersede itself.");
       }
       const updatedBy = getFlagValue(args, "--updated-by");
@@ -1215,26 +1571,50 @@ try {
         sets.push("last_updated_by = ?");
         params.push(updatedBy);
       }
-      params.push(targetId);
+      const rows: Record<string, unknown>[] = [];
+      const missingIds: number[] = [];
+      for (const targetId of targetIds) {
+        runWithRetry(
+          database,
+          `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
+          [...params, targetId],
+        );
+        const row = getMemoryById(database, targetId);
+        if (row) {
+          rows.push(row);
+        } else {
+          missingIds.push(targetId);
+        }
+      }
 
-      runWithRetry(
-        database,
-        `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
-        params,
-      );
-      const row = getMemoryById(database, targetId);
-      printJson(row ?? { error: "Not found" });
+      if (targetIds.length === 1) {
+        printJson(rows[0] ?? { error: "Not found" });
+        break;
+      }
+
+      printJson({
+        deprecated: rows,
+        not_found: missingIds,
+        count: rows.length,
+      });
       break;
     }
 
     case "delete": {
       const database = requireDb();
-      const id = args[0];
-      if (!id) {
-        usageError("Usage: delete <id>");
+      const idSpec = args.join(",");
+      if (!idSpec.trim()) {
+        usageError("Usage: delete <id|id,id,...>");
       }
-      runWithRetry(database, "DELETE FROM memories WHERE id = ?", [Number(id)]);
-      printJson({ deleted: Number(id) });
+      const ids = parseIdSpec(idSpec);
+      for (const id of ids) {
+        runWithRetry(database, "DELETE FROM memories WHERE id = ?", [id]);
+      }
+      if (ids.length === 1) {
+        printJson({ deleted: ids[0] });
+        break;
+      }
+      printJson({ deleted: ids, count: ids.length });
       break;
     }
 
@@ -1251,7 +1631,14 @@ try {
         `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
         params,
       );
-      printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
+      const normalized = (rows as unknown[]).map((row) =>
+        normalizeSqliteRow(row),
+      );
+      if (outputMode.brief) {
+        printBriefLines(normalized);
+        break;
+      }
+      printJson(normalized);
       break;
     }
 
@@ -1259,28 +1646,39 @@ try {
       const database = requireDb();
       const files = parseSuggestFiles(args);
       const derivedTerms = extractPathTermsFromFiles(files);
+      const neighborhood = deriveNeighborhoodFromFiles(files);
+      const suggestTerms = uniqueLowerPreserveOrder([
+        ...derivedTerms,
+        ...neighborhood.terms,
+      ]);
       const ftsQuery = buildFtsQueryFromTerms(derivedTerms);
-      if (!ftsQuery) {
-        printJson({ files, derived_terms: [], results: [] });
-        break;
-      }
 
       const filters = parseCommonFilters(args);
-      const clauses = ["memories_fts MATCH ?"];
-      const params: (string | number)[] = [ftsQuery];
-      applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
-
-      const rows = allWithRetry(
+      const neighborhoodResults = queryNeighborhoodMatches(
         database,
-        `SELECT m.*, bm25(memories_fts) AS fts_rank
-       FROM memories m
-       JOIN memories_fts ON m.id = memories_fts.rowid
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY bm25(memories_fts)
-       LIMIT 20`,
-        params,
+        neighborhood,
+        filters,
       );
-      const results = shapeRowsWithScore(rows as unknown[], derivedTerms);
+      const ftsClauses = ftsQuery ? ["memories_fts MATCH ?"] : [];
+      const ftsParams: (string | number)[] = ftsQuery ? [ftsQuery] : [];
+      applySqlFilters(ftsClauses, ftsParams, filters, {
+        defaultActiveOnly: true,
+      });
+      const rows =
+        ftsQuery === undefined
+          ? []
+          : allWithRetry(
+              database,
+              `SELECT m.*, bm25(memories_fts) AS fts_rank
+               FROM memories m
+               JOIN memories_fts ON m.id = memories_fts.rowid
+               WHERE ${ftsClauses.join(" AND ")}
+               ORDER BY bm25(memories_fts)
+               LIMIT 20`,
+              ftsParams,
+            );
+      const ftsResults = shapeRowsWithScore(rows as unknown[], suggestTerms);
+      const results = mergeSuggestionResults(ftsResults, neighborhoodResults);
 
       if (outputMode.jsonMin || outputMode.quiet) {
         printJson({
@@ -1290,19 +1688,83 @@ try {
         break;
       }
       if (outputMode.brief) {
-        printJson({
-          files,
-          derived_terms: derivedTerms,
-          count: results.length,
-          top: results.slice(0, 5).map((entry) => compactMemoryView(entry)),
-        });
+        printBriefLines(results);
         break;
       }
 
       printJson({
         files,
-        derived_terms: derivedTerms,
+        derived_terms: suggestTerms,
+        neighborhood: {
+          tags: neighborhood.tagHints,
+          paths: neighborhood.pathHints,
+        },
         results,
+      });
+      break;
+    }
+
+    case "verify": {
+      const database = requireDb();
+      const idRaw = args[0];
+      const fact = args.slice(1).join(" ").trim();
+      if (!idRaw || !fact) {
+        usageError("Usage: verify <id> <fact>");
+      }
+      const id = Number(idRaw);
+      if (!Number.isInteger(id)) {
+        usageError(`Invalid id: ${idRaw}`);
+      }
+      const memory = getMemoryById(database, id);
+      if (!memory) {
+        printJson({ error: "Not found" });
+        break;
+      }
+      const storedContent = stringValue(memory.content);
+      const result = compareFact(storedContent, fact);
+      if (result.conflict) {
+        printJson({
+          id,
+          ok: false,
+          result: "conflict",
+          warning: "Conflict",
+          similarity: result.similarity,
+        });
+        break;
+      }
+      printJson({
+        id,
+        ok: true,
+        result: "consistent",
+        similarity: result.similarity,
+      });
+      break;
+    }
+
+    case "diff": {
+      const database = requireDb();
+      const idRaw = args[0];
+      const nextContent = args.slice(1).join(" ").trim();
+      if (!idRaw || !nextContent) {
+        usageError("Usage: diff <id> <new_content>");
+      }
+      const id = Number(idRaw);
+      if (!Number.isInteger(id)) {
+        usageError(`Invalid id: ${idRaw}`);
+      }
+      const memory = getMemoryById(database, id);
+      if (!memory) {
+        printJson({ error: "Not found" });
+        break;
+      }
+      const currentContent = stringValue(memory.content);
+      const result = compareFact(currentContent, nextContent);
+      printJson({
+        id,
+        conflict: result.conflict,
+        similarity: result.similarity,
+        added_terms: result.addedTerms,
+        removed_terms: result.removedTerms,
       });
       break;
     }

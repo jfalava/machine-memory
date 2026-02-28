@@ -70,6 +70,14 @@ function parseJsonValue(text: string): unknown {
   return JSON.parse(text) as unknown;
 }
 
+function briefLines(...args: string[]): string[] {
+  const { stdout } = exec(...args);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function asJsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Expected JSON object");
@@ -475,6 +483,15 @@ describe("list", () => {
     const result = json("list", "--tags", "nonexistent");
     expect(result).toEqual([]);
   });
+
+  test("supports --brief output on list", () => {
+    json("add", "client auth overview", "--tags", "client,auth");
+    const lines = briefLines("list", "--brief");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("[1]");
+    expect(lines[0]).toContain("<inferred> <convention>");
+    expect(lines[0]).toContain("(#client #auth)");
+  });
 });
 
 // --- query (FTS) ---
@@ -522,9 +539,11 @@ describe("query", () => {
 
   test("supports --brief output on query", () => {
     json("add", "JWT signing key policy", "--tags", "auth,jwt");
-    const result = json("query", "jwt", "--brief") as Record<string, unknown>;
-    expect(result.count).toBe(1);
-    expect(Array.isArray(result.top)).toBe(true);
+    const lines = briefLines("query", "jwt", "--brief");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("[1]");
+    expect(lines[0]).toContain("<inferred> <convention>");
+    expect(lines[0]).toContain("(#auth #jwt)");
   });
 
   test("supports --json-min output on query", () => {
@@ -740,6 +759,26 @@ describe("checklist: conflict detection on add", () => {
   });
 });
 
+describe("checklist: status cascading on add", () => {
+  test("prompts deprecating older active status memories with overlapping tags", () => {
+    json("add", "Phase 1 status", "--type", "status", "--tags", "client,phase");
+    const created = json(
+      "add",
+      "Phase 2 status",
+      "--type",
+      "status",
+      "--tags",
+      "client,phase2",
+    ) as Record<string, unknown>;
+
+    const cascade = asJsonObject(created.status_cascade);
+    expect(cascade.overlapping_ids).toEqual([1]);
+    expect(String(cascade.suggested_command)).toContain(
+      "machine-memory deprecate 1 --superseded-by 2",
+    );
+  });
+});
+
 describe("checklist: query result scoring", () => {
   test("returns score on results and sorts descending", () => {
     json(
@@ -813,6 +852,26 @@ describe("checklist: suggest --files", () => {
     expect(suggestions[0]?.id).toBe(1);
   });
 
+  test("adds neighborhood matches from nearby paths and directory tags", () => {
+    json(
+      "add",
+      "Session refresh follows src/client/session.ts conventions",
+      "--tags",
+      "architecture",
+    );
+    json("add", "Client boundary architecture note", "--tags", "client");
+
+    const result = json("suggest", "--files", "src/client/auth.ts") as Record<
+      string,
+      unknown
+    >;
+
+    const suggestions = result.results as Record<string, unknown>[];
+    const ids = suggestions.map((item) => Number(item.id));
+    expect(ids).toContain(1);
+    expect(ids).toContain(2);
+  });
+
   test("supports --json-min output on suggest", () => {
     json(
       "add",
@@ -862,6 +921,20 @@ describe("checklist: suggest --files", () => {
     ) as Record<string, unknown>;
     expect(typeof result.count).toBe("number");
     expect(Array.isArray(result.ids)).toBe(true);
+  });
+
+  test("supports context-dense --brief output on suggest", () => {
+    json("add", "Client auth token lifecycle", "--tags", "client,auth,status");
+    const lines = briefLines(
+      "suggest",
+      "--files",
+      "src/client/auth.ts",
+      "--brief",
+    );
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toContain("[1]");
+    expect(lines[0]).toContain("<inferred> <convention>");
+    expect(lines[0]).toContain("(#client #auth #status)");
   });
 
   test("errors when both --files and --files-json are provided", () => {
@@ -1064,6 +1137,113 @@ describe("checklist: export command", () => {
       unknown
     >[];
     expect(future).toEqual([]);
+  });
+});
+
+describe("checklist: multi-id operations", () => {
+  test("update accepts comma-separated ids", () => {
+    json("add", "first");
+    json("add", "second");
+    const result = json(
+      "update",
+      "1,2",
+      "shared updated content",
+      "--tags",
+      "bulk",
+    ) as Record<string, unknown>;
+    expect(result.count).toBe(2);
+    const updated = result.updated as Record<string, unknown>[];
+    expect(updated).toHaveLength(2);
+    expect(
+      updated.every((entry) => entry.content === "shared updated content"),
+    ).toBe(true);
+  });
+
+  test("deprecate accepts comma-separated ids", () => {
+    json("add", "s1");
+    json("add", "s2");
+    json("add", "replacement");
+
+    const result = json("deprecate", "1,2", "--superseded-by", "3") as Record<
+      string,
+      unknown
+    >;
+    expect(result.count).toBe(2);
+    const deprecated = result.deprecated as Record<string, unknown>[];
+    expect(deprecated).toHaveLength(2);
+    expect(deprecated.every((entry) => entry.status === "superseded_by")).toBe(
+      true,
+    );
+  });
+
+  test("delete accepts comma-separated ids", () => {
+    json("add", "one");
+    json("add", "two");
+    json("add", "three");
+    const result = json("delete", "1,3") as Record<string, unknown>;
+    expect(result.deleted).toEqual([1, 3]);
+    expect(result.count).toBe(2);
+    expect((json("get", "1") as Record<string, unknown>).error).toBe(
+      "Not found",
+    );
+    expect((json("get", "2") as Record<string, unknown>).content).toBe("two");
+  });
+});
+
+describe("checklist: verify and diff commands", () => {
+  test("verify returns consistent/conflict booleans", () => {
+    json("add", "Auth uses JWT with RS256", "--tags", "auth,jwt");
+    const consistent = json(
+      "verify",
+      "1",
+      "Auth uses JWT with RS256 signatures",
+    ) as Record<string, unknown>;
+    expect(consistent.ok).toBe(true);
+
+    const conflict = json("verify", "1", "Auth does not use JWT") as Record<
+      string,
+      unknown
+    >;
+    expect(conflict.ok).toBe(false);
+    expect(conflict.result).toBe("conflict");
+  });
+
+  test("diff reports added/removed terms and conflict status", () => {
+    json("add", "Database uses Postgres for writes");
+    const result = json(
+      "diff",
+      "1",
+      "Database uses SQLite for writes",
+    ) as Record<string, unknown>;
+    expect(typeof result.conflict).toBe("boolean");
+    expect(Array.isArray(result.added_terms)).toBe(true);
+    expect(Array.isArray(result.removed_terms)).toBe(true);
+  });
+});
+
+describe("checklist: path-to-tag mapping", () => {
+  test("maps path prefixes to tags and applies them in add --path", () => {
+    const mapped = json(
+      "tag-map",
+      "set",
+      "sdk/src/schema.ts",
+      "schema,types",
+    ) as Record<string, unknown>;
+    expect(mapped.status).toBe("ok");
+
+    const suggested = json("tag-map", "suggest", "sdk/src/schema.ts") as Record<
+      string,
+      unknown
+    >;
+    expect(suggested.tags).toEqual(["schema", "types"]);
+
+    const created = json(
+      "add",
+      "Schema contract notes",
+      "--path",
+      "sdk/src/schema.ts",
+    ) as Record<string, unknown>;
+    expect(created.tags).toBe("schema,types");
   });
 });
 
