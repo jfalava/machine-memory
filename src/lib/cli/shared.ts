@@ -345,15 +345,36 @@ export function buildFtsQueryFromTerms(terms: string[]): string | undefined {
   return usable.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 }
 
+export const SCORE_COMPONENT_WEIGHTS = {
+  recency: { maxPoints: 30, maxAgeDays: 180 },
+  certainty: { verified: 20, inferred: 10, speculative: 2 },
+  tagMatch: { exact: 18, partial: 8 },
+  updateCount: { maxUpdatesCounted: 10, pointsPerUpdate: 2 },
+  ftsRank: { multiplier: -10, minPoints: 0, maxPoints: 30 },
+} as const;
+
+export type ScoreBreakdown = {
+  recency: number;
+  certainty: number;
+  tag_match: number;
+  update_count: number;
+  fts_rank: number;
+  total: number;
+};
+
+type ShapeRowsOptions = {
+  explainScore?: boolean;
+};
+
 function certaintyWeight(certainty: unknown): number {
   const normalized = normalizeCertaintyValue(certainty, "speculative");
   if (normalized === "verified") {
-    return 20;
+    return SCORE_COMPONENT_WEIGHTS.certainty.verified;
   }
   if (normalized === "inferred") {
-    return 10;
+    return SCORE_COMPONENT_WEIGHTS.certainty.inferred;
   }
-  return 2;
+  return SCORE_COMPONENT_WEIGHTS.certainty.speculative;
 }
 
 function recencyWeight(updatedAt: unknown): number {
@@ -362,8 +383,13 @@ function recencyWeight(updatedAt: unknown): number {
     return 0;
   }
   const ageDays = Math.max(0, (Date.now() - ms) / (1000 * 60 * 60 * 24));
-  const capped = Math.min(ageDays, 180);
-  return Number((30 * (1 - capped / 180)).toFixed(3));
+  const capped = Math.min(ageDays, SCORE_COMPONENT_WEIGHTS.recency.maxAgeDays);
+  return Number(
+    (
+      SCORE_COMPONENT_WEIGHTS.recency.maxPoints *
+      (1 - capped / SCORE_COMPONENT_WEIGHTS.recency.maxAgeDays)
+    ).toFixed(3),
+  );
 }
 
 function tagExactnessWeight(tags: unknown, queryTokens: string[]): number {
@@ -373,10 +399,10 @@ function tagExactnessWeight(tags: unknown, queryTokens: string[]): number {
   const tagList = parseTags(tags).map((tag) => tag.toLowerCase());
   const tokenSet = new Set(queryTokens.map((token) => token.toLowerCase()));
   if (tagList.some((tag) => tokenSet.has(tag))) {
-    return 18;
+    return SCORE_COMPONENT_WEIGHTS.tagMatch.exact;
   }
   if (tagList.some((tag) => queryTokens.some((token) => tag.includes(token)))) {
-    return 8;
+    return SCORE_COMPONENT_WEIGHTS.tagMatch.partial;
   }
   return 0;
 }
@@ -386,7 +412,10 @@ function updateCountWeight(updateCount: unknown): number {
   if (!Number.isFinite(count) || count <= 0) {
     return 0;
   }
-  return Math.min(count, 10) * 2;
+  return (
+    Math.min(count, SCORE_COMPONENT_WEIGHTS.updateCount.maxUpdatesCounted) *
+    SCORE_COMPONENT_WEIGHTS.updateCount.pointsPerUpdate
+  );
 }
 
 function ftsWeight(ftsRank: unknown): number {
@@ -394,38 +423,82 @@ function ftsWeight(ftsRank: unknown): number {
   if (!Number.isFinite(rank)) {
     return 0;
   }
-  const transformed = Math.max(0, Math.min(30, -rank * 10));
+  const transformed = Math.max(
+    SCORE_COMPONENT_WEIGHTS.ftsRank.minPoints,
+    Math.min(
+      SCORE_COMPONENT_WEIGHTS.ftsRank.maxPoints,
+      rank * SCORE_COMPONENT_WEIGHTS.ftsRank.multiplier,
+    ),
+  );
   return Number(transformed.toFixed(3));
 }
 
-function scoreMemory(
+function scoreBreakdown(
   row: Record<string, unknown>,
   queryTokens: string[],
-): number {
-  const score =
-    recencyWeight(row.updated_at) +
-    tagExactnessWeight(row.tags, queryTokens) +
-    updateCountWeight(row.update_count) +
-    certaintyWeight(row.certainty) +
-    ftsWeight(row.fts_rank);
-  return Number(score.toFixed(3));
+): ScoreBreakdown {
+  const recency = recencyWeight(row.updated_at);
+  const tagMatch = tagExactnessWeight(row.tags, queryTokens);
+  const updateCount = updateCountWeight(row.update_count);
+  const certainty = certaintyWeight(row.certainty);
+  const ftsRank = ftsWeight(row.fts_rank);
+  const total = Number(
+    (recency + tagMatch + updateCount + certainty + ftsRank).toFixed(3),
+  );
+  return {
+    recency,
+    certainty,
+    tag_match: tagMatch,
+    update_count: updateCount,
+    fts_rank: ftsRank,
+    total,
+  };
 }
 
 export function shapeRowsWithScore(
   rows: unknown[],
   queryTokens: string[],
+  options: ShapeRowsOptions = {},
 ): Record<string, unknown>[] {
   const normalized = rows.map((row) => normalizeSqliteRow(row));
-  const withScore = normalized.map((row) => ({
-    ...row,
-    score: scoreMemory(row, queryTokens),
-  }));
+  const withScore = normalized.map((row) => {
+    const breakdown = scoreBreakdown(row, queryTokens);
+    const scored: Record<string, unknown> = {
+      ...row,
+      score: breakdown.total,
+    };
+    if (options.explainScore) {
+      scored.score_breakdown = breakdown;
+    }
+    return scored;
+  });
   withScore.sort((a, b) => Number(b.score) - Number(a.score));
   return withScore.map((row) => {
     const rest = { ...(row as Record<string, unknown>) };
     delete rest.fts_rank;
     return rest;
   });
+}
+
+export function sortByScoreThenRecency(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const indexed = rows.map((row, index) => ({
+    index,
+    row,
+    score: Number(row.score ?? 0),
+    updatedAt: sqliteDateToMs(row.updated_at) ?? 0,
+  }));
+  indexed.sort((left, right) => {
+    if (right.score !== left.score) {
+      return right.score - left.score;
+    }
+    if (right.updatedAt !== left.updatedAt) {
+      return right.updatedAt - left.updatedAt;
+    }
+    return left.index - right.index;
+  });
+  return indexed.map((entry) => entry.row);
 }
 
 export function parseCommonFilters(args: string[]): CommonFilters {
@@ -502,40 +575,66 @@ export function queryEmptyResultPayload(
   };
 }
 
+function appendCertaintyFilter(
+  clauses: string[],
+  params: (string | number)[],
+  certainty: Certainty,
+  prefix: string,
+) {
+  const variants = certaintyStorageVariants(certainty);
+  if (variants.length === 1) {
+    clauses.push(`${prefix}certainty = ?`);
+    params.push(variants[0] ?? certainty);
+    return;
+  }
+  clauses.push(`${prefix}certainty IN (${variants.map(() => "?").join(", ")})`);
+  for (const variant of variants) {
+    params.push(variant);
+  }
+}
+
+function appendStatusFilter(
+  clauses: string[],
+  params: (string | number)[],
+  filters: CommonFilters,
+  prefix: string,
+  defaultActiveOnly: boolean,
+) {
+  if (filters.status) {
+    clauses.push(`${prefix}status = ?`);
+    params.push(filters.status);
+    return;
+  }
+  if (defaultActiveOnly && !filters.includeDeprecated) {
+    clauses.push(`${prefix}status = 'active'`);
+  }
+}
+
 export function applySqlFilters(
   clauses: string[],
   params: (string | number)[],
   filters: CommonFilters,
-  options: { defaultActiveOnly?: boolean } = {},
+  options: { defaultActiveOnly?: boolean; columnPrefix?: string } = {},
 ) {
+  const prefix = options.columnPrefix ?? "";
   if (filters.tag) {
-    clauses.push("tags LIKE ?");
+    clauses.push(`${prefix}tags LIKE ?`);
     params.push(`%${filters.tag}%`);
   }
   if (filters.memoryType) {
-    clauses.push("memory_type = ?");
+    clauses.push(`${prefix}memory_type = ?`);
     params.push(filters.memoryType);
   }
   if (filters.certainty) {
-    const variants = certaintyStorageVariants(filters.certainty);
-    if (variants.length === 1) {
-      clauses.push("certainty = ?");
-      params.push(variants[0] ?? filters.certainty);
-    } else {
-      clauses.push(`certainty IN (${variants.map(() => "?").join(", ")})`);
-      for (const variant of variants) {
-        params.push(variant);
-      }
-    }
+    appendCertaintyFilter(clauses, params, filters.certainty, prefix);
   }
-  if (filters.status) {
-    clauses.push("status = ?");
-    params.push(filters.status);
-  } else if (options.defaultActiveOnly ?? true) {
-    if (!filters.includeDeprecated) {
-      clauses.push("status = 'active'");
-    }
-  }
+  appendStatusFilter(
+    clauses,
+    params,
+    filters,
+    prefix,
+    options.defaultActiveOnly ?? true,
+  );
 }
 
 export function getMemoryById(
@@ -675,7 +774,7 @@ export function collectDirectories(rootPath: string): string[] {
 export function extractPathTermsFromFiles(paths: string[]): string[] {
   const terms: string[] = [];
   for (const path of paths) {
-    const normalized = path.replaceAll("\\", "/");
+    const normalized = normalizeFilePathInput(path);
     const segments = normalized.split("/").filter(Boolean);
     for (const segment of segments) {
       terms.push(segment);
@@ -689,10 +788,32 @@ export function extractPathTermsFromFiles(paths: string[]): string[] {
   return extractTerms(terms.join(" "));
 }
 
+export function normalizeFilePathInput(value: string): string {
+  const cleaned = value.trim().replaceAll("\\", "/");
+  if (!cleaned) {
+    return "";
+  }
+  const withoutDotPrefix = cleaned.replace(/^\.\/+/, "");
+  return withoutDotPrefix.replace(/\/{2,}/g, "/");
+}
+
+function uniquePreserveOrder(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    unique.push(value);
+  }
+  return unique;
+}
+
 function parseFileList(raw: string): string[] {
   return raw
     .split(",")
-    .map((item) => item.trim())
+    .map((item) => normalizeFilePathInput(item))
     .filter(Boolean);
 }
 
@@ -705,7 +826,9 @@ function parseFileListJson(raw: string): string[] {
     ) {
       throw new Error("Expected JSON string array");
     }
-    return (parsed as string[]).map((item) => item.trim()).filter(Boolean);
+    return (parsed as string[])
+      .map((item) => normalizeFilePathInput(item))
+      .filter(Boolean);
   } catch {
     usageError(
       'Invalid --files-json value. Provide a JSON array of paths, e.g. --files-json \'["src/a.ts","src/b.ts"]\'.',
@@ -724,9 +847,10 @@ export function parseSuggestFiles(args: string[]): string[] {
   if (filesRaw && filesJsonRaw) {
     usageError("Use either --files or --files-json, not both.");
   }
-  return filesJsonRaw
+  const parsed = filesJsonRaw
     ? parseFileListJson(filesJsonRaw)
     : parseFileList(filesRaw ?? "");
+  return uniquePreserveOrder(parsed);
 }
 
 export function parseIdSpec(raw: string): number[] {
@@ -753,7 +877,7 @@ type FactCheckResult = {
   removedTerms: string[];
 };
 
-function setFromTerms(input: string): Set<string> {
+export function setFromTerms(input: string): Set<string> {
   return new Set(extractTerms(input));
 }
 
@@ -761,7 +885,7 @@ function termsDifference(source: Set<string>, against: Set<string>): string[] {
   return [...source].filter((term) => !against.has(term));
 }
 
-function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
+export function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
   if (left.size === 0 && right.size === 0) {
     return 1;
   }
@@ -803,7 +927,7 @@ type SuggestNeighborhood = {
 };
 
 function normalizedPathForMatching(path: string): string {
-  return path.replaceAll("\\", "/").replace(/^\.\/+/, "");
+  return normalizeFilePathInput(path);
 }
 
 export function deriveNeighborhoodFromFiles(
@@ -870,7 +994,10 @@ export function queryNeighborhoodMatches(
   }
 
   const clauses = [`(${orClauses.join(" OR ")})`];
-  applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+  applySqlFilters(clauses, params, filters, {
+    defaultActiveOnly: true,
+    columnPrefix: "m.",
+  });
   const rows = allWithRetry(
     database,
     `SELECT m.*, 0 AS fts_rank
@@ -895,12 +1022,23 @@ export function mergeSuggestionResults(
     const id = Number(row.id);
     const existing = byId.get(id);
     if (!existing) {
-      byId.set(id, { ...row, score: Number(row.score ?? 0) + 12 });
+      const boosted = {
+        ...row,
+        score: Number((Number(row.score ?? 0) + 12).toFixed(3)),
+      };
+      if ("score_breakdown" in boosted) {
+        delete boosted.score_breakdown;
+      }
+      byId.set(id, boosted);
       continue;
     }
     const existingScore = Number(existing.score ?? 0);
     const nextScore = Math.max(existingScore, Number(row.score ?? 0) + 12);
-    byId.set(id, { ...existing, score: Number(nextScore.toFixed(3)) });
+    const merged = { ...existing, score: Number(nextScore.toFixed(3)) };
+    if (nextScore !== existingScore && "score_breakdown" in merged) {
+      delete merged.score_breakdown;
+    }
+    byId.set(id, merged);
   }
   return [...byId.values()]
     .sort((left, right) => Number(right.score) - Number(left.score))
@@ -1004,7 +1142,7 @@ export function assertFileExists(path: string): string {
 }
 
 export const ADD_USAGE =
-  "add (<content> | --from-file <path>) [--path <file_path>] [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]";
+  "add (<content> | --from-file <path>) [--upsert-match <query>] [--path <file_path>] [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]";
 export const UPDATE_USAGE =
   "update (<id|id,id,...> | --match <query>) (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]";
 export const DEPRECATE_USAGE =
@@ -1021,6 +1159,7 @@ export const ADD_FLAGS_WITH_VALUES = [
   "--refs",
   "--expires-after-days",
   "--from-file",
+  "--upsert-match",
 ] as const;
 
 export const UPDATE_FLAGS_WITH_VALUES = [

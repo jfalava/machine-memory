@@ -1,6 +1,7 @@
-import { printJson, usageError } from "../../cli";
+import { getFlagValue, hasFlag, printJson, usageError } from "../../cli";
 import { allWithRetry } from "../../db";
 import {
+  SCORE_COMPONENT_WEIGHTS,
   applySqlFilters,
   buildFtsQueryFromTerms,
   compareFact,
@@ -16,24 +17,72 @@ import {
   queryEmptyResultPayload,
   queryNeighborhoodMatches,
   shapeRowsWithScore,
+  sortByScoreThenRecency,
   stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
 import type { CommandContext } from "./context";
 
+const SWEEP_USAGE =
+  "sweep (--files \"src/a.ts,src/b.ts\" | --files-json '[\"src/a.ts\",\"src/b.ts\"]') [--query <search_term>] [--tags <tag>] [--brief|--json-min|--quiet]";
+
+type FetchResultsOptions = {
+  explainScore: boolean;
+};
+
+type QueryResults = {
+  results: Record<string, unknown>[];
+  queryTokens: string[];
+  filters: ReturnType<typeof parseCommonFilters>;
+};
+
+type SuggestSnapshot = {
+  files: string[];
+  normalizedPathTerms: string[];
+  suggestTerms: string[];
+  neighborhood: ReturnType<typeof deriveNeighborhoodFromFiles>;
+  filters: ReturnType<typeof parseCommonFilters>;
+  ftsQuery: string | undefined;
+};
+
+type SweepSource = "suggest" | "query" | "list";
+
+function explainScoreEnabled(args: string[]): boolean {
+  return hasFlag(args, "--explain-score");
+}
+
+function resultIds(results: Record<string, unknown>[]): unknown[] {
+  return results.map((entry) => entry.id);
+}
+
 function printScoredResults(
   outputMode: CommandContext["outputMode"],
   results: Record<string, unknown>[],
+  options: {
+    explainScore: boolean;
+    wrapResults?: boolean;
+  },
 ) {
   if (outputMode.jsonMin || outputMode.quiet) {
-    printJson({
+    const payload: Record<string, unknown> = {
       count: results.length,
-      ids: results.map((entry) => entry.id),
-    });
+      ids: resultIds(results),
+    };
+    if (options.explainScore) {
+      payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+    }
+    printJson(payload);
     return;
   }
   if (outputMode.brief) {
     printBriefLines(results);
+    return;
+  }
+  if (options.wrapResults) {
+    printJson({
+      results,
+      ...(options.explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
+    });
     return;
   }
   printJson(results);
@@ -55,11 +104,8 @@ function printEmptyQueryResults(
 function fetchQueryResults(
   commandCtx: CommandContext,
   term: string,
-): {
-  results: Record<string, unknown>[];
-  queryTokens: string[];
-  filters: ReturnType<typeof parseCommonFilters>;
-} {
+  options: FetchResultsOptions,
+): QueryResults {
   const { args, requireDb } = commandCtx;
   const database = requireDb();
   const filters = parseCommonFilters(args);
@@ -71,7 +117,10 @@ function fetchQueryResults(
 
   const clauses = ["memories_fts MATCH ?"];
   const params: (string | number)[] = [ftsQuery];
-  applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+  applySqlFilters(clauses, params, filters, {
+    defaultActiveOnly: true,
+    columnPrefix: "m.",
+  });
 
   const rows = allWithRetry(
     database,
@@ -83,7 +132,9 @@ function fetchQueryResults(
     params,
   );
 
-  const results = shapeRowsWithScore(rows as unknown[], queryTokens);
+  const results = shapeRowsWithScore(rows as unknown[], queryTokens, {
+    explainScore: options.explainScore,
+  });
   return { results, queryTokens, filters };
 }
 
@@ -94,13 +145,19 @@ export function handleQueryCommand(commandCtx: CommandContext) {
     usageError("Usage: query <search_term>");
   }
 
-  const { results, queryTokens, filters } = fetchQueryResults(commandCtx, term);
+  const explainScore = explainScoreEnabled(args);
+  const { results, queryTokens, filters } = fetchQueryResults(commandCtx, term, {
+    explainScore,
+  });
   if (results.length === 0) {
     printEmptyQueryResults(term, filters, queryTokens, outputMode);
     return;
   }
 
-  printScoredResults(outputMode, results);
+  printScoredResults(outputMode, results, {
+    explainScore,
+    wrapResults: explainScore,
+  });
 }
 
 export function handleGetCommand(commandCtx: CommandContext) {
@@ -136,34 +193,28 @@ export function handleListCommand(commandCtx: CommandContext) {
   printJson(normalized);
 }
 
-type SuggestSnapshot = {
-  files: string[];
-  suggestTerms: string[];
-  neighborhood: ReturnType<typeof deriveNeighborhoodFromFiles>;
-  filters: ReturnType<typeof parseCommonFilters>;
-  ftsQuery: string | undefined;
-};
-
 function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
   const files = parseSuggestFiles(args);
-  const derivedTerms = extractPathTermsFromFiles(files);
+  const normalizedPathTerms = extractPathTermsFromFiles(files);
   const neighborhood = deriveNeighborhoodFromFiles(files);
   const suggestTerms = uniqueLowerPreserveOrder([
-    ...derivedTerms,
+    ...normalizedPathTerms,
     ...neighborhood.terms,
   ]);
   return {
     files,
+    normalizedPathTerms,
     suggestTerms,
     neighborhood,
     filters: parseCommonFilters(args),
-    ftsQuery: buildFtsQueryFromTerms(derivedTerms),
+    ftsQuery: buildFtsQueryFromTerms(normalizedPathTerms),
   };
 }
 
 function fetchFtsSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
+  options: FetchResultsOptions,
 ): Record<string, unknown>[] {
   if (snapshot.ftsQuery === undefined) {
     return [];
@@ -172,6 +223,7 @@ function fetchFtsSuggestResults(
   const ftsParams: (string | number)[] = [snapshot.ftsQuery];
   applySqlFilters(ftsClauses, ftsParams, snapshot.filters, {
     defaultActiveOnly: true,
+    columnPrefix: "m.",
   });
   const rows = allWithRetry(
     commandCtx.requireDb(),
@@ -183,20 +235,41 @@ function fetchFtsSuggestResults(
      LIMIT 20`,
     ftsParams,
   );
-  return shapeRowsWithScore(rows as unknown[], snapshot.suggestTerms);
+  return shapeRowsWithScore(rows as unknown[], snapshot.suggestTerms, {
+    explainScore: options.explainScore,
+  });
+}
+
+function collectSuggestResults(
+  commandCtx: CommandContext,
+  snapshot: SuggestSnapshot,
+  options: FetchResultsOptions,
+): Record<string, unknown>[] {
+  const neighborhoodResults = queryNeighborhoodMatches(
+    commandCtx.requireDb(),
+    snapshot.neighborhood,
+    snapshot.filters,
+  );
+  const ftsResults = fetchFtsSuggestResults(commandCtx, snapshot, options);
+  return mergeSuggestionResults(ftsResults, neighborhoodResults);
 }
 
 function printSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   results: Record<string, unknown>[],
+  options: FetchResultsOptions,
 ) {
   const { outputMode } = commandCtx;
   if (outputMode.jsonMin || outputMode.quiet) {
-    printJson({
+    const payload: Record<string, unknown> = {
       count: results.length,
-      ids: results.map((entry) => entry.id),
-    });
+      ids: resultIds(results),
+    };
+    if (options.explainScore) {
+      payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+    }
+    printJson(payload);
     return;
   }
   if (outputMode.brief) {
@@ -206,25 +279,180 @@ function printSuggestResults(
 
   printJson({
     files: snapshot.files,
+    normalized_files: snapshot.files,
+    normalized_path_terms: snapshot.normalizedPathTerms,
     derived_terms: snapshot.suggestTerms,
     neighborhood: {
       tags: snapshot.neighborhood.tagHints,
       paths: snapshot.neighborhood.pathHints,
     },
+    ...(options.explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
     results,
   });
 }
 
 export function handleSuggestCommand(commandCtx: CommandContext) {
+  const explainScore = explainScoreEnabled(commandCtx.args);
   const snapshot = buildSuggestSnapshot(commandCtx.args);
-  const neighborhoodResults = queryNeighborhoodMatches(
+  const results = collectSuggestResults(commandCtx, snapshot, { explainScore });
+  printSuggestResults(commandCtx, snapshot, results, { explainScore });
+}
+
+function ensureSweepFileArgs(args: string[]) {
+  const filesRaw = getFlagValue(args, "--files");
+  const filesJsonRaw = getFlagValue(args, "--files-json");
+  if (!filesRaw && !filesJsonRaw) {
+    usageError(`Usage: ${SWEEP_USAGE}`);
+  }
+  if (filesRaw && filesJsonRaw) {
+    usageError("Use either --files or --files-json, not both.");
+  }
+}
+
+function parseSweepQueryArg(args: string[]): string | undefined {
+  const value = getFlagValue(args, "--query");
+  if (hasFlag(args, "--query") && value === undefined) {
+    usageError(`Usage: ${SWEEP_USAGE}`);
+  }
+  return value;
+}
+
+function fetchListScoredResults(
+  commandCtx: CommandContext,
+  scoreTerms: string[],
+  options: FetchResultsOptions,
+): {
+  results: Record<string, unknown>[];
+  filters: ReturnType<typeof parseCommonFilters>;
+} {
+  const filters = parseCommonFilters(commandCtx.args);
+  const clauses: string[] = [];
+  const params: (string | number)[] = [];
+  applySqlFilters(clauses, params, filters, {
+    defaultActiveOnly: true,
+    columnPrefix: "m.",
+  });
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = allWithRetry(
     commandCtx.requireDb(),
-    snapshot.neighborhood,
-    snapshot.filters,
+    `SELECT m.*, 0 AS fts_rank
+     FROM memories m
+     ${where}
+     ORDER BY m.updated_at DESC, m.id DESC`,
+    params,
   );
-  const ftsResults = fetchFtsSuggestResults(commandCtx, snapshot);
-  const results = mergeSuggestionResults(ftsResults, neighborhoodResults);
-  printSuggestResults(commandCtx, snapshot, results);
+  return {
+    results: shapeRowsWithScore(rows as unknown[], scoreTerms, {
+      explainScore: options.explainScore,
+    }),
+    filters,
+  };
+}
+
+function mergeSweepRows(
+  left: Record<string, unknown>,
+  right: Record<string, unknown>,
+  source: SweepSource,
+): Record<string, unknown> {
+  const currentSources = Array.isArray(left.sources)
+    ? (left.sources as SweepSource[])
+    : [];
+  const nextSources = currentSources.includes(source)
+    ? currentSources
+    : [...currentSources, source];
+  const leftScore = Number(left.score ?? 0);
+  const rightScore = Number(right.score ?? 0);
+  const base = rightScore > leftScore ? right : left;
+  return {
+    ...base,
+    score: Number(Math.max(leftScore, rightScore).toFixed(3)),
+    sources: nextSources,
+  };
+}
+
+function mergeSweepResults(
+  parts: { source: SweepSource; rows: Record<string, unknown>[] }[],
+): Record<string, unknown>[] {
+  const byId = new Map<number, Record<string, unknown>>();
+  for (const part of parts) {
+    for (const row of part.rows) {
+      const id = Number(row.id);
+      if (!Number.isInteger(id) || id <= 0) {
+        continue;
+      }
+      const existing = byId.get(id);
+      if (!existing) {
+        byId.set(id, { ...row, sources: [part.source] });
+        continue;
+      }
+      byId.set(id, mergeSweepRows(existing, row, part.source));
+    }
+  }
+  return sortByScoreThenRecency([...byId.values()]);
+}
+
+export function handleSweepCommand(commandCtx: CommandContext) {
+  const { args, outputMode } = commandCtx;
+  ensureSweepFileArgs(args);
+  const queryTerm = parseSweepQueryArg(args);
+  const explainScore = explainScoreEnabled(args);
+
+  const snapshot = buildSuggestSnapshot(args);
+  const suggestResults = collectSuggestResults(commandCtx, snapshot, {
+    explainScore,
+  });
+
+  const queryBundle = queryTerm
+    ? fetchQueryResults(commandCtx, queryTerm, { explainScore })
+    : {
+        results: [],
+        queryTokens: [] as string[],
+        filters: parseCommonFilters(args),
+      };
+
+  const listScoreTerms = uniqueLowerPreserveOrder([
+    ...snapshot.suggestTerms,
+    ...queryBundle.queryTokens,
+    ...extractTerms(queryBundle.filters.tag ?? ""),
+  ]);
+  const listBundle = fetchListScoredResults(commandCtx, listScoreTerms, {
+    explainScore,
+  });
+
+  const results = mergeSweepResults([
+    { source: "suggest", rows: suggestResults },
+    { source: "query", rows: queryBundle.results },
+    { source: "list", rows: listBundle.results },
+  ]);
+
+  if (outputMode.jsonMin || outputMode.quiet) {
+    const payload: Record<string, unknown> = {
+      count: results.length,
+      ids: resultIds(results),
+    };
+    if (explainScore) {
+      payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+    }
+    printJson(payload);
+    return;
+  }
+  if (outputMode.brief) {
+    printBriefLines(results);
+    return;
+  }
+
+  printJson({
+    files: snapshot.files,
+    normalized_files: snapshot.files,
+    normalized_path_terms: snapshot.normalizedPathTerms,
+    derived_terms: snapshot.suggestTerms,
+    query: queryTerm ?? null,
+    filters: {
+      tags: listBundle.filters.tag ?? null,
+    },
+    ...(explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
+    results,
+  });
 }
 
 function parseFactArgs(args: string[], usage: string) {

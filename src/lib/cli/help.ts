@@ -20,7 +20,7 @@ export function helpPayload() {
       },
       query: {
         usage:
-          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--brief|--json-min|--quiet]",
+          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--explain-score] [--brief|--json-min|--quiet]",
       },
       list: {
         usage:
@@ -36,7 +36,14 @@ export function helpPayload() {
       delete: { usage: "delete <id|id,id,...>" },
       suggest: {
         usage:
-          'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--brief|--json-min|--quiet]',
+          'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--explain-score] [--brief|--json-min|--quiet]',
+      },
+      sweep: {
+        usage:
+          'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--brief|--json-min|--quiet]',
+      },
+      doctor: {
+        usage: "doctor [--brief|--json-min|--quiet]",
       },
       verify: { usage: "verify <id> <fact>" },
       diff: { usage: "diff <id> <new_content>" },

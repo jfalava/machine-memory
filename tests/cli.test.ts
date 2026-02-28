@@ -310,6 +310,41 @@ describe("add", () => {
     >;
     expect(result).toEqual({ id: 1 });
   });
+
+  test("supports --upsert-match and updates a strong active match", () => {
+    json(
+      "add",
+      "Auth JWT policy rotates RS256 signing keys every 24h",
+      "--tags",
+      "auth,jwt",
+    );
+    const result = json(
+      "add",
+      "Auth JWT policy rotates RS256 signing keys every 12h",
+      "--upsert-match",
+      "auth jwt policy",
+    ) as Record<string, unknown>;
+    expect(result.mode).toBe("updated");
+    expect(result.id).toBe(1);
+
+    const listed = json("list") as Record<string, unknown>[];
+    expect(listed).toHaveLength(1);
+    expect((json("get", "1") as Record<string, unknown>).content).toContain(
+      "every 12h",
+    );
+  });
+
+  test("supports --upsert-match and creates when match is weak", () => {
+    json("add", "Database migration checklist and rollback order", "--tags", "db");
+    const result = json(
+      "add",
+      "Frontend typography scale and spacing guidelines",
+      "--upsert-match",
+      "database migration checklist",
+    ) as Record<string, unknown>;
+    expect(result.mode).toBe("created");
+    expect(result.id).toBe(2);
+  });
 });
 
 // --- get ---
@@ -577,6 +612,23 @@ describe("query", () => {
     const result = json("query", "jwt", "--quiet") as Record<string, unknown>;
     expect(result.count).toBe(1);
     expect(result.ids).toEqual([1]);
+  });
+
+  test("supports --explain-score on query", () => {
+    json("add", "JWT signing key policy", "--tags", "auth,jwt");
+    const result = json("query", "jwt", "--explain-score") as Record<
+      string,
+      unknown
+    >;
+    const weights = asJsonObject(result.score_weights);
+    const rows = result.results as Record<string, unknown>[];
+    expect(weights.recency).toBeDefined();
+    expect(weights.certainty).toBeDefined();
+    expect(weights.tagMatch).toBeDefined();
+    expect(weights.updateCount).toBeDefined();
+    expect(weights.ftsRank).toBeDefined();
+    expect(Array.isArray(rows)).toBe(true);
+    expect(rows[0]?.score_breakdown).toBeDefined();
   });
 
   test("returns actionable error payload when schema is missing", () => {
@@ -923,6 +975,45 @@ describe("checklist: suggest --files", () => {
     expect(Array.isArray(result.ids)).toBe(true);
   });
 
+  test("supports --explain-score on suggest", () => {
+    json(
+      "add",
+      "JWT auth middleware uses RS256",
+      "--tags",
+      "auth,jwt,middleware",
+    );
+    const result = json(
+      "suggest",
+      "--files",
+      "src/auth/jwt.ts,src/middleware/session.ts",
+      "--explain-score",
+    ) as Record<string, unknown>;
+    const weights = asJsonObject(result.score_weights);
+    expect(weights.recency).toBeDefined();
+    expect(weights.certainty).toBeDefined();
+    expect(weights.tagMatch).toBeDefined();
+    expect(weights.updateCount).toBeDefined();
+    expect(weights.ftsRank).toBeDefined();
+  });
+
+  test("normalizes file paths and returns normalized path terms", () => {
+    json("add", "JWT auth middleware uses RS256", "--tags", "auth,jwt");
+    const result = json(
+      "suggest",
+      "--files-json",
+      '["./src\\\\auth\\\\jwt.ts","src//middleware//session.ts"]',
+    ) as Record<string, unknown>;
+    expect(result.normalized_files).toEqual([
+      "src/auth/jwt.ts",
+      "src/middleware/session.ts",
+    ]);
+    const pathTerms = result.normalized_path_terms as string[];
+    expect(pathTerms).toContain("auth");
+    expect(pathTerms).toContain("jwt");
+    expect(pathTerms).toContain("middleware");
+    expect(pathTerms).toContain("session");
+  });
+
   test("supports context-dense --brief output on suggest", () => {
     json("add", "Client auth token lifecycle", "--tags", "client,auth,status");
     const lines = briefLines(
@@ -955,6 +1046,145 @@ describe("checklist: suggest --files", () => {
     const parsed = asJsonObject(parseJsonValue(result.stdout));
     expect(result.exitCode).toBe(1);
     expect(parsed.error).toContain("Invalid --files-json value");
+  });
+});
+
+describe("checklist: sweep command", () => {
+  test("merges suggest/query/list results with source labels", () => {
+    json(
+      "add",
+      "JWT auth middleware uses RS256 and rotates keys",
+      "--tags",
+      "auth,jwt,middleware",
+    );
+    const result = json(
+      "sweep",
+      "--files",
+      "src/auth/jwt.ts,src/middleware/session.ts",
+      "--query",
+      "jwt rotates keys",
+      "--tags",
+      "auth",
+    ) as Record<string, unknown>;
+    const results = result.results as Record<string, unknown>[];
+    expect(Array.isArray(results)).toBe(true);
+    expect(results.length).toBeGreaterThan(0);
+    const first = results[0];
+    expect(first).toBeDefined();
+    if (!first) {
+      throw new Error("Expected at least one sweep result");
+    }
+    const sources = first.sources as string[];
+    expect(Array.isArray(sources)).toBe(true);
+    expect(typeof first.score).toBe("number");
+    expect(sources.length).toBeGreaterThan(0);
+  });
+
+  test("supports --json-min output on sweep", () => {
+    json("add", "Sweep baseline memory", "--tags", "auth");
+    const result = json(
+      "sweep",
+      "--files",
+      "src/auth/jwt.ts",
+      "--json-min",
+    ) as Record<string, unknown>;
+    expect(typeof result.count).toBe("number");
+    expect(Array.isArray(result.ids)).toBe(true);
+  });
+
+  test("sorts sweep results by score then recency", () => {
+    json("add", "older low confidence", "--tags", "ops", "--certainty", "speculative");
+    Bun.sleepSync(1100);
+    json("add", "newer medium confidence", "--tags", "ops", "--certainty", "inferred");
+    Bun.sleepSync(1100);
+    json("add", "newer high confidence", "--tags", "ops", "--certainty", "verified");
+
+    const result = json("sweep", "--files", "src/ops/runbook.ts") as Record<
+      string,
+      unknown
+    >;
+    const rows = result.results as Record<string, unknown>[];
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+
+    for (let i = 0; i < rows.length - 1; i += 1) {
+      const current = rows[i];
+      const next = rows[i + 1];
+      if (!current || !next) {
+        continue;
+      }
+      const currentScore = Number(current.score ?? 0);
+      const nextScore = Number(next.score ?? 0);
+      expect(currentScore).toBeGreaterThanOrEqual(nextScore);
+      if (currentScore === nextScore) {
+        const currentUpdated = Date.parse(String(current.updated_at));
+        const nextUpdated = Date.parse(String(next.updated_at));
+        expect(currentUpdated).toBeGreaterThanOrEqual(nextUpdated);
+      }
+    }
+  });
+
+  test("errors when missing file inputs", () => {
+    const result = exec("sweep");
+    const parsed = asJsonObject(parseJsonValue(result.stdout));
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain("Usage: sweep");
+  });
+});
+
+describe("checklist: doctor command", () => {
+  function seedDoctorFixture() {
+    const seedRows = [
+      ["duplicate seed", "--tags", "dup", "--context", "same"],
+      ["duplicate seed", "--tags", "dup", "--context", "same"],
+      ["JWT tokens are signed with RS256 and rotated weekly", "--tags", "jwt"],
+      ["JWT token signatures use RS256 with weekly rotation", "--tags", "jwt"],
+      ["status phase 1", "--type", "status", "--tags", "deploy,phase"],
+      ["status phase 2", "--type", "status", "--tags", "deploy"],
+      ["tag cleanup target", "--tags", "clean"],
+      ["missing tags target"],
+      ["refs cleanup target", "--tags", "refs"],
+    ];
+    for (const seed of seedRows) {
+      json("add", ...seed);
+    }
+    dbRun("UPDATE memories SET tags = 'clean, clean ,ops,,' WHERE id = 7");
+    dbRun("UPDATE memories SET refs = '{\"bad\":true}' WHERE id = 9");
+  }
+
+  test("detects duplicates, stale status overlaps, tag issues, and malformed refs", () => {
+    seedDoctorFixture();
+
+    const result = json("doctor") as Record<string, unknown>;
+    const summary = asJsonObject(result.summary);
+    const findings = asJsonObject(result.findings);
+    const commands = result.suggested_commands as string[];
+
+    expect(summary.exact_duplicates).toBeGreaterThanOrEqual(1);
+    expect(summary.near_duplicates).toBeGreaterThanOrEqual(1);
+    expect(summary.stale_status_overlaps).toBeGreaterThanOrEqual(1);
+    expect(summary.tag_hygiene).toBeGreaterThanOrEqual(1);
+    expect(summary.malformed_refs).toBeGreaterThanOrEqual(1);
+
+    const exact = findings.exact_duplicates as Record<string, unknown>[];
+    const tagHygiene = findings.tag_hygiene as Record<string, unknown>[];
+    const refs = findings.malformed_refs as Record<string, unknown>[];
+    expect(exact[0]?.suggested_command).toContain("machine-memory delete");
+    expect(
+      tagHygiene.some((item) =>
+        String(item.suggested_command).includes("machine-memory update"),
+      ),
+    ).toBe(true);
+    expect(refs[0]?.suggested_command).toContain("--refs");
+    expect(
+      commands.some((item) => item.includes("machine-memory deprecate")),
+    ).toBe(true);
+  });
+
+  test("supports --json-min output on doctor", () => {
+    json("add", "doctor json min", "--tags", "doctor");
+    const result = json("doctor", "--json-min") as Record<string, unknown>;
+    expect(typeof result.count).toBe("number");
+    expect(typeof result.suggested_commands_count).toBe("number");
   });
 });
 

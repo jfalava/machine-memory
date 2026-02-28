@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { getFlagValue, printJson, usageError } from "../../cli";
+import { getFlagValue, hasFlag, printJson, usageError } from "../../cli";
 import { runWithRetry } from "../../db";
 import { suggestTagsForPath } from "../../path-tags";
 import {
@@ -10,6 +10,7 @@ import {
   UPDATE_FLAGS_WITH_VALUES,
   UPDATE_USAGE,
   collectPositionalArgs,
+  compareFact,
   detectPotentialConflicts,
   findMemoryByMatch,
   findStatusCascadeCandidates,
@@ -22,8 +23,23 @@ import {
   parseRefsFlag,
   requireCertainty,
   requireMemoryType,
+  stringValue,
 } from "../shared";
 import type { CommandContext } from "./context";
+
+const UPSERT_MIN_SIMILARITY = 0.62;
+const UPSERT_MIN_SCORE = 32;
+
+type AddExplicitFlags = {
+  tags: boolean;
+  context: boolean;
+  memoryType: boolean;
+  certainty: boolean;
+  sourceAgent: boolean;
+  updatedBy: boolean;
+  refs: boolean;
+  expiresAfterDays: boolean;
+};
 
 type AddMetadata = {
   mappedTags: string[];
@@ -35,6 +51,7 @@ type AddMetadata = {
   updatedBy: string;
   refs: string[];
   expiresAfterDays: number | null | undefined;
+  explicit: AddExplicitFlags;
 };
 
 type UpdateTargets = {
@@ -66,6 +83,16 @@ function resolveAddMetadata(args: string[]): AddMetadata {
   const pathContext = getFlagValue(args, "--path");
   const mappedTags = pathContext ? suggestTagsForPath(pathContext) : [];
   const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
+  const explicitFlags: AddExplicitFlags = {
+    tags: explicitTags !== undefined,
+    context: getFlagValue(args, "--context") !== undefined,
+    memoryType: getFlagValue(args, "--type") !== undefined,
+    certainty: getFlagValue(args, "--certainty") !== undefined,
+    sourceAgent: getFlagValue(args, "--source-agent") !== undefined,
+    updatedBy: getFlagValue(args, "--updated-by") !== undefined,
+    refs: getFlagValue(args, "--refs") !== undefined,
+    expiresAfterDays: getFlagValue(args, "--expires-after-days") !== undefined,
+  };
   return {
     mappedTags,
     tags: mergeTagValues(explicitTags, mappedTags),
@@ -76,7 +103,122 @@ function resolveAddMetadata(args: string[]): AddMetadata {
     updatedBy: getFlagValue(args, "--updated-by") ?? sourceAgent,
     refs: parseRefsFlag(args) ?? [],
     expiresAfterDays: parseIntegerFlag(args, "--expires-after-days"),
+    explicit: explicitFlags,
   };
+}
+
+function parseAddUpsertQuery(args: string[]): string | undefined {
+  const value = getFlagValue(args, "--upsert-match");
+  if (hasFlag(args, "--upsert-match") && value === undefined) {
+    usageError(`Usage: ${ADD_USAGE}`);
+  }
+  return value;
+}
+
+function shouldSetLastUpdatedBy(metadata: AddMetadata): boolean {
+  return metadata.explicit.updatedBy || metadata.explicit.sourceAgent;
+}
+
+function upsertComparableText(content: string, metadata: AddMetadata): string {
+  return [content, metadata.tags, metadata.memo].join(" ");
+}
+
+function isStrongUpsertMatch(
+  matched: Record<string, unknown>,
+  content: string,
+  metadata: AddMetadata,
+): boolean {
+  const matchedText = [
+    stringValue(matched.content),
+    stringValue(matched.tags),
+    stringValue(matched.context),
+  ].join(" ");
+  const incomingText = upsertComparableText(content, metadata);
+  const similarity = compareFact(matchedText, incomingText).similarity;
+  const score = Number(matched.score ?? 0);
+  return similarity >= UPSERT_MIN_SIMILARITY && score >= UPSERT_MIN_SCORE;
+}
+
+function upsertUpdateSpecs(metadata: AddMetadata): UpdateSpec[] {
+  const specs: (UpdateSpec | undefined)[] = [
+    metadata.explicit.tags || metadata.mappedTags.length > 0
+      ? { clause: "tags = ?", value: metadata.tags }
+      : undefined,
+    metadata.explicit.context
+      ? { clause: "context = ?", value: metadata.memo }
+      : undefined,
+    metadata.explicit.memoryType
+      ? { clause: "memory_type = ?", value: metadata.memoryType }
+      : undefined,
+    metadata.explicit.certainty
+      ? { clause: "certainty = ?", value: metadata.certainty }
+      : undefined,
+    metadata.explicit.sourceAgent
+      ? { clause: "source_agent = ?", value: metadata.sourceAgent }
+      : undefined,
+    metadata.explicit.refs
+      ? { clause: "refs = ?", value: JSON.stringify(metadata.refs) }
+      : undefined,
+    metadata.explicit.expiresAfterDays
+      ? {
+          clause: "expires_after_days = ?",
+          value: metadata.expiresAfterDays ?? null,
+        }
+      : undefined,
+    shouldSetLastUpdatedBy(metadata)
+      ? { clause: "last_updated_by = ?", value: metadata.updatedBy }
+      : undefined,
+  ];
+  return specs.filter((spec): spec is UpdateSpec => spec !== undefined);
+}
+
+function updateFromAddPayload(
+  database: Database,
+  targetId: number,
+  content: string,
+  metadata: AddMetadata,
+) {
+  const sets = [
+    "content = ?",
+    "updated_at = datetime('now')",
+    "update_count = COALESCE(update_count, 0) + 1",
+  ];
+  const params: (string | number | null)[] = [content];
+  for (const spec of upsertUpdateSpecs(metadata)) {
+    sets.push(spec.clause);
+    params.push(spec.value);
+  }
+  runWithRetry(
+    database,
+    `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
+    [...params, targetId],
+  );
+}
+
+function printUpsertResult(mode: "created" | "updated", id: number) {
+  printJson({ mode, id });
+}
+
+function maybeHandleAddUpsert(
+  database: Database,
+  args: string[],
+  content: string,
+  metadata: AddMetadata,
+): boolean {
+  const upsertQuery = parseAddUpsertQuery(args);
+  if (upsertQuery === undefined) {
+    return false;
+  }
+  const matched = findMemoryByMatch(database, upsertQuery);
+  if (matched && isStrongUpsertMatch(matched, content, metadata)) {
+    const matchedId = Number(matched.id);
+    updateFromAddPayload(database, matchedId, content, metadata);
+    printUpsertResult("updated", matchedId);
+    return true;
+  }
+  const createdResult = addInsert(database, content, metadata);
+  printUpsertResult("created", Number(createdResult.lastInsertRowid));
+  return true;
 }
 
 function detectAddConflicts(
@@ -187,6 +329,10 @@ export function handleAddCommand(commandCtx: CommandContext) {
   const database = requireDb();
   const content = resolveAddContent(args);
   const metadata = resolveAddMetadata(args);
+  if (maybeHandleAddUpsert(database, args, content, metadata)) {
+    return;
+  }
+
   const conflictState = detectAddConflicts(
     database,
     outputMode,

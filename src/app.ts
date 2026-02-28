@@ -18,8 +18,10 @@ import {
   handleListCommand,
   handleQueryCommand,
   handleSuggestCommand,
+  handleSweepCommand,
   handleVerifyCommand,
 } from "./lib/cli/commands/memory-read";
+import { handleDoctorCommand } from "./lib/cli/commands/doctor";
 import {
   handleCoverageCommand,
   handleExportCommand,
@@ -64,6 +66,8 @@ const dbCommands = new Set([
   "coverage",
   "gc",
   "stats",
+  "sweep",
+  "doctor",
   "import",
   "export",
   "migrate",
@@ -142,6 +146,14 @@ try {
     }
     case "suggest": {
       handleSuggestCommand(commandContext);
+      break;
+    }
+    case "sweep": {
+      handleSweepCommand(commandContext);
+      break;
+    }
+    case "doctor": {
+      handleDoctorCommand(commandContext);
       break;
     }
     case "verify": {
