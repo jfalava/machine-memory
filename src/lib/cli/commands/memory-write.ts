@@ -1,4 +1,3 @@
-/* eslint-disable max-statements, complexity */
 import { Database } from "bun:sqlite";
 import { getFlagValue, printJson, usageError } from "../../cli";
 import { runWithRetry } from "../../db";
@@ -26,9 +25,26 @@ import {
 } from "../shared";
 import type { CommandContext } from "./context";
 
+type AddMetadata = {
+  mappedTags: string[];
+  tags: string;
+  memo: string;
+  memoryType: string;
+  certainty: string;
+  sourceAgent: string;
+  updatedBy: string;
+  refs: string[];
+  expiresAfterDays: number | null | undefined;
+};
+
 type UpdateTargets = {
   targetIds: number[];
   contentFromArg: string | undefined;
+};
+
+type UpdateSpec = {
+  clause: string;
+  value: string | number | null;
 };
 
 function resolveAddContent(args: string[]): string {
@@ -45,20 +61,49 @@ function resolveAddContent(args: string[]): string {
   return content;
 }
 
-function addInsert(
+function resolveAddMetadata(args: string[]): AddMetadata {
+  const explicitTags = getFlagValue(args, "--tags");
+  const pathContext = getFlagValue(args, "--path");
+  const mappedTags = pathContext ? suggestTagsForPath(pathContext) : [];
+  const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
+  return {
+    mappedTags,
+    tags: mergeTagValues(explicitTags, mappedTags),
+    memo: getFlagValue(args, "--context") ?? "",
+    memoryType: requireMemoryType(args) ?? "convention",
+    certainty: requireCertainty(args) ?? "inferred",
+    sourceAgent,
+    updatedBy: getFlagValue(args, "--updated-by") ?? sourceAgent,
+    refs: parseRefsFlag(args) ?? [],
+    expiresAfterDays: parseIntegerFlag(args, "--expires-after-days"),
+  };
+}
+
+function detectAddConflicts(
   database: Database,
-  payload: {
-    content: string;
-    tags: string;
-    context: string;
-    memoryType: string;
-    certainty: string;
-    sourceAgent: string;
-    updatedBy: string;
-    refs: string[];
-    expiresAfterDays: number | null | undefined;
-  },
-) {
+  outputMode: CommandContext["outputMode"],
+  content: string,
+  metadata: AddMetadata,
+): {
+  includeConflicts: boolean;
+  potentialConflicts: Record<string, unknown>[];
+} {
+  const includeConflicts = !(
+    outputMode.noConflicts || hasMinimalOutput(outputMode)
+  );
+  return {
+    includeConflicts,
+    potentialConflicts: includeConflicts
+      ? detectPotentialConflicts(database, {
+          content,
+          tags: metadata.tags,
+          context: metadata.memo,
+        })
+      : [],
+  };
+}
+
+function addInsert(database: Database, content: string, metadata: AddMetadata) {
   return runWithRetry(
     database,
     `INSERT INTO memories (
@@ -66,15 +111,15 @@ function addInsert(
      source_agent, last_updated_by, update_count, refs, expires_after_days
    ) VALUES (?, ?, ?, ?, ?, 'active', NULL, ?, ?, 0, ?, ?)`,
     [
-      payload.content,
-      payload.tags,
-      payload.context,
-      payload.memoryType,
-      payload.certainty,
-      payload.sourceAgent,
-      payload.updatedBy,
-      JSON.stringify(payload.refs),
-      payload.expiresAfterDays ?? null,
+      content,
+      metadata.tags,
+      metadata.memo,
+      metadata.memoryType,
+      metadata.certainty,
+      metadata.sourceAgent,
+      metadata.updatedBy,
+      JSON.stringify(metadata.refs),
+      metadata.expiresAfterDays ?? null,
     ],
   );
 }
@@ -84,9 +129,7 @@ function printAddResult(params: {
   createdId: number;
   created: Record<string, unknown> | null;
   content: string;
-  tags: string;
-  memoContext: string;
-  mappedTags: string[];
+  metadata: AddMetadata;
   includeConflicts: boolean;
   potentialConflicts: Record<string, unknown>[];
   statusCascade: Record<string, unknown>[];
@@ -96,9 +139,7 @@ function printAddResult(params: {
     createdId,
     created,
     content,
-    tags,
-    memoContext,
-    mappedTags,
+    metadata,
     includeConflicts,
     potentialConflicts,
     statusCascade,
@@ -121,12 +162,12 @@ function printAddResult(params: {
     ...(created ?? {
       id: createdId,
       content,
-      tags,
-      context: memoContext,
+      tags: metadata.tags,
+      context: metadata.memo,
     }),
   };
-  if (mappedTags.length > 0) {
-    payload.path_tag_suggestions = mappedTags;
+  if (metadata.mappedTags.length > 0) {
+    payload.path_tag_suggestions = metadata.mappedTags;
   }
   if (includeConflicts) {
     payload.potential_conflicts = potentialConflicts;
@@ -145,58 +186,28 @@ export function handleAddCommand(commandCtx: CommandContext) {
   const { args, outputMode, requireDb } = commandCtx;
   const database = requireDb();
   const content = resolveAddContent(args);
-
-  const explicitTags = getFlagValue(args, "--tags");
-  const pathContext = getFlagValue(args, "--path");
-  const mappedTags = pathContext ? suggestTagsForPath(pathContext) : [];
-  const tags = mergeTagValues(explicitTags, mappedTags);
-  const memo = getFlagValue(args, "--context") ?? "";
-  const memoryType = requireMemoryType(args) ?? "convention";
-  const certainty = requireCertainty(args) ?? "inferred";
-  const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
-  const updatedBy = getFlagValue(args, "--updated-by") ?? sourceAgent;
-  const refs = parseRefsFlag(args) ?? [];
-  const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days");
-  const includeConflicts = !(
-    outputMode.noConflicts || hasMinimalOutput(outputMode)
-  );
-  const potentialConflicts = includeConflicts
-    ? detectPotentialConflicts(database, {
-        content,
-        tags,
-        context: memo,
-      })
-    : [];
-
-  const result = addInsert(database, {
+  const metadata = resolveAddMetadata(args);
+  const conflictState = detectAddConflicts(
+    database,
+    outputMode,
     content,
-    tags,
-    context: memo,
-    memoryType,
-    certainty,
-    sourceAgent,
-    updatedBy,
-    refs,
-    expiresAfterDays,
-  });
-
+    metadata,
+  );
+  const result = addInsert(database, content, metadata);
   const created = getMemoryById(database, Number(result.lastInsertRowid));
   const createdId = Number(created?.id ?? result.lastInsertRowid);
   const statusCascade =
-    memoryType === "status"
-      ? findStatusCascadeCandidates(database, tags, createdId)
+    metadata.memoryType === "status"
+      ? findStatusCascadeCandidates(database, metadata.tags, createdId)
       : [];
-
   printAddResult({
     outputMode,
     createdId,
     created,
     content,
-    tags,
-    memoContext: memo,
-    mappedTags,
-    includeConflicts,
-    potentialConflicts,
+    metadata,
+    includeConflicts: conflictState.includeConflicts,
+    potentialConflicts: conflictState.potentialConflicts,
     statusCascade,
   });
 }
@@ -243,54 +254,95 @@ function resolveUpdateContent(
   return content;
 }
 
-function updateSetsAndParams(args: string[], content: string) {
-  const tags = getFlagValue(args, "--tags");
-  const memo = getFlagValue(args, "--context");
-  const memoryType = requireMemoryType(args);
-  const certainty = requireCertainty(args);
-  const updatedBy = getFlagValue(args, "--updated-by");
-  const refs = parseRefsFlag(args);
-  const expiresAfterDays = parseIntegerFlag(args, "--expires-after-days", {
-    allowNullLiteral: true,
-  });
+function optionalUpdateSpecs(args: string[]): UpdateSpec[] {
+  const specs: UpdateSpec[] = [];
+  const maybeSpecs: (UpdateSpec | undefined)[] = [
+    (() => {
+      const value = getFlagValue(args, "--tags");
+      return value === undefined ? undefined : { clause: "tags = ?", value };
+    })(),
+    (() => {
+      const value = getFlagValue(args, "--context");
+      return value === undefined ? undefined : { clause: "context = ?", value };
+    })(),
+    (() => {
+      const value = requireMemoryType(args);
+      return value === undefined
+        ? undefined
+        : { clause: "memory_type = ?", value };
+    })(),
+    (() => {
+      const value = requireCertainty(args);
+      return value === undefined
+        ? undefined
+        : { clause: "certainty = ?", value };
+    })(),
+    (() => {
+      const value = getFlagValue(args, "--updated-by");
+      return value === undefined
+        ? undefined
+        : { clause: "last_updated_by = ?", value };
+    })(),
+    (() => {
+      const value = parseRefsFlag(args);
+      return value === undefined
+        ? undefined
+        : { clause: "refs = ?", value: JSON.stringify(value) };
+    })(),
+    (() => {
+      const value = parseIntegerFlag(args, "--expires-after-days", {
+        allowNullLiteral: true,
+      });
+      return value === undefined
+        ? undefined
+        : { clause: "expires_after_days = ?", value };
+    })(),
+  ];
 
+  for (const spec of maybeSpecs) {
+    if (spec) {
+      specs.push(spec);
+    }
+  }
+  return specs;
+}
+
+function updateSetsAndParams(args: string[], content: string) {
   const sets = [
     "content = ?",
     "updated_at = datetime('now')",
     "update_count = COALESCE(update_count, 0) + 1",
   ];
   const params: (string | number | null)[] = [content];
-
-  if (tags !== undefined) {
-    sets.push("tags = ?");
-    params.push(tags);
+  for (const spec of optionalUpdateSpecs(args)) {
+    sets.push(spec.clause);
+    params.push(spec.value);
   }
-  if (memo !== undefined) {
-    sets.push("context = ?");
-    params.push(memo);
-  }
-  if (memoryType !== undefined) {
-    sets.push("memory_type = ?");
-    params.push(memoryType);
-  }
-  if (certainty !== undefined) {
-    sets.push("certainty = ?");
-    params.push(certainty);
-  }
-  if (updatedBy !== undefined) {
-    sets.push("last_updated_by = ?");
-    params.push(updatedBy);
-  }
-  if (refs !== undefined) {
-    sets.push("refs = ?");
-    params.push(JSON.stringify(refs));
-  }
-  if (expiresAfterDays !== undefined) {
-    sets.push("expires_after_days = ?");
-    params.push(expiresAfterDays);
-  }
-
   return { sets, params };
+}
+
+function runBatchMemoryUpdate(
+  database: Database,
+  targetIds: number[],
+  sets: string[],
+  params: (string | number | null)[],
+): { rows: Record<string, unknown>[]; missingIds: number[] } {
+  const rows: Record<string, unknown>[] = [];
+  const missingIds: number[] = [];
+  for (const targetId of targetIds) {
+    runWithRetry(
+      database,
+      `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
+      [...params, targetId],
+    );
+    const updated = getMemoryById(database, targetId);
+    if (updated) {
+      rows.push(updated);
+    } else {
+      missingIds.push(targetId);
+    }
+  }
+  return { rows, missingIds };
 }
 
 export function handleUpdateCommand(commandCtx: CommandContext) {
@@ -301,33 +353,24 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
   if (targetIds.length === 0) {
     usageError(`Usage: ${UPDATE_USAGE}`);
   }
-  const { sets, params } = updateSetsAndParams(args, content);
 
-  const updatedRows: Record<string, unknown>[] = [];
-  const missingIds: number[] = [];
-  for (const targetId of targetIds) {
-    runWithRetry(
-      database,
-      `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
-      [...params, targetId],
-    );
-    const updated = getMemoryById(database, targetId);
-    if (updated) {
-      updatedRows.push(updated);
-    } else {
-      missingIds.push(targetId);
-    }
-  }
+  const { sets, params } = updateSetsAndParams(args, content);
+  const { rows, missingIds } = runBatchMemoryUpdate(
+    database,
+    targetIds,
+    sets,
+    params,
+  );
 
   if (targetIds.length === 1) {
-    printJson(updatedRows[0] ?? { error: "Not found" });
+    printJson(rows[0] ?? { error: "Not found" });
     return;
   }
 
   printJson({
-    updated: updatedRows,
+    updated: rows,
     not_found: missingIds,
-    count: updatedRows.length,
+    count: rows.length,
   });
 }
 
@@ -353,10 +396,7 @@ function resolveDeprecateTargets(args: string[], database: Database): number[] {
   return parseIdSpec(idRaw);
 }
 
-export function handleDeprecateCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const targetIds = resolveDeprecateTargets(args, database);
+function deprecateSetsAndParams(args: string[], targetIds: number[]) {
   const supersededBy = parseIntegerFlag(args, "--superseded-by");
   if (
     supersededBy !== undefined &&
@@ -364,7 +404,6 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
   ) {
     usageError("A memory cannot supersede itself.");
   }
-
   const updatedBy = getFlagValue(args, "--updated-by");
   const sets = [
     "status = ?",
@@ -380,22 +419,20 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     sets.push("last_updated_by = ?");
     params.push(updatedBy);
   }
+  return { sets, params };
+}
 
-  const rows: Record<string, unknown>[] = [];
-  const missingIds: number[] = [];
-  for (const targetId of targetIds) {
-    runWithRetry(
-      database,
-      `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
-      [...params, targetId],
-    );
-    const row = getMemoryById(database, targetId);
-    if (row) {
-      rows.push(row);
-    } else {
-      missingIds.push(targetId);
-    }
-  }
+export function handleDeprecateCommand(commandCtx: CommandContext) {
+  const { args, requireDb } = commandCtx;
+  const database = requireDb();
+  const targetIds = resolveDeprecateTargets(args, database);
+  const { sets, params } = deprecateSetsAndParams(args, targetIds);
+  const { rows, missingIds } = runBatchMemoryUpdate(
+    database,
+    targetIds,
+    sets,
+    params,
+  );
 
   if (targetIds.length === 1) {
     printJson(rows[0] ?? { error: "Not found" });

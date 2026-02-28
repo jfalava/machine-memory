@@ -1,4 +1,3 @@
-/* eslint-disable max-statements, complexity */
 import { printJson, usageError } from "../../cli";
 import { allWithRetry } from "../../db";
 import {
@@ -18,6 +17,7 @@ import {
   queryNeighborhoodMatches,
   shapeRowsWithScore,
   stringValue,
+  uniqueLowerPreserveOrder,
 } from "../shared";
 import type { CommandContext } from "./context";
 
@@ -52,20 +52,21 @@ function printEmptyQueryResults(
   printJson(queryEmptyResultPayload(term, filters, queryTokens));
 }
 
-export function handleQueryCommand(commandCtx: CommandContext) {
-  const { args, outputMode, requireDb } = commandCtx;
+function fetchQueryResults(
+  commandCtx: CommandContext,
+  term: string,
+): {
+  results: Record<string, unknown>[];
+  queryTokens: string[];
+  filters: ReturnType<typeof parseCommonFilters>;
+} {
+  const { args, requireDb } = commandCtx;
   const database = requireDb();
-  const term = args[0];
-  if (!term) {
-    usageError("Usage: query <search_term>");
-  }
-
   const filters = parseCommonFilters(args);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
   const ftsQuery = buildFtsQueryFromTerms(queryTokens);
   if (!ftsQuery) {
-    printEmptyQueryResults(term, filters, queryTokens, outputMode);
-    return;
+    return { results: [], queryTokens, filters };
   }
 
   const clauses = ["memories_fts MATCH ?"];
@@ -83,6 +84,17 @@ export function handleQueryCommand(commandCtx: CommandContext) {
   );
 
   const results = shapeRowsWithScore(rows as unknown[], queryTokens);
+  return { results, queryTokens, filters };
+}
+
+export function handleQueryCommand(commandCtx: CommandContext) {
+  const { args, outputMode } = commandCtx;
+  const term = args[0];
+  if (!term) {
+    usageError("Usage: query <search_term>");
+  }
+
+  const { results, queryTokens, filters } = fetchQueryResults(commandCtx, term);
   if (results.length === 0) {
     printEmptyQueryResults(term, filters, queryTokens, outputMode);
     return;
@@ -124,44 +136,62 @@ export function handleListCommand(commandCtx: CommandContext) {
   printJson(normalized);
 }
 
-export function handleSuggestCommand(commandCtx: CommandContext) {
-  const { args, outputMode, requireDb } = commandCtx;
-  const database = requireDb();
+type SuggestSnapshot = {
+  files: string[];
+  suggestTerms: string[];
+  neighborhood: ReturnType<typeof deriveNeighborhoodFromFiles>;
+  filters: ReturnType<typeof parseCommonFilters>;
+  ftsQuery: string | undefined;
+};
+
+function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
   const files = parseSuggestFiles(args);
   const derivedTerms = extractPathTermsFromFiles(files);
   const neighborhood = deriveNeighborhoodFromFiles(files);
-  const suggestTerms = [...new Set([...derivedTerms, ...neighborhood.terms])];
-  const ftsQuery = buildFtsQueryFromTerms(derivedTerms);
-
-  const filters = parseCommonFilters(args);
-  const neighborhoodResults = queryNeighborhoodMatches(
-    database,
+  const suggestTerms = uniqueLowerPreserveOrder([
+    ...derivedTerms,
+    ...neighborhood.terms,
+  ]);
+  return {
+    files,
+    suggestTerms,
     neighborhood,
-    filters,
-  );
-  const ftsClauses = ftsQuery ? ["memories_fts MATCH ?"] : [];
-  const ftsParams: (string | number)[] = ftsQuery ? [ftsQuery] : [];
-  applySqlFilters(ftsClauses, ftsParams, filters, {
+    filters: parseCommonFilters(args),
+    ftsQuery: buildFtsQueryFromTerms(derivedTerms),
+  };
+}
+
+function fetchFtsSuggestResults(
+  commandCtx: CommandContext,
+  snapshot: SuggestSnapshot,
+): Record<string, unknown>[] {
+  if (snapshot.ftsQuery === undefined) {
+    return [];
+  }
+  const ftsClauses = ["memories_fts MATCH ?"];
+  const ftsParams: (string | number)[] = [snapshot.ftsQuery];
+  applySqlFilters(ftsClauses, ftsParams, snapshot.filters, {
     defaultActiveOnly: true,
   });
+  const rows = allWithRetry(
+    commandCtx.requireDb(),
+    `SELECT m.*, bm25(memories_fts) AS fts_rank
+     FROM memories m
+     JOIN memories_fts ON m.id = memories_fts.rowid
+     WHERE ${ftsClauses.join(" AND ")}
+     ORDER BY bm25(memories_fts)
+     LIMIT 20`,
+    ftsParams,
+  );
+  return shapeRowsWithScore(rows as unknown[], snapshot.suggestTerms);
+}
 
-  const rows =
-    ftsQuery === undefined
-      ? []
-      : allWithRetry(
-          database,
-          `SELECT m.*, bm25(memories_fts) AS fts_rank
-           FROM memories m
-           JOIN memories_fts ON m.id = memories_fts.rowid
-           WHERE ${ftsClauses.join(" AND ")}
-           ORDER BY bm25(memories_fts)
-           LIMIT 20`,
-          ftsParams,
-        );
-
-  const ftsResults = shapeRowsWithScore(rows as unknown[], suggestTerms);
-  const results = mergeSuggestionResults(ftsResults, neighborhoodResults);
-
+function printSuggestResults(
+  commandCtx: CommandContext,
+  snapshot: SuggestSnapshot,
+  results: Record<string, unknown>[],
+) {
+  const { outputMode } = commandCtx;
   if (outputMode.jsonMin || outputMode.quiet) {
     printJson({
       count: results.length,
@@ -175,14 +205,26 @@ export function handleSuggestCommand(commandCtx: CommandContext) {
   }
 
   printJson({
-    files,
-    derived_terms: suggestTerms,
+    files: snapshot.files,
+    derived_terms: snapshot.suggestTerms,
     neighborhood: {
-      tags: neighborhood.tagHints,
-      paths: neighborhood.pathHints,
+      tags: snapshot.neighborhood.tagHints,
+      paths: snapshot.neighborhood.pathHints,
     },
     results,
   });
+}
+
+export function handleSuggestCommand(commandCtx: CommandContext) {
+  const snapshot = buildSuggestSnapshot(commandCtx.args);
+  const neighborhoodResults = queryNeighborhoodMatches(
+    commandCtx.requireDb(),
+    snapshot.neighborhood,
+    snapshot.filters,
+  );
+  const ftsResults = fetchFtsSuggestResults(commandCtx, snapshot);
+  const results = mergeSuggestionResults(ftsResults, neighborhoodResults);
+  printSuggestResults(commandCtx, snapshot, results);
 }
 
 function parseFactArgs(args: string[], usage: string) {
