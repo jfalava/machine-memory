@@ -2,24 +2,39 @@
 
 This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
 
-### Before starting work
+### One-sweep workflow (use this every task)
 
-- Run `machine-memory suggest --files "<paths you expect to touch>"` to get relevant memories before coding.
-- Run `machine-memory query <topic>` to check for relevant context about the area you're working on.
-- Run `machine-memory stats` (or `coverage --root .`) as a health check if you're doing larger work.
-- Run `machine-memory help` if you need to discover available commands.
+1. **Scan relevant context fast (compact mode)**
+   - `machine-memory suggest --files "<paths you'll touch>" --brief`
+   - `machine-memory query "<feature/topic>" --brief`
+   - `machine-memory list --tags "<domain>" --brief`
+   - Use `machine-memory get <id>` only when you need full detail.
 
-### When to store memories
+2. **If your inference may conflict, verify before editing memory**
+   - `machine-memory verify <id> "<inferred fact>"`
+   - `machine-memory diff <id> "<proposed updated wording>"`
 
-After completing a task, store anything a future agent session would benefit from knowing:
+3. **Maintain memories while implementing**
+   - Add new knowledge:
+     - `machine-memory add "..." --tags "a,b" --context "why it matters" --type "decision|reference|status|..." --certainty "verified|inferred|speculative"`
+   - Update stale memories:
+     - `machine-memory update <id> "new content"`
+     - `machine-memory update <id1,id2,id3> "new content"` (multi-ID)
+     - `machine-memory update --match "topic" --from-file ./notes.md`
+   - Deprecate replaced memories:
+     - `machine-memory deprecate <id> --superseded-by <new_id>`
+     - `machine-memory deprecate <id1,id2,id3> --superseded-by <new_id>` (multi-ID)
+   - Delete invalid memories:
+     - `machine-memory delete <id>` or `machine-memory delete <id1,id2,id3>`
 
-- `machine-memory add "description" --tags "tag1,tag2" --context "why this matters" --type "decision" --certainty "inferred"`
+4. **Use consistent tags from file paths (optional but recommended)**
+   - `machine-memory tag-map set "sdk/src/schema.ts" "schema,types"`
+   - `machine-memory tag-map suggest "sdk/src/schema.ts"`
+   - `machine-memory add "..." --path "sdk/src/schema.ts"` (auto-merges mapped tags)
 
-Store: architectural decisions, reference docs/specs, status snapshots, project conventions, non-obvious gotchas, environment/tooling notes, and user preferences.
-Do NOT store: things obvious from reading the code, temporary information, or duplicates of existing memories.
+5. **Status hygiene**
+   - When adding `--type status`, the CLI may return `status_cascade` with a suggested deprecate command for older overlapping status memories. Run that command to keep one source of truth.
 
-### When to update, deprecate, or delete
-
-- If a memory is outdated, update it: `machine-memory update <id> "new content"` or `machine-memory update --match "topic" --from-file ./notes.md`
-- If a memory is replaced by a newer one, deprecate it: `machine-memory deprecate <old_id> --superseded-by <new_id>` or `machine-memory deprecate --match "old topic"`
-- If a memory is wrong or no longer relevant, delete it: `machine-memory delete <id>`
+6. **Task-end persistence rule**
+   - Always persist non-obvious outcomes future sessions need (decisions, references, status snapshots, gotchas, tooling notes, user preferences).
+   - Do **not** store obvious code facts, temporary notes, or duplicates.
