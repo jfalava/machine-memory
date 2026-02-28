@@ -1,5 +1,8 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
-import { beforeEach as bunBeforeEach, afterEach as bunAfterEach } from "bun:test";
+import {
+  beforeEach as bunBeforeEach,
+  afterEach as bunAfterEach,
+} from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

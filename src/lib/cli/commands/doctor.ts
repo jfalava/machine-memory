@@ -103,7 +103,9 @@ function loadActiveMemories(commandCtx: CommandContext): MemorySnapshot[] {
   });
 }
 
-function exactDuplicateMap(rows: MemorySnapshot[]): Map<string, MemorySnapshot[]> {
+function exactDuplicateMap(
+  rows: MemorySnapshot[],
+): Map<string, MemorySnapshot[]> {
   const groups = new Map<string, MemorySnapshot[]>();
   for (const row of rows) {
     const key = [row.content, row.tagsRaw, row.memoContext].join("\u0001");
@@ -114,9 +116,10 @@ function exactDuplicateMap(rows: MemorySnapshot[]): Map<string, MemorySnapshot[]
   return groups;
 }
 
-function detectExactDuplicates(
-  rows: MemorySnapshot[],
-): { findings: ExactDuplicateFinding[]; duplicateKeyById: Map<number, string> } {
+function detectExactDuplicates(rows: MemorySnapshot[]): {
+  findings: ExactDuplicateFinding[];
+  duplicateKeyById: Map<number, string>;
+} {
   const findings: ExactDuplicateFinding[] = [];
   const duplicateKeyById = new Map<number, string>();
   for (const [key, group] of exactDuplicateMap(rows)) {
@@ -258,7 +261,9 @@ function selectStatusMatch(tags: string[], latestByTag: Map<string, number>) {
   return undefined;
 }
 
-function detectStaleStatusOverlaps(rows: MemorySnapshot[]): StaleStatusFinding[] {
+function detectStaleStatusOverlaps(
+  rows: MemorySnapshot[],
+): StaleStatusFinding[] {
   const findings: StaleStatusFinding[] = [];
   const latestByTag = new Map<string, number>();
 
@@ -274,7 +279,9 @@ function detectStaleStatusOverlaps(rows: MemorySnapshot[]): StaleStatusFinding[]
     }
     const newerId = selectStatusMatch(normalizedTags, latestByTag);
     if (newerId !== undefined) {
-      const sharedTags = normalizedTags.filter((tag) => latestByTag.get(tag) === newerId);
+      const sharedTags = normalizedTags.filter(
+        (tag) => latestByTag.get(tag) === newerId,
+      );
       findings.push({
         kind: "stale_status_overlap",
         stale_id: row.id,
@@ -327,9 +334,14 @@ function detectTagHygiene(rows: MemorySnapshot[]): TagFinding[] {
   return findings;
 }
 
-function parseMalformedRefs(raw: unknown): { malformed: boolean; suggested: string[] } {
+function parseMalformedRefs(raw: unknown): {
+  malformed: boolean;
+  suggested: string[];
+} {
   if (Array.isArray(raw)) {
-    const valid = raw.filter((item): item is string => typeof item === "string");
+    const valid = raw.filter(
+      (item): item is string => typeof item === "string",
+    );
     return { malformed: valid.length !== raw.length, suggested: valid };
   }
   if (typeof raw !== "string") {
@@ -433,7 +445,8 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
 
   if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
     printJson({
-      count: summary.exact_duplicates +
+      count:
+        summary.exact_duplicates +
         summary.near_duplicates +
         summary.stale_status_overlaps +
         summary.tag_hygiene +

@@ -490,11 +490,32 @@ describe("sweep", () => {
   });
 
   test("sorts sweep results by score then recency", () => {
-    json("add", "older low confidence", "--tags", "ops", "--certainty", "speculative");
+    json(
+      "add",
+      "older low confidence",
+      "--tags",
+      "ops",
+      "--certainty",
+      "speculative",
+    );
     Bun.sleepSync(1100);
-    json("add", "newer medium confidence", "--tags", "ops", "--certainty", "inferred");
+    json(
+      "add",
+      "newer medium confidence",
+      "--tags",
+      "ops",
+      "--certainty",
+      "inferred",
+    );
     Bun.sleepSync(1100);
-    json("add", "newer high confidence", "--tags", "ops", "--certainty", "verified");
+    json(
+      "add",
+      "newer high confidence",
+      "--tags",
+      "ops",
+      "--certainty",
+      "verified",
+    );
 
     const result = json("sweep", "--files", "src/ops/runbook.ts") as Record<
       string,

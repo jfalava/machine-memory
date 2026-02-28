@@ -885,7 +885,10 @@ function termsDifference(source: Set<string>, against: Set<string>): string[] {
   return [...source].filter((term) => !against.has(term));
 }
 
-export function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
+export function jaccardSimilarity(
+  left: Set<string>,
+  right: Set<string>,
+): number {
   if (left.size === 0 && right.size === 0) {
     return 1;
   }

@@ -24,7 +24,7 @@ import {
 import type { CommandContext } from "./context";
 
 const SWEEP_USAGE =
-  "sweep (--files \"src/a.ts,src/b.ts\" | --files-json '[\"src/a.ts\",\"src/b.ts\"]') [--query <search_term>] [--tags <tag>] [--brief|--json-min|--quiet]";
+  'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--brief|--json-min|--quiet]';
 
 type FetchResultsOptions = {
   explainScore: boolean;
@@ -81,7 +81,9 @@ function printScoredResults(
   if (options.wrapResults) {
     printJson({
       results,
-      ...(options.explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
+      ...(options.explainScore
+        ? { score_weights: SCORE_COMPONENT_WEIGHTS }
+        : {}),
     });
     return;
   }
@@ -146,9 +148,13 @@ export function handleQueryCommand(commandCtx: CommandContext) {
   }
 
   const explainScore = explainScoreEnabled(args);
-  const { results, queryTokens, filters } = fetchQueryResults(commandCtx, term, {
-    explainScore,
-  });
+  const { results, queryTokens, filters } = fetchQueryResults(
+    commandCtx,
+    term,
+    {
+      explainScore,
+    },
+  );
   if (results.length === 0) {
     printEmptyQueryResults(term, filters, queryTokens, outputMode);
     return;

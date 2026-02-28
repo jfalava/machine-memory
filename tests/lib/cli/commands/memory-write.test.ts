@@ -119,7 +119,12 @@ describe("add", () => {
   });
 
   test("supports --upsert-match and creates when match is weak", () => {
-    json("add", "Database migration checklist and rollback order", "--tags", "db");
+    json(
+      "add",
+      "Database migration checklist and rollback order",
+      "--tags",
+      "db",
+    );
     const result = json(
       "add",
       "Frontend typography scale and spacing guidelines",
