@@ -66,6 +66,21 @@ describe("upgrade", () => {
     expect(parsed.error).toContain("Failed to fetch latest release: 404");
   });
 
+  test("errors when release request times out", async () => {
+    setEnv("MACHINE_MEMORY_UPGRADE_TIMEOUT_MS", "50");
+    mockHandler = () => {
+      // Intentionally never respond to simulate a stalled network request.
+    };
+
+    const result = await execAsync("upgrade");
+    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+
+    expect(result.exitCode).toBe(1);
+    expect(parsed.error).toContain(
+      "Failed to fetch latest release: request timed out after 50ms",
+    );
+  });
+
   test("errors when no matching binary for platform", async () => {
     mockHandler = (_req, res) => {
       mockJson(res, 200, {

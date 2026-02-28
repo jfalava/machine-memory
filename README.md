@@ -153,6 +153,9 @@ machine-memory version
 
 # Self-update to latest release
 machine-memory upgrade
+
+# Optional: override network timeout (default 15000ms)
+MACHINE_MEMORY_UPGRADE_TIMEOUT_MS=30000 machine-memory upgrade
 ```
 
 ### Memory Schema (JSON fields)

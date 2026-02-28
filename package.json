@@ -1,6 +1,6 @@
 {
   "name": "machine-memory",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "bin": {
     "machine-memory": "src/app.ts"
   },

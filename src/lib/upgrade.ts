@@ -9,6 +9,19 @@ const API_BASE =
   process.env["MACHINE_MEMORY_API_URL"] ??
   `https://api.github.com/repos/${REPO}`;
 const BIN_PATH = process.env["MACHINE_MEMORY_BIN_PATH"] ?? process.execPath;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+
+function requestTimeoutMs(): number {
+  const raw = process.env["MACHINE_MEMORY_UPGRADE_TIMEOUT_MS"];
+  if (!raw) {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+  return parsed;
+}
 
 function getPlatformAssetName(): string {
   const platform = process.platform === "darwin" ? "darwin" : "linux";
@@ -16,15 +29,48 @@ function getPlatformAssetName(): string {
   return `machine-memory-${platform}-${arch}`;
 }
 
-function failAndExit(message: string) {
+function failAndExit(message: string): never {
   printJson({ error: message });
   process.exit(1);
 }
 
-async function fetchLatestRelease(): Promise<Release> {
-  const res = await fetch(`${API_BASE}/releases/latest`, {
-    headers: { Accept: "application/vnd.github+json" },
-  });
+function formatErrorMessage(err: unknown): string {
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return "Unknown error";
+}
+
+async function fetchWithTimeout(
+  url: string,
+  requestLabel: string,
+  timeoutMs: number,
+  init?: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      failAndExit(`${requestLabel}: request timed out after ${timeoutMs}ms`);
+    }
+    failAndExit(`${requestLabel}: ${formatErrorMessage(err)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchLatestRelease(timeoutMs: number): Promise<Release> {
+  const res = await fetchWithTimeout(
+    `${API_BASE}/releases/latest`,
+    "Failed to fetch latest release",
+    timeoutMs,
+    {
+      headers: { Accept: "application/vnd.github+json" },
+    },
+  );
   if (!res.ok) {
     failAndExit(`Failed to fetch latest release: ${res.status}`);
   }
@@ -44,8 +90,16 @@ function selectAssetOrExit(release: Release): ReleaseAsset {
   return asset;
 }
 
-async function downloadToTemp(asset: ReleaseAsset, tmpPath: string) {
-  const download = await fetch(asset.browser_download_url);
+async function downloadToTemp(
+  asset: ReleaseAsset,
+  tmpPath: string,
+  timeoutMs: number,
+) {
+  const download = await fetchWithTimeout(
+    asset.browser_download_url,
+    "Download failed",
+    timeoutMs,
+  );
   if (!download.ok) {
     failAndExit(`Download failed: ${download.status}`);
   }
@@ -73,7 +127,8 @@ function replaceBinary(tmpPath: string) {
 }
 
 export async function upgrade() {
-  const release = await fetchLatestRelease();
+  const timeoutMs = requestTimeoutMs();
+  const release = await fetchLatestRelease(timeoutMs);
 
   const latest = release.tag_name.replace(/^v/, "");
   if (latest === VERSION) {
@@ -84,7 +139,7 @@ export async function upgrade() {
   const asset = selectAssetOrExit(release);
 
   const tmpPath = `${BIN_PATH}.tmp`;
-  await downloadToTemp(asset, tmpPath);
+  await downloadToTemp(asset, tmpPath, timeoutMs);
   replaceBinary(tmpPath);
 
   printJson({ message: "Upgraded", from: VERSION, to: latest });
