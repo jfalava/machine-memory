@@ -21,7 +21,7 @@ bun run build
 
 ## What to store
 
-This is **not** a general-purpose note-taking tool. It's for things an agent needs to remember across sessions:
+This is **not** a general-purpose note-taking tool for humans; it's for things an agent needs to remember across sessions and only meant for agents to use:
 
 - **Architectural decisions** — "We chose Drizzle over Prisma because..."
 - **Reference docs/specs** — "Runs API status enum: `running | errored | finished`"
@@ -33,10 +33,7 @@ This is **not** a general-purpose note-taking tool. It's for things an agent nee
 
 ## What to add to your AGENTS.md
 
-### Setup AGENTS.md
-
-- Add machine-memory instructions to your project's AGENTS.md
-- Creates the file if it doesn't exist, or appends to existing file
+Add instructions to your project's `AGENTS.md`: it creates the file if it doesn't exist, or appends to existing file:
 
 ```sh
 machine-memory update-agents-md
