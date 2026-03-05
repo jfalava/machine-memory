@@ -31,27 +31,26 @@ This is **not** a general-purpose note-taking tool. It's for things an agent nee
 
 Copy this block into your project's `AGENTS.md` (or `CLAUDE.md`, `.cursorrules`, etc.):
 
-````markdown
+```markdown
 # Project memory
 
 This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
 
-**⚠️ MANDATORY: Memory scan MUST be completed BEFORE any code changes. Skipping this causes rework, regressions, and wasted time.**
+**MANDATORY: Memory scan MUST be completed BEFORE any code changes. Skipping this causes rework, regressions, and wasted time.**
 
 ## Required pre-workflow (DO NOT SKIP)
 
 Before touching any code, you MUST complete this scan. No exceptions.
 
-```bash
-# Step 1: ALWAYS run one of these (choose based on what you know)
-machine-memory suggest --files "<paths you'll touch>" --brief
-machine-memory query "<feature/topic>" --brief
-machine-memory list --tags "<domain>" --brief
+### Step 1: ALWAYS run one of these (choose based on what you know)
 
-# Step 2: If results seem relevant, get full details
-machine-memory get <id>
-```
-````
+- `machine-memory suggest --files "<paths you'll touch>" --brief`
+- `machine-memory query "<feature/topic>" --brief`
+- `machine-memory list --tags "<domain>" --brief`
+
+### Step 2: If results seem relevant, get full details
+
+- `machine-memory get <id>`
 
 **If you skip this:**
 
@@ -113,8 +112,7 @@ machine-memory get <id>
 8. **Task-end persistence rule**
    - Always persist non-obvious outcomes future sessions need (decisions, references, status snapshots, gotchas, tooling notes, user preferences).
    - Do **not** store obvious code facts, temporary notes, or duplicates.
-
-````
+```
 
 ## Usage
 
@@ -135,7 +133,7 @@ machine-memory add "Auth uses JWT with RS256" --json-min
 machine-memory add "Auth uses JWT with RS256" --quiet
 machine-memory add "Schema contract lives in SDK" --path "sdk/src/schema.ts"
 machine-memory add --from-file ./docs/api-field-notes.md --type "reference"
-````
+```
 
 #### Store richer metadata (type, certainty, provenance, refs, TTL hint)
 
