@@ -31,12 +31,35 @@ This is **not** a general-purpose note-taking tool. It's for things an agent nee
 
 Copy this block into your project's `AGENTS.md` (or `CLAUDE.md`, `.cursorrules`, etc.):
 
-```markdown
-## Project memory
+````markdown
+# Project memory
 
 This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
 
-### One-sweep workflow (use this every task)
+**⚠️ MANDATORY: Memory scan MUST be completed BEFORE any code changes. Skipping this causes rework, regressions, and wasted time.**
+
+## Required pre-workflow (DO NOT SKIP)
+
+Before touching any code, you MUST complete this scan. No exceptions.
+
+```bash
+# Step 1: ALWAYS run one of these (choose based on what you know)
+machine-memory suggest --files "<paths you'll touch>" --brief
+machine-memory query "<feature/topic>" --brief
+machine-memory list --tags "<domain>" --brief
+
+# Step 2: If results seem relevant, get full details
+machine-memory get <id>
+```
+````
+
+**If you skip this:**
+
+- You will miss prior decisions that constrain your solution
+- You will duplicate work already done
+- You will create inconsistencies with existing patterns
+
+## One-sweep workflow (use this every task)
 
 1. **Scan relevant context fast (compact mode)**
    - `machine-memory suggest --files "<paths you'll touch>" --brief`
@@ -90,11 +113,12 @@ This project uses `machine-memory` for persistent agent context stored at `.agen
 8. **Task-end persistence rule**
    - Always persist non-obvious outcomes future sessions need (decisions, references, status snapshots, gotchas, tooling notes, user preferences).
    - Do **not** store obvious code facts, temporary notes, or duplicates.
-```
+
+````
 
 ## Usage
 
-Default output is JSON — designed to be parsed by an LLM agent.  
+Default output is JSON — designed to be parsed by an LLM agent.
 `--brief` on `query`, `list`, and `suggest` emits compact text lines for fast scanning.
 
 Run `machine-memory help` (or `machine-memory --help`) to get full usage information as JSON.
@@ -111,7 +135,7 @@ machine-memory add "Auth uses JWT with RS256" --json-min
 machine-memory add "Auth uses JWT with RS256" --quiet
 machine-memory add "Schema contract lives in SDK" --path "sdk/src/schema.ts"
 machine-memory add --from-file ./docs/api-field-notes.md --type "reference"
-```
+````
 
 #### Store richer metadata (type, certainty, provenance, refs, TTL hint)
 
