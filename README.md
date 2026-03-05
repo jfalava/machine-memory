@@ -4,6 +4,10 @@ Persistent project-scoped memory for LLM agents. Stores facts, decisions, refere
 
 By default, the database lives at `.agents/memory.db` relative to the project root. You can override it with `MACHINE_MEMORY_DB_PATH` (absolute or cwd-relative path).
 
+> [!WARNING]
+> The smarter the model, the more effective this approach for context storage is.  
+> That also means that lighter models might just outright not use this or fail to use it properly.
+
 ## Install
 
 Download the latest binary for your platform from [Releases](https://github.com/jfalava/machine-memory/releases) and place it somewhere on your `$PATH`.
@@ -29,7 +33,16 @@ This is **not** a general-purpose note-taking tool. It's for things an agent nee
 
 ## What to add to your AGENTS.md
 
-Copy this block into your project's `AGENTS.md` (or `CLAUDE.md`, `.cursorrules`, etc.):
+### Setup AGENTS.md
+
+- Add machine-memory instructions to your project's AGENTS.md
+- Creates the file if it doesn't exist, or appends to existing file
+
+```sh
+machine-memory update-agents-md
+```
+
+Or copy this block into your project's `AGENTS.md`:
 
 ```markdown
 # Project memory
@@ -332,6 +345,9 @@ Notes:
 - `export`
   - Flags: `--tags`, `--type`, `--certainty`, `--since <ISO date>`
   - Exports active memories by default
+- `update-agents-md`
+  - Appends the machine-memory AGENTS.md template to the current directory's AGENTS.md file
+  - Creates the file if it doesn't exist
 
 > [!NOTE]
 > You may not want to commit `memory.db`. Make sure to add it to `.gitignore` if that is the case.  

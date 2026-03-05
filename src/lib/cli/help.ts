@@ -62,6 +62,11 @@ export function helpPayload() {
       },
       version: { usage: "version" },
       upgrade: { usage: "upgrade" },
+      "update-agents-md": {
+        usage: "update-agents-md",
+        description:
+          "Appends the machine-memory AGENTS.md template to the current directory's AGENTS.md file (creates it if it doesn't exist)",
+      },
     },
     enums: {
       memory_type: MEMORY_TYPES,

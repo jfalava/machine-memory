@@ -30,6 +30,7 @@ import {
   handleMigrateCommand,
   handleStatsCommand,
 } from "./lib/cli/commands/maintenance";
+import { handleUpdateAgentsMdCommand } from "./lib/cli/commands/update-agents-md";
 
 const [command, ...args] = process.argv.slice(2);
 
@@ -186,6 +187,10 @@ try {
     }
     case "migrate": {
       handleMigrateCommand();
+      break;
+    }
+    case "update-agents-md": {
+      await handleUpdateAgentsMdCommand();
       break;
     }
     default:
