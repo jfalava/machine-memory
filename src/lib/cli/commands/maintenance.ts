@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { getFlagValue, printJson, usageError } from "../../cli";
+import { printJson, usageError } from "../../cli";
 import type {
   MemoryDatabaseApi,
   MemoryDatabaseError,
@@ -12,24 +12,20 @@ import {
   type MemoryType,
 } from "../../constants";
 import {
-  applySqlFilters,
   canonicalizeCertainty,
-  collectDirectoriesEffect,
   detectPotentialConflicts,
   findExactDuplicate,
   isMemoryStatus,
   isMemoryType,
   normalizeCertaintyValue,
   normalizeSqliteRow,
-  parseCommonFilters,
-  parseSinceDate,
   parseStoredRefs,
   parseTags,
   sqliteDateForComparison,
   sqliteDateToMs,
   stringValue,
 } from "../shared";
-import { requireDatabase, type CommandContext } from "./context";
+import { requireDatabase, type CommandContext } from "../runtime/context";
 import { resolve } from "node:path";
 
 type ImportNormalized = {
@@ -269,14 +265,14 @@ function parseImportFile(
       usageError(`File not found: ${path}`);
     }
     const raw = yield* fileSystem.readFileString(filePath);
-    const parsed = yield* Effect.try({
+    const parsed: unknown = yield* Effect.try({
       try: () => JSON.parse(raw) as unknown,
       catch: (cause) => new Error(`Failed to parse JSON: ${String(cause)}`),
     });
     if (!Array.isArray(parsed)) {
       usageError("Import file must contain a JSON array.");
     }
-    return parsed;
+    return parsed as unknown[];
   });
 }
 
@@ -395,65 +391,6 @@ function processImportEntry(
   });
 }
 
-export function handleCoverageCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { args } = commandCtx;
-    const database = requireDatabase(commandCtx);
-    const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
-    const directories = yield* collectDirectoriesEffect(
-      root,
-      commandCtx.fileSystem,
-    );
-    const rows = yield* database.all(
-      "SELECT tags FROM memories WHERE status = 'active'",
-    );
-    const tagDistribution: Record<string, number> = {};
-    const tagSet = new Set<string>();
-    for (const row of rows as { tags?: unknown }[]) {
-      for (const tag of parseTags(stringValue(row.tags))) {
-        tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
-        tagSet.add(tag.toLowerCase());
-      }
-    }
-    const uncoveredPaths = directories.filter((dir) => {
-      const parts = dir
-        .replace(/\/$/, "")
-        .split("/")
-        .map((part) => part.toLowerCase())
-        .filter(Boolean);
-      return parts.length > 0 && !parts.some((part) => tagSet.has(part));
-    });
-    yield* Effect.sync(() =>
-      printJson({
-        root,
-        uncovered_paths: uncoveredPaths,
-        tag_distribution: tagDistribution,
-      }),
-    );
-  });
-}
-
-export function handleGcCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { args } = commandCtx;
-    const database = requireDatabase(commandCtx);
-    if (!args.includes("--dry-run")) {
-      usageError("Usage: gc --dry-run");
-    }
-    const rows = yield* database.all(
-      `SELECT * FROM memories
-       WHERE status = 'active'
-         AND expires_after_days IS NOT NULL
-         AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
-       ORDER BY updated_at ASC`,
-    );
-    const expired = rows.map((row) => normalizeSqliteRow(row));
-    yield* Effect.sync(() =>
-      printJson({ dry_run: true, count: expired.length, expired }),
-    );
-  });
-}
-
 export function handleStatsCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const rows = yield* requireDatabase(commandCtx).all(
@@ -492,32 +429,4 @@ export function handleImportCommand(commandCtx: CommandContext) {
     }
     yield* Effect.sync(() => printJson({ results }));
   });
-}
-
-export function handleExportCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { args } = commandCtx;
-    const database = requireDatabase(commandCtx);
-    const filters = parseCommonFilters(args);
-    const since = parseSinceDate(args);
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
-    if (since) {
-      clauses.push("updated_at >= ?");
-      params.push(sqliteDateForComparison(since));
-    }
-    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-    const rows = yield* database.all(
-      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
-      params,
-    );
-    yield* Effect.sync(() =>
-      printJson(rows.map((row) => normalizeSqliteRow(row))),
-    );
-  });
-}
-
-export function handleMigrateCommand() {
-  return Effect.sync(() => printJson({ status: "ok", migrated: true }));
 }

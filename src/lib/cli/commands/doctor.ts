@@ -2,13 +2,12 @@ import { Effect } from "effect";
 import { printJson } from "../../cli";
 import type { MemoryDatabaseError } from "../../effect/database";
 import {
-  jaccardSimilarity,
   parseTags,
-  setFromTerms,
   stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
-import { requireDatabase, type CommandContext } from "./context";
+import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
+import { requireDatabase, type CommandContext } from "../runtime/context";
 
 type MemorySnapshot = {
   id: number;

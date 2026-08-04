@@ -6,14 +6,7 @@ import type {
   MemoryDatabaseError,
 } from "../../effect/database";
 import {
-  ADD_FLAGS_WITH_VALUES,
-  ADD_USAGE,
-  DEPRECATE_FLAGS_WITH_VALUES,
-  DEPRECATE_USAGE,
-  UPDATE_FLAGS_WITH_VALUES,
-  UPDATE_USAGE,
   collectPositionalArgs,
-  compareFact,
   detectPotentialConflicts,
   findMemoryByMatch,
   findStatusCascadeCandidates,
@@ -28,7 +21,16 @@ import {
   requireMemoryType,
   stringValue,
 } from "../shared";
-import { requireDatabase, type CommandContext } from "./context";
+import { compareFact } from "../features/memory/compare";
+import {
+  ADD_FLAGS_WITH_VALUES,
+  ADD_USAGE,
+  DEPRECATE_FLAGS_WITH_VALUES,
+  DEPRECATE_USAGE,
+  UPDATE_FLAGS_WITH_VALUES,
+  UPDATE_USAGE,
+} from "../features/memory/usage";
+import { requireDatabase, type CommandContext } from "../runtime/context";
 
 const UPSERT_MIN_SIMILARITY = 0.62;
 const UPSERT_MIN_SCORE = 32;
@@ -649,27 +651,5 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
         count: rows.length,
       });
     });
-  });
-}
-
-export function handleDeleteCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { args } = commandCtx;
-    const database = requireDatabase(commandCtx);
-    const idSpec = args.join(",");
-    if (!idSpec.trim()) {
-      usageError("Usage: delete <id|id,id,...>");
-    }
-    const ids = parseIdSpec(idSpec);
-    for (const id of ids) {
-      yield* database.run("DELETE FROM memories WHERE id = ?", [id]);
-    }
-    yield* Effect.sync(() =>
-      printJson(
-        ids.length === 1
-          ? { deleted: ids[0] }
-          : { deleted: ids, count: ids.length },
-      ),
-    );
   });
 }

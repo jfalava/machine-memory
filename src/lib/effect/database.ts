@@ -1,7 +1,12 @@
 import type { SQLQueryBindings } from "bun:sqlite";
 import { Context, Effect, Layer } from "effect";
-import { ensureDb, allWithRetry, getWithRetry, runWithRetry } from "../db";
-import type { DbAccessMode } from "../db";
+import {
+  allWithRetry,
+  ensureDb,
+  getWithRetry,
+  runWithRetry,
+  type DbAccessMode,
+} from "../db";
 import { MemoryDatabaseError } from "./errors";
 
 export { MemoryDatabaseError } from "./errors";

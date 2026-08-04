@@ -8,67 +8,88 @@ import {
   upsertPathTagMapEntry,
 } from "../../path-tags";
 import { parseTags } from "../shared";
-import type { CommandContext } from "./context";
+import type { CommandContext } from "../runtime/context";
 
-export function handleTagMapCommand(commandCtx: CommandContext) {
+type TagMapEffect = Effect.Effect<void, unknown, never>;
+
+function listTagMap(context: CommandContext): TagMapEffect {
   return Effect.gen(function* () {
-    const [action, first, second] = commandCtx.args;
-    if (action === "list") {
-      const map = yield* loadPathTagMap(commandCtx.fileSystem);
-      yield* Effect.sync(() =>
-        printJson({
-          file: pathTagMapFilePath(),
-          mappings: Object.entries(map).map(([path_prefix, tags]) => ({
-            path_prefix,
-            tags,
-          })),
-        }),
-      );
-      return;
-    }
-    if (action === "set") {
-      if (!first || !second) {
-        usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
-      }
-      const tags = parseTags(second);
-      if (tags.length === 0) {
-        usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
-      }
-      yield* upsertPathTagMapEntry(commandCtx.fileSystem, first, tags);
-      yield* Effect.sync(() =>
-        printJson({
-          status: "ok",
-          path_prefix: first,
+    const map = yield* loadPathTagMap(context.fileSystem);
+    yield* Effect.sync(() =>
+      printJson({
+        file: pathTagMapFilePath(),
+        mappings: Object.entries(map).map(([path_prefix, tags]) => ({
+          path_prefix,
           tags,
-          file: pathTagMapFilePath(),
-        }),
-      );
-      return;
-    }
-    if (action === "delete") {
-      if (!first) {
-        usageError("Usage: tag-map delete <path_prefix>");
-      }
-      const current = yield* loadPathTagMap(commandCtx.fileSystem);
-      const existed = Object.hasOwn(current, first);
-      yield* deletePathTagMapEntry(commandCtx.fileSystem, first);
-      yield* Effect.sync(() =>
-        printJson({
-          status: existed ? "deleted" : "not_found",
-          path_prefix: first,
-          file: pathTagMapFilePath(),
-        }),
-      );
-      return;
-    }
-    if (action === "suggest") {
-      if (!first) {
-        usageError("Usage: tag-map suggest <path>");
-      }
-      const tags = yield* suggestTagsForPath(commandCtx.fileSystem, first);
-      yield* Effect.sync(() => printJson({ path: first, tags }));
-      return;
-    }
-    usageError("Usage: tag-map <list|set|delete|suggest> [args]");
+        })),
+      }),
+    );
   });
+}
+
+function setTagMap(
+  context: CommandContext,
+  pathPrefix: string | undefined,
+  tagsRaw: string | undefined,
+): TagMapEffect {
+  return Effect.gen(function* () {
+    if (!pathPrefix || !tagsRaw) {
+      usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
+    }
+    const tags = parseTags(tagsRaw);
+    if (tags.length === 0) {
+      usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
+    }
+    yield* upsertPathTagMapEntry(context.fileSystem, pathPrefix, tags);
+    yield* Effect.sync(() =>
+      printJson({ status: "ok", path_prefix: pathPrefix, tags, file: pathTagMapFilePath() }),
+    );
+  });
+}
+
+function deleteTagMap(
+  context: CommandContext,
+  pathPrefix: string | undefined,
+): TagMapEffect {
+  return Effect.gen(function* () {
+    if (!pathPrefix) {
+      usageError("Usage: tag-map delete <path_prefix>");
+    }
+    const current = yield* loadPathTagMap(context.fileSystem);
+    const existed = Object.hasOwn(current, pathPrefix);
+    yield* deletePathTagMapEntry(context.fileSystem, pathPrefix);
+    yield* Effect.sync(() =>
+      printJson({
+        status: existed ? "deleted" : "not_found",
+        path_prefix: pathPrefix,
+        file: pathTagMapFilePath(),
+      }),
+    );
+  });
+}
+
+function suggestTagMap(
+  context: CommandContext,
+  filePath: string | undefined,
+): TagMapEffect {
+  return Effect.gen(function* () {
+    if (!filePath) {
+      usageError("Usage: tag-map suggest <path>");
+    }
+    const tags = yield* suggestTagsForPath(context.fileSystem, filePath);
+    yield* Effect.sync(() => printJson({ path: filePath, tags }));
+  });
+}
+
+export function handleTagMapCommand(context: CommandContext): TagMapEffect {
+  const [action, first, second] = context.args;
+  const handlers: Record<string, () => TagMapEffect> = {
+    list: () => listTagMap(context),
+    set: () => setTagMap(context, first, second),
+    delete: () => deleteTagMap(context, first),
+    suggest: () => suggestTagMap(context, first),
+  };
+  return handlers[action ?? ""]?.() ?? Effect.sync(() =>
+    usageError("Usage: tag-map <list|set|delete|suggest> [args]"),
+  );
 }

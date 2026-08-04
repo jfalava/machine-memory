@@ -4,7 +4,11 @@ import {
   MEMORY_TYPES,
   VERSION,
 } from "../constants";
-import { ADD_USAGE, DEPRECATE_USAGE, UPDATE_USAGE } from "./shared";
+import {
+  ADD_USAGE,
+  DEPRECATE_USAGE,
+  UPDATE_USAGE,
+} from "./features/memory/usage";
 
 export function helpPayload() {
   return {

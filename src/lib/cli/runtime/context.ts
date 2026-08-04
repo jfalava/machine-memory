@@ -1,7 +1,7 @@
 import type { FileSystem } from "effect/FileSystem";
 import type { MemoryDatabaseApi } from "../../effect/database";
-import type { OutputMode } from "../shared";
 import { CommandError } from "../../effect/errors";
+import type { OutputMode } from "./output";
 
 export type CommandContext = {
   args: string[];

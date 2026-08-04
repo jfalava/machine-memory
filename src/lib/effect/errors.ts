@@ -21,7 +21,7 @@ export class MemoryDatabaseError extends Schema.TaggedErrorClass<MemoryDatabaseE
 export function commandError(
   command: string,
   message: string,
-  cause: unknown = undefined,
+  cause?: unknown,
 ): CommandError {
   return new CommandError({ message, command, cause });
 }

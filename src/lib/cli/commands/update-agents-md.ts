@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
-import type { CommandContext } from "./context";
+import type { CommandContext } from "../runtime/context";
 
 const MEMORY_BLOCK_START = "<!-- machine-memory:start -->";
 const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
@@ -38,7 +38,10 @@ function replaceMemoryBlock(content: string): string {
   const legacyStart = content.indexOf("# Project memory");
   if (legacyStart === 0) {
     const prefix = content.slice(0, legacyStart).trimEnd();
-    return `${prefix ? `${prefix}\n\n` : ""}${AGENTS_MD_CONTENT}\n`;
+    return (prefix ? prefix.concat("\n\n") : "").concat(
+      AGENTS_MD_CONTENT,
+      "\n",
+    );
   }
   return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${AGENTS_MD_CONTENT}\n`;
 }

@@ -7,7 +7,7 @@ import {
   extname,
 } from "node:path";
 import type { FileSystem } from "effect/FileSystem";
-import { getFlagValue, hasFlag, printJson, usageError } from "../cli";
+import { getFlagValue, hasFlag, usageError } from "../cli";
 import {
   CERTAINTY_LEVELS,
   MEMORY_STATUSES,
@@ -542,81 +542,14 @@ export function parseCommonFilters(args: string[]): CommonFilters {
   };
 }
 
-export type OutputMode = {
-  brief: boolean;
-  jsonMin: boolean;
-  noConflicts: boolean;
-  quiet: boolean;
-};
-
-export function parseOutputMode(args: string[]): OutputMode {
-  return {
-    brief: hasFlag(args, "--brief"),
-    jsonMin: hasFlag(args, "--json-min"),
-    noConflicts: hasFlag(args, "--no-conflicts"),
-    quiet: hasFlag(args, "--quiet"),
-  };
-}
-
-export function hasMinimalOutput(mode: OutputMode): boolean {
-  return mode.brief || mode.jsonMin || mode.quiet;
-}
-
-function briefTagText(tags: unknown): string {
-  const parsed = parseTags(stringValue(tags));
-  if (parsed.length === 0) {
-    return "(#none)";
-  }
-  return `(${parsed.map((tag) => `#${tag}`).join(" ")})`;
-}
-
-function formatBriefMemoryLine(row: Record<string, unknown>): string {
-  const id = Number(row.id ?? 0);
-  const certainty = normalizeCertaintyValue(row.certainty);
-  const type = stringValue(row.memory_type, "convention");
-  const content = stringValue(row.content).replace(/\s+/g, " ").trim();
-  return `[${id}] <${certainty}> <${type}>: ${content} ${briefTagText(row.tags)}`;
-}
-
-export function printBriefLines(rows: Record<string, unknown>[]) {
-  const lines = rows.map((row) => formatBriefMemoryLine(row));
-  console.info(lines.join("\n"));
-}
-
-export function minimalResultSummary(
-  row: Record<string, unknown>,
-): Record<string, unknown> {
-  return {
-    id: Number(row.id ?? 0),
-    score: Number(row.score ?? 0),
-    memory_type: stringValue(row.memory_type, "convention"),
-    certainty: normalizeCertaintyValue(row.certainty),
-    tags: parseTags(stringValue(row.tags)),
-  };
-}
-
-export function queryEmptyResultPayload(
-  term: string,
-  filters: CommonFilters,
-  queryTokens: string[],
-) {
-  return {
-    results: [],
-    search_term: term,
-    derived_terms: queryTokens,
-    filters: {
-      tags: filters.tag ?? null,
-      type: filters.memoryType ?? null,
-      certainty: filters.certainty ?? null,
-      include_deprecated: filters.includeDeprecated,
-    },
-    hints: [
-      "Try broader keywords or synonyms.",
-      "Use --include-deprecated to include superseded/archived memories.",
-      "Narrow with --tags/--type/--certainty when you know the scope.",
-    ],
-  };
-}
+export type { OutputMode } from "./runtime/output";
+export {
+  hasMinimalOutput,
+  minimalResultSummary,
+  parseOutputMode,
+  printBriefLines,
+  queryEmptyResultPayload,
+} from "./runtime/output";
 
 function appendCertaintyFilter(
   clauses: string[],
@@ -916,59 +849,6 @@ export function parseIdSpec(raw: string): number[] {
   );
 }
 
-type FactCheckResult = {
-  similarity: number;
-  conflict: boolean;
-  addedTerms: string[];
-  removedTerms: string[];
-};
-
-export function setFromTerms(input: string): Set<string> {
-  return new Set(extractTerms(input));
-}
-
-function termsDifference(source: Set<string>, against: Set<string>): string[] {
-  return [...source].filter((term) => !against.has(term));
-}
-
-export function jaccardSimilarity(
-  left: Set<string>,
-  right: Set<string>,
-): number {
-  if (left.size === 0 && right.size === 0) {
-    return 1;
-  }
-  const intersection = [...left].filter((term) => right.has(term)).length;
-  const union = new Set([...left, ...right]).size;
-  return union === 0 ? 0 : Number((intersection / union).toFixed(3));
-}
-
-function hasNegation(text: string): boolean {
-  const lower = text.toLowerCase();
-  return /\b(not|no|never|without|cannot|can't)\b/.test(lower);
-}
-
-export function compareFact(
-  stored: string,
-  candidate: string,
-): FactCheckResult {
-  const storedTerms = setFromTerms(stored);
-  const candidateTerms = setFromTerms(candidate);
-  const similarity = jaccardSimilarity(storedTerms, candidateTerms);
-  const negationMismatch = hasNegation(stored) !== hasNegation(candidate);
-  const addedTerms = termsDifference(candidateTerms, storedTerms).slice(0, 12);
-  const removedTerms = termsDifference(storedTerms, candidateTerms).slice(
-    0,
-    12,
-  );
-  return {
-    similarity,
-    conflict: negationMismatch || similarity < 0.35,
-    addedTerms,
-    removedTerms,
-  };
-}
-
 type SuggestNeighborhood = {
   tagHints: string[];
   pathHints: string[];
@@ -1185,41 +1065,11 @@ export function sqliteDateForComparison(isoLike: string): string {
   )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
 
-export const ADD_USAGE =
-  "add (<content> | --from-file <path>) [--upsert-match <query>] [--path <file_path>] [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--source-agent <name>] [--refs <json_or_csv>] [--expires-after-days <n>] [--no-conflicts] [--brief|--json-min|--quiet]";
-export const UPDATE_USAGE =
-  "update (<id|id,id,...> | --match <query>) (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--type <memory_type>] [--certainty <certainty>] [--updated-by <name>] [--refs <json_or_csv>] [--expires-after-days <n|null>]";
-export const DEPRECATE_USAGE =
-  "deprecate (<id|id,id,...> | --match <query>) [--superseded-by <id>] [--updated-by <name>]";
-
-export const ADD_FLAGS_WITH_VALUES = [
-  "--tags",
-  "--context",
-  "--path",
-  "--type",
-  "--certainty",
-  "--source-agent",
-  "--updated-by",
-  "--refs",
-  "--expires-after-days",
-  "--from-file",
-  "--upsert-match",
-] as const;
-
-export const UPDATE_FLAGS_WITH_VALUES = [
-  "--tags",
-  "--context",
-  "--type",
-  "--certainty",
-  "--updated-by",
-  "--refs",
-  "--expires-after-days",
-  "--from-file",
-  "--match",
-] as const;
-
-export const DEPRECATE_FLAGS_WITH_VALUES = [
-  "--superseded-by",
-  "--updated-by",
-  "--match",
-] as const;
+export {
+  ADD_FLAGS_WITH_VALUES,
+  ADD_USAGE,
+  DEPRECATE_FLAGS_WITH_VALUES,
+  DEPRECATE_USAGE,
+  UPDATE_FLAGS_WITH_VALUES,
+  UPDATE_USAGE,
+} from "./features/memory/usage";

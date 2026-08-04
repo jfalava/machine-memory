@@ -5,15 +5,12 @@ import {
   SCORE_COMPONENT_WEIGHTS,
   applySqlFilters,
   buildFtsQueryFromTerms,
-  compareFact,
   deriveNeighborhoodFromFiles,
   extractPathTermsFromFiles,
   extractTerms,
-  getMemoryById,
   mergeSuggestionResults,
   minimalResultSummary,
   normalizeSqliteRow,
-  parseIdSpec,
   parseCommonFilters,
   parseResultLimit,
   parseSuggestFiles,
@@ -22,10 +19,9 @@ import {
   queryNeighborhoodMatches,
   shapeRowsWithScore,
   sortByScoreThenRecency,
-  stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
-import { requireDatabase, type CommandContext } from "./context";
+import { requireDatabase, type CommandContext } from "../runtime/context";
 
 const SWEEP_USAGE =
   'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
@@ -174,37 +170,6 @@ export function handleQueryCommand(commandCtx: CommandContext) {
       printScoredResults(outputMode, results, {
         explainScore,
         wrapResults: explainScore,
-      });
-    });
-  });
-}
-
-export function handleGetCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { args } = commandCtx;
-    const database = requireDatabase(commandCtx);
-    const idSpec = args[0];
-    if (!idSpec) {
-      usageError("Usage: get <id>");
-    }
-    const ids = parseIdSpec(idSpec);
-    const fetched = yield* Effect.all(
-      ids.map((id) => getMemoryById(database, id)),
-    );
-    const rows = fetched.filter(
-      (row): row is Record<string, unknown> => row !== null,
-    );
-    const missingIds = ids.filter(
-      (id) => !rows.some((row) => Number(row.id) === id),
-    );
-    yield* Effect.sync(() => {
-      if (ids.length === 1) {
-        printJson(rows[0] ?? { error: "Not found" });
-        return;
-      }
-      printJson({
-        results: rows,
-        ...(missingIds.length > 0 ? { missing_ids: missingIds } : {}),
       });
     });
   });
@@ -543,76 +508,6 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         filters: { tags: listBundle.filters.tag ?? null },
         ...(explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
         results,
-      });
-    });
-  });
-}
-
-function parseFactArgs(args: string[], usage: string) {
-  const idRaw = args[0];
-  const fact = args.slice(1).join(" ").trim();
-  if (!idRaw || !fact) {
-    usageError(usage);
-  }
-  const id = Number(idRaw);
-  if (!Number.isInteger(id)) {
-    usageError(`Invalid id: ${idRaw}`);
-  }
-  return { id, fact };
-}
-
-export function handleVerifyCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { id, fact } = parseFactArgs(
-      commandCtx.args,
-      "Usage: verify <id> <fact>",
-    );
-    const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
-    yield* Effect.sync(() => {
-      if (!memory) {
-        printJson({ error: "Not found" });
-        return;
-      }
-      const result = compareFact(stringValue(memory.content), fact);
-      printJson(
-        result.conflict
-          ? {
-              id,
-              ok: false,
-              result: "conflict",
-              warning: "Conflict",
-              similarity: result.similarity,
-            }
-          : {
-              id,
-              ok: true,
-              result: "consistent",
-              similarity: result.similarity,
-            },
-      );
-    });
-  });
-}
-
-export function handleDiffCommand(commandCtx: CommandContext) {
-  return Effect.gen(function* () {
-    const { id, fact } = parseFactArgs(
-      commandCtx.args,
-      "Usage: diff <id> <new_content>",
-    );
-    const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
-    yield* Effect.sync(() => {
-      if (!memory) {
-        printJson({ error: "Not found" });
-        return;
-      }
-      const result = compareFact(stringValue(memory.content), fact);
-      printJson({
-        id,
-        conflict: result.conflict,
-        similarity: result.similarity,
-        added_terms: result.addedTerms,
-        removed_terms: result.removedTerms,
       });
     });
   });
