@@ -1,4 +1,3 @@
-import type { SQLQueryBindings } from "bun:sqlite";
 import { Context, Effect, Layer } from "effect";
 import {
   allWithRetry,
@@ -6,23 +5,26 @@ import {
   getWithRetry,
   runWithRetry,
   type DbAccessMode,
+  type SqlQueryBinding,
 } from "../db";
+import { databaseConfig } from "../database-config";
 import { MemoryDatabaseError } from "./errors";
+import { remoteLayer } from "./remote-database";
 
 export { MemoryDatabaseError } from "./errors";
 
 export type MemoryDatabaseApi = {
   readonly run: (
     sql: string,
-    params?: SQLQueryBindings[],
+    params?: SqlQueryBinding[],
   ) => Effect.Effect<unknown, MemoryDatabaseError>;
   readonly get: (
     sql: string,
-    params?: SQLQueryBindings[],
+    params?: SqlQueryBinding[],
   ) => Effect.Effect<unknown, MemoryDatabaseError>;
   readonly all: (
     sql: string,
-    params?: SQLQueryBindings[],
+    params?: SqlQueryBinding[],
   ) => Effect.Effect<unknown[], MemoryDatabaseError>;
 };
 
@@ -55,8 +57,13 @@ function effectful<T>(
 
 export const layer = (
   mode: DbAccessMode,
-): Layer.Layer<MemoryDatabase, MemoryDatabaseError> =>
-  Layer.effect(
+): Layer.Layer<MemoryDatabase, MemoryDatabaseError> => {
+  const config = databaseConfig();
+  if (config.kind === "remote") {
+    return remoteLayer(config.url, config.token);
+  }
+
+  return Layer.effect(
     MemoryDatabase,
     Effect.gen(function* () {
       const database = yield* Effect.acquireRelease(
@@ -77,3 +84,4 @@ export const layer = (
       });
     }),
   );
+};

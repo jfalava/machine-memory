@@ -1,0 +1,25 @@
+{
+  "name": "@machine-memory/remote-db-d1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "5.20260708.1",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/sql-d1": "catalog:effect",
+    "alchemy": "2.0.0-beta.67",
+    "effect": "catalog:effect"
+  },
+  "devDependencies": {
+    "oxfmt": "catalog:maintenance",
+    "oxlint": "catalog:maintenance",
+    "oxlint-tsgolint": "catalog:build",
+    "typescript": "catalog:build"
+  }
+}

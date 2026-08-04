@@ -35,8 +35,31 @@ working directory. Override it with `MACHINE_MEMORY_DB_PATH`:
 MACHINE_MEMORY_DB_PATH=/tmp/project-memory.db machine-memory list
 ```
 
-Write commands create the database and apply schema migrations. Run the
-explicit migration command after upgrading a database or when a read command
+For a shared remote database, set `MACHINE_MEMORY_DB_URL` to the `/query`
+endpoint of the D1 adapter and provide the same bearer token used when the
+adapter was deployed:
+
+```sh
+MACHINE_MEMORY_DB_URL=https://memory-api.example.workers.dev/query \
+MACHINE_MEMORY_DB_TOKEN=... machine-memory list
+```
+
+The adapter is an Alchemy-managed Cloudflare Worker in `remote-db/d1`. It
+creates a D1 database, applies the memory schema and FTS5 triggers, and uses
+`@effect/sql-d1` for remote reads. Deploy it with a token in the environment:
+
+```sh
+cd remote-db/d1
+MACHINE_MEMORY_DB_TOKEN=... bun run deploy
+```
+
+Use the Worker URL printed by Alchemy with `/query` appended. The remote
+backend takes precedence over `MACHINE_MEMORY_DB_PATH`; omitting
+`MACHINE_MEMORY_DB_URL` keeps the existing local SQLite behavior.
+
+Local write commands create the database and apply schema migrations. The
+remote adapter applies its migrations during deployment. Run the explicit
+migration command after upgrading a local database or when a read command
 reports an outdated schema:
 
 ```sh

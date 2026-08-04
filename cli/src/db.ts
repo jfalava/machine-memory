@@ -13,6 +13,7 @@ const BUSY_BACKOFF_MS = Number(
 );
 
 export type DbAccessMode = "read" | "write";
+export type SqlQueryBinding = SQLQueryBindings;
 
 export function ensureDb(mode: DbAccessMode = "write"): Database {
   const dir = dirname(DB_PATH);

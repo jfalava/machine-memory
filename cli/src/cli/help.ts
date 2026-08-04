@@ -16,7 +16,8 @@ export function helpPayload() {
     version: VERSION,
     description:
       "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a local SQLite database so future agent sessions can recall them.",
-    database: ".agents/memory.db (relative to cwd)",
+    database:
+      "local .agents/memory.db (relative to cwd), or remote via MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN",
     commands: {
       help: "Show this help message",
       add: {
