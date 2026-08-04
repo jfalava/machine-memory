@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli";
+import { printJson, usageError } from "../../cli-utils";
 import { getMemoryById, stringValue } from "../shared";
 import { compareFact } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";

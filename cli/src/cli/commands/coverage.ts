@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
-import { getFlagValue, printJson } from "../../cli";
+import { getFlagValue, printJson } from "../../cli-utils";
 import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { getFlagValue, hasFlag, printJson, usageError } from "../../cli";
+import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import { suggestTagsForPath } from "../../path-tags";
 import type {
   MemoryDatabaseApi,

@@ -24,7 +24,7 @@ import { handleVerifyCommand } from "./verify";
 import { handleDeleteCommand } from "./delete";
 import { handleGetCommand } from "./get";
 import { VERSION } from "../../constants";
-import { printJson } from "../../cli";
+import { printJson } from "../../cli-utils";
 import { upgrade } from "../../upgrade";
 import { helpPayload } from "../help";
 import {

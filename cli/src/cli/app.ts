@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { Effect } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
-import { printJson } from "../cli";
+import { printJson } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
 import { CommandError } from "../effect/errors";

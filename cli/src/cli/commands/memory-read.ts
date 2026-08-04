@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { getFlagValue, hasFlag, printJson, usageError } from "../../cli";
+import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import {
   SCORE_COMPONENT_WEIGHTS,

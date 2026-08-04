@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { printJson } from "../../cli";
+import { printJson } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
 import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { printJson } from "../../cli";
+import { printJson } from "../../cli-utils";
 import {
   applySqlFilters,
   normalizeSqliteRow,

@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli";
+import { printJson, usageError } from "../../cli-utils";
 import { parseIdSpec } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 

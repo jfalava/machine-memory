@@ -7,7 +7,7 @@ import {
   extname,
 } from "node:path";
 import type { FileSystem } from "effect/FileSystem";
-import { getFlagValue, hasFlag, usageError } from "../cli";
+import { getFlagValue, hasFlag, usageError } from "../cli-utils";
 import {
   CERTAINTY_LEVELS,
   MEMORY_STATUSES,
