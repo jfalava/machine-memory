@@ -1,0 +1,20 @@
+---
+title: coverage
+description: Find directories not represented by active memory tags.
+sidebar:
+  order: 16
+---
+
+## Usage
+
+```sh
+machine-memory coverage --remote
+machine-memory coverage --root cli/src --remote
+```
+
+`coverage` walks directories under the current working directory, compares
+their names with tags on active memories, and returns `uncovered_paths` plus a
+`tag_distribution` map. `--root` changes the directory tree being inspected.
+
+The result is a signal for missing path-driven context, not a percentage. Add
+or update memories with scoped tags when an uncovered directory matters.

@@ -1,0 +1,17 @@
+---
+title: stats
+description: Summarize the repository memory collection.
+sidebar:
+  order: 17
+---
+
+## Usage
+
+```sh
+machine-memory stats --remote
+```
+
+`stats` returns the total memory count, breakdowns by memory type and
+certainty, tag frequency, the oldest memory, memories not updated for more
+than 90 days, and memories without tags. It includes all statuses and returns
+JSON without output-mode flags.

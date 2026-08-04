@@ -1,0 +1,37 @@
+---
+title: remote provision
+description: Deploy a new Alchemy D1 stack and configure the CLI for it.
+sidebar:
+  order: 3
+---
+
+## Usage
+
+```sh
+machine-memory remote provision \
+  [--stack-name <name>] \
+  [--database-name <name>] \
+  [--api-name <name>]
+```
+
+This command deploys the Alchemy D1 stack, creates the Worker API, generates
+or reuses a Worker token, and saves the resulting URL and credentials in the
+operating system keychain. The deployed Worker URL is normalized to the
+`/query` endpoint used by the CLI.
+
+## Names and defaults
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `--stack-name` | `MACHINE_MEMORY_STACK_NAME` | `machine-memory-remote-db` |
+| `--database-name` | `MACHINE_MEMORY_DB_NAME` | `machine-memory-db` |
+| `--api-name` | `MACHINE_MEMORY_API_NAME` | `machine-memory-api` |
+
+Flags take precedence over environment variables. Existing names stored with
+remote credentials are used next, followed by the defaults above.
+
+`remote provision` does not take `--remote`; the command itself is what creates
+
+```sh
+machine-memory list --remote
+```

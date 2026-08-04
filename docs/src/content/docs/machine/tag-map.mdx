@@ -1,0 +1,28 @@
+---
+title: tag-map
+description: Manage path-to-tag mappings used by path-aware memory writes.
+sidebar:
+  order: 22
+---
+
+## Usage
+
+```sh
+machine-memory tag-map list
+machine-memory tag-map set cli/src area:cli,topic:commands
+machine-memory tag-map suggest cli/src/cli/app.ts
+machine-memory tag-map delete cli/src
+```
+
+`tag-map` is filesystem-only and does not take `--local` or `--remote`. It
+stores mappings in `.agents/path-tags.json` relative to the current working
+directory.
+
+| Action | Behavior |
+| --- | --- |
+| `list` | Print the file path and all configured mappings. |
+| `set <path_prefix> <tag1,tag2,...>` | Normalize and save a mapping. |
+| `suggest <path>` | Return tags inferred from the closest matching mappings. |
+| `delete <path_prefix>` | Remove a mapping and report whether it existed. |
+
+Mappings are consumed by path-aware memory workflows such as `add --path`.

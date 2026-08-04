@@ -1,20 +1,41 @@
 <!-- machine-memory:start -->
-
 ## Project memory
 
-This project uses `machine-memory` with its database at `.agents/memory.db`.
+This project uses `machine-memory` with a shared remote Worker-backed database.
+Remote credentials are stored in the OS keychain. To change them, use `machine-memory remote setup`; to provision a new Alchemy D1 stack, use `machine-memory remote provision` with optional `--stack-name`, `--database-name`, and `--api-name`.
+Every database-backed command requires exactly one backend flag. Use `--remote` for this repository and do not pass both flags.
+Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.
 
-Before editing, run exactly one focused retrieval command from the repository root:
+⚠️ MANDATORY: Complete the memory scan BEFORE any code changes. Skipping it causes rework, regressions, and duplicated decisions.
 
-- Known files: `machine-memory suggest --files "path/a.ts,path/b.ts" --json-min`
-- Known topic: `machine-memory query "topic" --json-min`
-- Broad audit: `machine-memory list --tags "area:..." --json-min`
+### Required pre-workflow (DO NOT SKIP)
 
-Fetch full records only when the result looks relevant: `machine-memory get <id>` or `machine-memory get <id,id,...>`.
+Before touching code, complete this scan from the repository root. Every database command must include the backend flag shown below:
 
-At task end, persist only durable decisions, constraints, preferences, and non-obvious gotchas. Update an existing canonical record when possible; do not store obvious code facts, routine test results, or temporary progress. Use status memories only for short-lived work and give them an expiry.
+- Known files: `machine-memory suggest --files "path/a.ts,path/b.ts" --remote --json-min`
+- Known topic: `machine-memory query "topic" --remote --json-min`
+- Broad audit: `machine-memory list --tags "area:..." --remote --json-min`
 
-Use exact file paths and put filenames, keys, routes, thresholds, and other retrieval anchors in the first sentence. Prefer path-based tags with `--path` and `tag-map`; use `--upsert-match` only after checking that the match is the intended canonical record.
+If results look relevant, fetch full records before editing: `machine-memory get <id> --remote` or `machine-memory get <id,id,...> --remote`.
 
-Run `machine-memory doctor` during maintenance, not every task. Ensure both `.agents/` and `.agents/memory.db` are writable before memory writes.
+### One-sweep workflow (use this every task)
+
+1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.
+2. Verify uncertain context before acting. Use `machine-memory verify <id> "<inferred fact>" --remote` or `machine-memory diff <id> "<proposed updated wording>" --remote` when an inference may conflict with existing memory.
+3. Maintain memory while implementing. Prefer `machine-memory update --match "topic query" "new canonical content" --remote`; if no reliable match exists, use `machine-memory add "..." --upsert-match "topic query" --remote`.
+4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.
+5. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.
+6. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.
+7. Keep status hygiene. Status memories are for transient progress, should include `--expires-after-days`, and should be updated rather than duplicated. Review `doctor` suggestions semantically before applying deprecations or updates.
+8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.
+9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need. Use `machine-memory add ... --remote` or update the canonical record with `machine-memory update ... --remote`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.
+
+### Checklist (verify before proceeding)
+
+- [ ] I ran `machine-memory suggest`, `query`, or `list` with --remote for the files or feature I will touch
+- [ ] I reviewed the returned memory IDs and fetched full records when relevant
+- [ ] I considered whether existing memories constrain the planned approach
+- [ ] I will document significant findings and decisions after completing the task
+
+Project preference: replace obsolete systems when practical; preserve backwards compatibility only when it is explicitly required.
 <!-- machine-memory:end -->

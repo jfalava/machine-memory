@@ -1,0 +1,21 @@
+---
+title: suggest
+description: Find memories relevant to changed or requested file paths.
+sidebar:
+  order: 11
+---
+
+## Usage
+
+```sh
+machine-memory suggest --files "src/a.ts,src/b.ts" --remote --json-min
+machine-memory suggest --files-json '["src/a.ts","src/b.ts"]' --remote
+```
+
+Provide exactly one of `--files` or `--files-json`. `suggest` derives path
+terms and nearby directory context, combines that with full-text matching and
+path/tag signals, then returns the highest-scoring relevant memories.
+
+`--tags`, `--type`, and `--certainty` filter candidates. Use
+`--include-deprecated`, `--limit`, and `--explain-score` to change the search;
+`--brief`, `--json-min`, and `--quiet` reduce the response for an agent loop.

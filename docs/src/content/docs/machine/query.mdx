@@ -1,0 +1,23 @@
+---
+title: query
+description: Search memories using full-text terms and filters.
+sidebar:
+  order: 5
+---
+
+## Usage
+
+```sh
+machine-memory query <search-term> --remote
+machine-memory query "remote backend" --tags area:cli --remote --json-min
+```
+
+`query` tokenizes the search term, searches the repository’s full-text index,
+and ranks matching memories. Active memories are returned by default.
+
+## Filters and output
+
+Use `--tags`, `--type`, and `--certainty` to narrow matches; add
+`--include-deprecated` when historical memories are relevant. `--limit` caps
+the result count and `--explain-score` includes the score components used for
+ranking. `--brief`, `--json-min`, and `--quiet` are useful for agent loops.

@@ -1,0 +1,22 @@
+---
+title: sweep
+description: Combine path suggestions, text search, and listing into one result set.
+sidebar:
+  order: 12
+---
+
+## Usage
+
+```sh
+machine-memory sweep --files "src/a.ts,src/b.ts" --remote --json-min
+machine-memory sweep --files "src/a.ts" --query "backend" --remote
+```
+
+`sweep` requires exactly one of `--files` or `--files-json`. It runs the
+`suggest` path analysis, optionally runs a `--query`, also scores filtered
+listing results, merges duplicate IDs, and returns the combined ranking. Each
+result records whether it came from suggestions, full-text query, or listing.
+
+Use `--tags` and `--limit` to narrow the sweep. `--explain-score` exposes
+ranking weights, while `--brief`, `--json-min`, and `--quiet` keep the output
+small.

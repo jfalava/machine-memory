@@ -1,0 +1,28 @@
+---
+title: update
+description: Replace memory content and selectively update metadata.
+sidebar:
+  order: 8
+---
+
+## Usage
+
+```sh
+machine-memory update <id> <content> --remote
+machine-memory update <id,id,...> --from-file <path> --remote
+machine-memory update --match "unique topic" <content> --remote
+```
+
+Provide either one or more IDs or `--match <query>`, then provide inline
+content or `--from-file <path>`. Updating multiple IDs returns the updated
+rows, missing IDs, and a count.
+
+## Metadata
+
+`--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, and `--refs`
+replace the corresponding metadata. `--expires-after-days <n|null>` sets or
+clears expiry. The content update increments `update_count` and refreshes
+`updated_at`.
+
+`--match` must resolve to an active memory and cannot be combined with more
+than one positional content argument.

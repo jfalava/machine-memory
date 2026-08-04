@@ -1,0 +1,19 @@
+---
+title: help
+description: Print the machine-readable command catalog.
+sidebar:
+  order: 1
+---
+
+## Usage
+
+```sh
+machine-memory help
+```
+
+`help` prints the CLI name, version, description, database backend rule,
+command usage strings, supported memory types, certainty levels, and statuses
+as JSON. It does not access the database, so no backend flag is required.
+
+Use it when an agent needs to discover the current command surface rather than
+relying on a copied list of flags.

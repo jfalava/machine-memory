@@ -1,5 +1,4 @@
 {
-  "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "printWidth": 80,
   "tabWidth": 2,
   "useTabs": false,
@@ -8,8 +7,10 @@
   "singleQuote": false,
   "trailingComma": "all",
   "insertFinalNewline": true,
-  "experimentalSortPackageJson": {
-    "sortScripts": true
-  },
-  "ignorePatterns": ["node_modules/**"]
+  "ignorePatterns": [
+    "./cli/**",
+    "./docs/**",
+    "./node_modules/**",
+    "./remote-db/**"
+  ]
 }

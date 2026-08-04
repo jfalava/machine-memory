@@ -1,0 +1,23 @@
+---
+title: list
+description: List repository memories with structured filters.
+sidebar:
+  order: 6
+---
+
+## Usage
+
+```sh
+machine-memory list --remote
+machine-memory list --tags area:docs --type decision --remote --json-min
+```
+
+`list` returns memories for the current repository ordered by most recently
+updated. It does not perform full-text search.
+
+## Filters
+
+`--tags`, `--type`, `--certainty`, and `--status` filter the result set.
+`--include-deprecated` includes deprecated and superseded memories, and
+`--limit` caps the result count. Use `--brief`, `--json-min`, or `--quiet` for
+smaller machine-facing output.

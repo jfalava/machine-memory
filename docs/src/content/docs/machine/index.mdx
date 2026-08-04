@@ -1,0 +1,65 @@
+---
+title: Machine commands
+description: JSON-first commands for agents, scripts, and automated workflows.
+sidebar:
+  order: 0
+  badge: CLI
+---
+
+Machine commands are designed to be composed by agents and scripts. Unless
+noted otherwise, every database-backed command requires exactly one of
+`--local` or `--remote`. In this repository, use `--remote`.
+
+```sh
+machine-memory query "backend" --remote --json-min
+```
+
+## Output modes
+
+Read commands normally return JSON. Commands that support output flags also
+accept:
+
+| Flag | Use |
+| --- | --- |
+| `--brief` | Human-readable one-line summaries. |
+| `--json-min` | Compact JSON with stable identifiers and minimal summaries. |
+| `--quiet` | The smallest machine-oriented response available for the command. |
+
+## Commands
+
+### CLI and memory lifecycle
+
+| Command | Purpose |
+| --- | --- |
+| [`help`](/machine/help) | Print the command catalog and enum values as JSON. |
+| [`version`](/machine/version) | Print the installed CLI version. |
+| [`upgrade`](/machine/upgrade) | Download and replace the current platform binary from the latest GitHub release. |
+| [`add`](/machine/add) | Create a memory, optionally upserting a strong match. |
+| [`get`](/machine/get) | Fetch one or more memories by ID. |
+| [`update`](/machine/update) | Change memory content or metadata. |
+| [`deprecate`](/machine/deprecate) | Mark memories deprecated or superseded. |
+| [`delete`](/machine/delete) | Permanently delete memories. |
+
+### Search and analysis
+
+| Command | Purpose |
+| --- | --- |
+| [`query`](/machine/query) | Full-text search memories by terms and filters. |
+| [`list`](/machine/list) | List memories using filters and recency order. |
+| [`suggest`](/machine/suggest) | Find memories related to a set of file paths. |
+| [`sweep`](/machine/sweep) | Combine file suggestions, text search, and filtered listing. |
+| [`verify`](/machine/verify) | Compare a proposed fact with an existing memory. |
+| [`diff`](/machine/diff) | Explain how proposed content differs from an existing memory. |
+| [`coverage`](/machine/coverage) | Find directories that are not represented by memory tags. |
+| [`stats`](/machine/stats) | Summarize repository memory health and distribution. |
+| [`doctor`](/machine/doctor) | Detect duplicates, stale status, tag, reference, and type issues. |
+
+### Maintenance and interchange
+
+| Command | Purpose |
+| --- | --- |
+| [`export`](/machine/export) | Export active memories as JSON. |
+| [`import`](/machine/import) | Import a JSON memory export with duplicate and conflict checks. |
+| [`migrate`](/machine/migrate) | Apply pending database schema migrations. |
+| [`gc`](/machine/gc) | Preview memories whose expiry window has elapsed. |
+| [`tag-map`](/machine/tag-map) | Manage path-to-tag mappings used during memory writes. |
