@@ -6,6 +6,7 @@ import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Database } from "./database";
+import { apiName } from "./config";
 
 type QueryOperation = "run" | "get" | "all";
 
@@ -44,7 +45,7 @@ function parseQueryRequest(value: unknown): QueryRequest {
 
 export default class Api extends Cloudflare.Worker<Api>()(
   "machine-memory-api",
-  { main: import.meta.url },
+  { main: import.meta.url, name: apiName },
   Effect.gen(function* () {
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const sql = yield* SQL.D1(d1);

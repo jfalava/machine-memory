@@ -3,9 +3,10 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import Api from "./src/worker";
 import { Database } from "./src/database";
+import { stackName } from "./src/config";
 
 export default Alchemy.Stack(
-  "machine-memory-remote-datbase",
+  stackName,
   {
     providers: Cloudflare.providers(),
     state: Alchemy.localState(),

@@ -8,7 +8,7 @@ export const DB_PATH = configuredDbPath
   ? isAbsolute(configuredDbPath)
     ? configuredDbPath
     : resolve(process.cwd(), configuredDbPath)
-  : resolve(process.cwd(), ".agents", "memory.db");
+  : resolve(process.cwd(), "machine-memory.db");
 
 export const MEMORY_TYPES = [
   "decision",

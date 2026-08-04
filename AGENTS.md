@@ -2,7 +2,7 @@
 
 ## Project memory
 
-This project uses `cli/dist/machine-memory-darwin-arm64` with its database at `.agents/memory.db`.
+This project uses `cli/dist/machine-memory-darwin-arm64` with its database at `./machine-memory.db` in the root of the monorepo.
 
 Before editing, run exactly one focused retrieval command from the repository root:
 
@@ -16,5 +16,5 @@ At task end, persist only durable decisions, constraints, preferences, and non-o
 
 Use exact file paths and put filenames, keys, routes, thresholds, and other retrieval anchors in the first sentence. Prefer path-based tags with `--path` and `tag-map`; use `--upsert-match` only after checking that the match is the intended canonical record.
 
-Run `cli/dist/machine-memory-darwin-arm64 doctor` during maintenance, not every task. Ensure both `.agents/` and `.agents/memory.db` are writable before memory writes.
+Run `cli/dist/machine-memory-darwin-arm64 doctor` during maintenance, not every task. Ensure `machine-memory.db` is writable before memory writes.
 <!-- machine-memory:end -->

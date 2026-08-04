@@ -9,7 +9,7 @@ const AGENTS_MD_CONTENT = [
   MEMORY_BLOCK_START,
   "## Project memory",
   "",
-  "This project uses `machine-memory` with its database at `.agents/memory.db`.",
+  "This project uses `machine-memory` with its database at `machine-memory.db`.",
   "",
   "Before editing, run exactly one focused retrieval command from the repository root:",
   "",
@@ -23,7 +23,7 @@ const AGENTS_MD_CONTENT = [
   "",
   "Use exact file paths and put filenames, keys, routes, thresholds, and other retrieval anchors in the first sentence. Prefer path-based tags with `--path` and `tag-map`; use `--upsert-match` only after checking that the match is the intended canonical record.",
   "",
-  "Run `machine-memory doctor` during maintenance, not every task. Ensure both `.agents/` and `.agents/memory.db` are writable before memory writes.",
+  "Run `machine-memory doctor` during maintenance, not every task. Ensure `machine-memory.db` is writable before memory writes.",
   MEMORY_BLOCK_END,
 ].join("\n");
 
