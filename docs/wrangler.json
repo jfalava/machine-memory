@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "machine-memory-docs",
+  "compatibility_date": "2026-08-02",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    {
+      "pattern": "machine-memory.jfa.dev",
+      "custom_domain": true
+    }
+  ]
+}

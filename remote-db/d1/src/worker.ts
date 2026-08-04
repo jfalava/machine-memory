@@ -31,7 +31,10 @@ function parseQueryRequest(value: unknown): QueryRequest {
   if (
     !Array.isArray(candidate.params) ||
     candidate.params.some(
-      (param) => param !== null && typeof param !== "string" && typeof param !== "number",
+      (param) =>
+        param !== null &&
+        typeof param !== "string" &&
+        typeof param !== "number",
     )
   ) {
     throw new Error("The request params must be SQLite JSON values.");
@@ -49,17 +52,28 @@ export default class Api extends Cloudflare.Worker<Api>()(
   Effect.gen(function* () {
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const sql = yield* SQL.D1(d1);
-    const expectedToken = yield* Config.redacted("MACHINE_MEMORY_DB_TOKEN").pipe(Effect.orDie);
+    const expectedToken = yield* Config.redacted(
+      "MACHINE_MEMORY_DB_TOKEN",
+    ).pipe(Effect.orDie);
 
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         if (request.method !== "POST" || request.url !== "/query") {
-          return yield* HttpServerResponse.json({ error: "Not found" }, { status: 404 });
+          return yield* HttpServerResponse.json(
+            { error: "Not found" },
+            { status: 404 },
+          );
         }
 
-        if (request.headers.authorization !== `Bearer ${Redacted.value(expectedToken)}`) {
-          return yield* HttpServerResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (
+          request.headers.authorization !==
+          `Bearer ${Redacted.value(expectedToken)}`
+        ) {
+          return yield* HttpServerResponse.json(
+            { error: "Unauthorized" },
+            { status: 401 },
+          );
         }
 
         const body = yield* request.json;
@@ -103,11 +117,15 @@ export default class Api extends Cloudflare.Worker<Api>()(
           input.value.sql,
           input.value.params,
         );
-        const result = input.value.operation === "all" ? rows : (rows[0] ?? null);
+        const result =
+          input.value.operation === "all" ? rows : (rows[0] ?? null);
         return yield* HttpServerResponse.json({ ok: true, result });
       }).pipe(
         Effect.catchCause((cause) =>
-          HttpServerResponse.json({ ok: false, error: String(cause) }, { status: 500 }),
+          HttpServerResponse.json(
+            { ok: false, error: String(cause) },
+            { status: 500 },
+          ),
         ),
       ),
     };

@@ -41,7 +41,10 @@ export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
 }
 
 function parseRepositoryRemote(remote: string): string | undefined {
-  const normalized = remote.trim().replace(/\/+$/, "").replace(/\.git$/, "");
+  const normalized = remote
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "");
   if (!normalized) {
     return undefined;
   }

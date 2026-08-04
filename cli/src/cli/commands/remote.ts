@@ -6,7 +6,8 @@ import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { getFlagValue } from "../../cli-utils";
 import {
-  loadDatabaseConfig,
+  databaseConfig,
+  loadStoredRemoteCredentials,
   normalizeRemoteUrl,
   saveRemoteCredentials,
 } from "../../database-config";
@@ -64,7 +65,15 @@ function configuredName(
 
 function loadCurrentRemote() {
   return Effect.tryPromise({
-    try: () => loadDatabaseConfig(),
+    try: async () => {
+      const configured = databaseConfig();
+      if (configured.kind === "remote") {
+        return configured;
+      }
+
+      const stored = await loadStoredRemoteCredentials();
+      return stored ? { kind: "remote" as const, ...stored } : configured;
+    },
     catch: (cause) =>
       commandError("Could not read stored remote credentials.", cause),
   });
@@ -117,36 +126,27 @@ export function remoteProvision(context: CommandContext) {
   return Effect.gen(function* () {
     const current = yield* loadCurrentRemote();
     const currentRemote = current.kind === "remote" ? current : undefined;
-    const stackName = configuredName(
-      context,
-      {
-        flag: "--stack-name",
-        environment: "MACHINE_MEMORY_STACK_NAME",
-        label: "Alchemy stack name",
-        fallback: DEFAULT_STACK_NAME,
-        current: currentRemote?.stackName,
-      },
-    );
-    const databaseName = configuredName(
-      context,
-      {
-        flag: "--database-name",
-        environment: "MACHINE_MEMORY_DB_NAME",
-        label: "D1 database name",
-        fallback: DEFAULT_DATABASE_NAME,
-        current: currentRemote?.databaseName,
-      },
-    );
-    const apiName = configuredName(
-      context,
-      {
-        flag: "--api-name",
-        environment: "MACHINE_MEMORY_API_NAME",
-        label: "Worker API name",
-        fallback: DEFAULT_API_NAME,
-        current: currentRemote?.apiName,
-      },
-    );
+    const stackName = configuredName(context, {
+      flag: "--stack-name",
+      environment: "MACHINE_MEMORY_STACK_NAME",
+      label: "Alchemy stack name",
+      fallback: DEFAULT_STACK_NAME,
+      current: currentRemote?.stackName,
+    });
+    const databaseName = configuredName(context, {
+      flag: "--database-name",
+      environment: "MACHINE_MEMORY_DB_NAME",
+      label: "D1 database name",
+      fallback: DEFAULT_DATABASE_NAME,
+      current: currentRemote?.databaseName,
+    });
+    const apiName = configuredName(context, {
+      flag: "--api-name",
+      environment: "MACHINE_MEMORY_API_NAME",
+      label: "Worker API name",
+      fallback: DEFAULT_API_NAME,
+      current: currentRemote?.apiName,
+    });
     const workerToken =
       process.env["MACHINE_MEMORY_DB_TOKEN"]?.trim() ??
       randomBytes(32).toString("hex");
@@ -202,7 +202,9 @@ export function remoteProvision(context: CommandContext) {
       console.info(`${pc.dim("Stack")}     ${stackName}`);
       console.info(`${pc.dim("Database")}  ${databaseName}`);
       console.info(`${pc.dim("API")}       ${apiName}`);
-      console.info(`${pc.dim("Token")}     ${pc.dim("stored in the OS keychain")}`);
+      console.info(
+        `${pc.dim("Token")}     ${pc.dim("stored in the OS keychain")}`,
+      );
       console.info();
     });
   });
@@ -286,18 +288,7 @@ async function runAlchemyDeploy(options: {
 
 function stripTerminalColors(value: string): string {
   const escape = String.fromCharCode(27);
-  return [
-    "0",
-    "1",
-    "2",
-    "22",
-    "31",
-    "32",
-    "33",
-    "36",
-    "39",
-    "90",
-  ].reduce(
+  return ["0", "1", "2", "22", "31", "32", "33", "36", "39", "90"].reduce(
     (current, code) => current.replaceAll(`${escape}[${code}m`, ""),
     value,
   );
@@ -323,14 +314,20 @@ const remoteProvisionCommand = effectCommand(
     "database-name": stringFlag("database-name"),
     "api-name": stringFlag("api-name"),
   },
-  [stringSpec("stack-name"), stringSpec("database-name"), stringSpec("api-name")],
+  [
+    stringSpec("stack-name"),
+    stringSpec("database-name"),
+    stringSpec("api-name"),
+  ],
   undefined,
   remoteProvision,
 );
 
 export const remoteCommand = Command.make("remote", {}, () =>
   Effect.sync(() => {
-    console.info(`${pc.bold("Usage:")} machine-memory remote <setup|provision>`);
+    console.info(
+      `${pc.bold("Usage:")} machine-memory remote <setup|provision>`,
+    );
     console.info(
       `${pc.dim("Setup:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
     );

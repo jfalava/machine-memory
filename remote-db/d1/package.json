@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "check": "oxlint --fix",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "dev": "alchemy dev",
+    "format": "oxfmt",
+    "lint": "oxlint",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

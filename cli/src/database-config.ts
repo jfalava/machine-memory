@@ -11,6 +11,30 @@ export type DatabaseConfig =
       readonly apiName?: string;
     };
 
+export type DatabaseBackendFlags = {
+  readonly local: boolean;
+  readonly remote: boolean;
+};
+
+export const DEFAULT_DATABASE_BACKEND_FLAGS: DatabaseBackendFlags = {
+  local: false,
+  remote: false,
+};
+
+export function validateDatabaseBackendFlags(
+  backendFlags: DatabaseBackendFlags,
+  requireSelection = false,
+): void {
+  if (backendFlags.local && backendFlags.remote) {
+    throw new Error("Choose only one database backend: --local or --remote.");
+  }
+  if (requireSelection && !backendFlags.local && !backendFlags.remote) {
+    throw new Error(
+      "Choose a database backend explicitly with --local or --remote.",
+    );
+  }
+}
+
 export type RemoteCredentials = {
   readonly url: string;
   readonly token: string;
@@ -32,7 +56,12 @@ export const REMOTE_CREDENTIALS_SECRET = {
  */
 export function databaseConfig(
   environment: Record<string, string | undefined> = process.env,
+  backendFlags: DatabaseBackendFlags = DEFAULT_DATABASE_BACKEND_FLAGS,
 ): DatabaseConfig {
+  validateDatabaseBackendFlags(backendFlags);
+  if (backendFlags.local) {
+    return { kind: "local" };
+  }
   const url = environment["MACHINE_MEMORY_DB_URL"]?.trim();
   if (url) {
     return {
@@ -49,8 +78,28 @@ export function databaseConfig(
 
 export async function loadDatabaseConfig(
   environment: Record<string, string | undefined> = process.env,
+  backendFlags: DatabaseBackendFlags = DEFAULT_DATABASE_BACKEND_FLAGS,
 ): Promise<DatabaseConfig> {
-  const configured = databaseConfig(environment);
+  const configured = databaseConfig(environment, backendFlags);
+  if (backendFlags.remote && configured.kind === "local") {
+    let stored: string | null;
+    try {
+      stored = await Bun.secrets.get(REMOTE_CREDENTIALS_SECRET);
+    } catch (cause) {
+      throw new Error(
+        `Remote backend requested, but stored credentials could not be read. Run 'machine-memory remote setup'. ${String(cause)}`,
+      );
+    }
+    if (!stored) {
+      throw new Error(
+        "Remote backend requested, but no remote credentials are configured. Run 'machine-memory remote setup'.",
+      );
+    }
+    return {
+      kind: "remote",
+      ...parseRemoteCredentials(stored),
+    };
+  }
   if (configured.kind === "remote") {
     return configured;
   }
@@ -74,6 +123,13 @@ export async function loadDatabaseConfig(
     kind: "remote",
     ...parseRemoteCredentials(stored),
   };
+}
+
+export async function loadStoredRemoteCredentials(): Promise<
+  RemoteCredentials | undefined
+> {
+  const stored = await Bun.secrets.get(REMOTE_CREDENTIALS_SECRET);
+  return stored ? parseRemoteCredentials(stored) : undefined;
 }
 
 function parseRemoteCredentials(stored: string): RemoteCredentials {
@@ -110,7 +166,9 @@ function parseRemoteCredentials(stored: string): RemoteCredentials {
     ...(typeof candidate.databaseName === "string"
       ? { databaseName: candidate.databaseName }
       : {}),
-    ...(typeof candidate.apiName === "string" ? { apiName: candidate.apiName } : {}),
+    ...(typeof candidate.apiName === "string"
+      ? { apiName: candidate.apiName }
+      : {}),
   };
 }
 

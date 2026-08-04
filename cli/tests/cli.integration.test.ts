@@ -11,6 +11,27 @@ type RunResult = {
   stderr: string;
 };
 
+const databaseCommands = new Set([
+  "add",
+  "query",
+  "list",
+  "get",
+  "update",
+  "deprecate",
+  "delete",
+  "suggest",
+  "sweep",
+  "doctor",
+  "verify",
+  "diff",
+  "coverage",
+  "gc",
+  "stats",
+  "import",
+  "export",
+  "migrate",
+]);
+
 const cliEntrypoint = resolve(process.cwd(), "src/app.ts");
 const tempDirectories: string[] = [];
 
@@ -76,10 +97,19 @@ async function runCli(
   dbPath: string,
   ...args: string[]
 ): Promise<RunResult> {
-  const result = await execBun(["run", cliEntrypoint, ...args], {
-    cwd,
-    env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath },
-  });
+  const backendFlag =
+    databaseCommands.has(args[0] ?? "") &&
+    !args.includes("--local") &&
+    !args.includes("--remote")
+      ? ["--local"]
+      : [];
+  const result = await execBun(
+    ["run", cliEntrypoint, ...args, ...backendFlag],
+    {
+      cwd,
+      env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath },
+    },
+  );
   return {
     code: isKnownBunCanaryExit(result) ? 0 : result.code,
     json: JSON.parse(result.stdout.trim()) as Record<string, unknown>,
@@ -159,6 +189,16 @@ describe("CLI rewrite integration", () => {
     expect(queried.code).toBe(0);
     expect(queried.json.ids).toContain(id);
 
+    const explicitlyLocal = await runCli(
+      cwd,
+      dbPath,
+      "list",
+      "--local",
+      "--json-min",
+    );
+    expect(explicitlyLocal.code).toBe(0);
+    expect(explicitlyLocal.json.ids).toContain(id);
+
     const updated = await runCli(
       cwd,
       dbPath,
@@ -184,14 +224,26 @@ describe("CLI rewrite integration", () => {
 
   it("isolates records from other repositories in a shared database", async () => {
     const { cwd, dbPath } = await createProject();
-    const local = await runCli(cwd, dbPath, "add", "Current repository memory", "--quiet");
+    const local = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Current repository memory",
+      "--quiet",
+    );
     const foreignId = await insertMemoryFromRepository(
       dbPath,
       "someone/another-repository",
       "Foreign repository memory",
     );
 
-    const queried = await runCli(cwd, dbPath, "query", "repository", "--json-min");
+    const queried = await runCli(
+      cwd,
+      dbPath,
+      "query",
+      "repository",
+      "--json-min",
+    );
     expect(queried.json.ids).toEqual([Number(local.json.id)]);
 
     const fetched = await runCli(cwd, dbPath, "get", String(foreignId));
@@ -229,7 +281,10 @@ describe("CLI rewrite integration", () => {
     await createLegacyDatabase(dbPath);
 
     const migrated = await runCli(cwd, dbPath, "migrate");
-    expect(migrated.code, `${migrated.stderr} ${JSON.stringify(migrated.json)}`).toBe(0);
+    expect(
+      migrated.code,
+      `${migrated.stderr} ${JSON.stringify(migrated.json)}`,
+    ).toBe(0);
     expect(migrated.json).toEqual({ status: "ok", migrated: true });
 
     const fetched = await runCli(cwd, dbPath, "get", "1");

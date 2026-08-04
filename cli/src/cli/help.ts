@@ -10,6 +10,8 @@ import {
   UPDATE_USAGE,
 } from "./features/memory/usage";
 
+const DATABASE_BACKEND_USAGE = " (--local|--remote)";
+
 export function helpPayload() {
   return {
     name: "machine-memory",
@@ -17,58 +19,53 @@ export function helpPayload() {
     description:
       "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a local SQLite database so future agent sessions can recall them.",
     database:
-      "local machine-memory.db (relative to cwd), or remote via MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN",
+      "Every database-backed command requires exactly one of --local or --remote. Remote credentials come from MACHINE_MEMORY_DB_URL/MACHINE_MEMORY_DB_TOKEN or the OS keychain.",
     commands: {
       help: "Show this help message",
       add: {
         usage: ADD_USAGE,
       },
       query: {
-        usage:
-          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score] [--brief|--json-min|--quiet]",
+        usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       list: {
-        usage:
-          "list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>] [--brief|--json-min|--quiet]",
+        usage: `list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
-      get: { usage: "get <id|id,id,...>" },
+      get: { usage: `get <id|id,id,...>${DATABASE_BACKEND_USAGE}` },
       update: {
         usage: UPDATE_USAGE,
       },
       deprecate: {
         usage: DEPRECATE_USAGE,
       },
-      delete: { usage: "delete <id|id,id,...>" },
+      delete: { usage: `delete <id|id,id,...>${DATABASE_BACKEND_USAGE}` },
       suggest: {
-        usage:
-          'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score] [--brief|--json-min|--quiet]',
+        usage: `suggest (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       sweep: {
-        usage:
-          'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]',
+        usage: `sweep (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--query <search_term>] [--tags <tag>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       doctor: {
-        usage: "doctor [--brief|--json-min|--quiet]",
+        usage: `doctor${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
-      verify: { usage: "verify <id> <fact>" },
-      diff: { usage: "diff <id> <new_content>" },
+      verify: { usage: `verify <id> <fact>${DATABASE_BACKEND_USAGE}` },
+      diff: { usage: `diff <id> <new_content>${DATABASE_BACKEND_USAGE}` },
       "tag-map": {
         usage:
           "tag-map <list|set|delete|suggest> [path_prefix] [tags_csv|path]",
       },
-      migrate: { usage: "migrate" },
-      coverage: { usage: "coverage [--root <path>]" },
-      gc: { usage: "gc --dry-run" },
-      stats: { usage: "stats" },
-      import: { usage: "import <memories.json>" },
+      migrate: { usage: `migrate${DATABASE_BACKEND_USAGE}` },
+      coverage: { usage: `coverage [--root <path>]${DATABASE_BACKEND_USAGE}` },
+      gc: { usage: `gc --dry-run${DATABASE_BACKEND_USAGE}` },
+      stats: { usage: `stats${DATABASE_BACKEND_USAGE}` },
+      import: { usage: `import <memories.json>${DATABASE_BACKEND_USAGE}` },
       export: {
-        usage:
-          "export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>]",
+        usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>]${DATABASE_BACKEND_USAGE}`,
       },
       version: { usage: "version" },
       upgrade: { usage: "upgrade" },
       "update-agents-md": {
-        usage: "update-agents-md",
+        usage: "update-agents-md (--local|--remote)",
         description:
           "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file",
       },
@@ -96,7 +93,7 @@ export function helpPayload() {
       "Project references/docs (e.g. 'API fields for run status: running, errored, finished')",
       "Point-in-time status snapshots (e.g. 'coverage audit: 82%, missing sdk/')",
       "Non-obvious gotchas (e.g. 'the users table uses UUIDs, not auto-increment')",
-      "Environment/tooling notes (e.g. 'run machine-memory migrate after pulling main')",
+      "Environment/tooling notes (e.g. 'run machine-memory migrate --local after pulling main')",
       "User preferences (e.g. 'user prefers explicit error handling over try/catch')",
     ],
   };

@@ -7,7 +7,11 @@ import {
   type DbAccessMode,
   type SqlQueryBinding,
 } from "../db";
-import { loadDatabaseConfig } from "../database-config";
+import {
+  loadDatabaseConfig,
+  validateDatabaseBackendFlags,
+  type DatabaseBackendFlags,
+} from "../database-config";
 import { MemoryDatabaseError } from "./errors";
 import { remoteLayer } from "./remote-database";
 
@@ -83,10 +87,17 @@ function localLayer(
 
 export const layer = (
   mode: DbAccessMode,
+  backendFlags?: DatabaseBackendFlags,
 ): Layer.Layer<MemoryDatabase, MemoryDatabaseError> =>
   Layer.unwrap(
     Effect.tryPromise({
-      try: () => loadDatabaseConfig(),
+      try: () => {
+        validateDatabaseBackendFlags(
+          backendFlags ?? { local: false, remote: false },
+          true,
+        );
+        return loadDatabaseConfig(process.env, backendFlags);
+      },
       catch: (cause) =>
         new MemoryDatabaseError({
           operation: "config",

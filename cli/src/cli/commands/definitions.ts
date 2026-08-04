@@ -307,8 +307,11 @@ const tagMapCommand = effectCommand(
 );
 const updateAgentsCommand = effectCommand(
   "update-agents-md",
-  {},
-  [],
+  {
+    local: booleanFlag("local"),
+    remote: booleanFlag("remote"),
+  },
+  [booleanSpec("local"), booleanSpec("remote")],
   undefined,
   handleUpdateAgentsMdCommand,
 );

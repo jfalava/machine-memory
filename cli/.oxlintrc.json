@@ -112,11 +112,6 @@
     "max-params": ["error", 5],
     "max-statements": ["error", 20],
     "import/no-duplicates": "error",
-    "import/no-mutable-exports": "error",
-    "react/jsx-key": "error",
-    "react/jsx-no-undef": "error",
-    "react/no-direct-mutation-state": "error",
-    "react/no-find-dom-node": "error",
-    "react/no-danger": "error"
+    "import/no-mutable-exports": "error"
   }
 }

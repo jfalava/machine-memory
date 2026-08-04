@@ -28,6 +28,9 @@
       }
     }
   },
+  "scripts": {
+    "format": "bunx oxfmt"
+  },
   "devDependencies": {
     "vite-tsconfig-paths": "6.1.1"
   }

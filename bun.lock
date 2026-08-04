@@ -5,7 +5,7 @@
     "": {
       "name": "machine-memory",
       "devDependencies": {
-        "vite-tsconfig-paths": "^6.1.1",
+        "vite-tsconfig-paths": "6.1.1",
       },
     },
     "cli": {
