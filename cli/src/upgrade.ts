@@ -45,10 +45,32 @@ function requestTimeoutMs(): number {
     : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
-function platformAssetName(): string {
-  const platform = process.platform === "darwin" ? "darwin" : "linux";
-  const arch = process.arch === "arm64" ? "arm64" : "x64";
-  return `machine-memory-${platform}-${arch}`;
+export function assetNameForPlatform(
+  platform: string,
+  arch: string,
+): string | undefined {
+  const platformName =
+    platform === "darwin"
+      ? "darwin"
+      : platform === "linux"
+        ? "linux"
+        : platform === "win32"
+          ? "windows"
+          : undefined;
+  if (!platformName) {
+    return undefined;
+  }
+  const architecture =
+    arch === "arm64" ? "arm64" : arch === "x64" ? "x64" : undefined;
+  if (!architecture) {
+    return undefined;
+  }
+  const extension = platform === "win32" ? ".exe" : "";
+  return `machine-memory-${platformName}-${architecture}${extension}`;
+}
+
+function platformAssetName(): string | undefined {
+  return assetNameForPlatform(process.platform, process.arch);
 }
 
 function errorMessage(cause: unknown): string {
@@ -125,6 +147,13 @@ function selectAsset(
   release: Release,
 ): Effect.Effect<ReleaseAsset, UpgradeError> {
   const assetName = platformAssetName();
+  if (!assetName) {
+    return Effect.fail(
+      new UpgradeError({
+        error: `Unsupported upgrade platform: ${process.platform}/${process.arch}`,
+      }),
+    );
+  }
   const asset = release.assets.find(
     (candidate) => candidate.name === assetName,
   );
@@ -163,7 +192,9 @@ function downloadToTemp(
       response.arrayBuffer(),
     );
     yield* fileSystem.writeFile(tempPath, new Uint8Array(buffer));
-    yield* fileSystem.chmod(tempPath, 0o755);
+    if (process.platform !== "win32") {
+      yield* fileSystem.chmod(tempPath, 0o755);
+    }
   });
 }
 
@@ -178,6 +209,36 @@ function replaceBinary(
   const backupPath = `${targetPath}.bak`;
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
+    if (process.platform === "win32") {
+      const helper = Bun.spawn({
+        cmd: [
+          "powershell.exe",
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "$target = $env:MACHINE_MEMORY_UPGRADE_TARGET; $temp = $env:MACHINE_MEMORY_UPGRADE_TEMP; $ownerPid = [int]$env:MACHINE_MEMORY_UPGRADE_PID; while (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 100 }; Move-Item -LiteralPath $temp -Destination $target -Force",
+        ],
+        env: {
+          ...process.env,
+          MACHINE_MEMORY_UPGRADE_TARGET: targetPath,
+          MACHINE_MEMORY_UPGRADE_TEMP: tempPath,
+          MACHINE_MEMORY_UPGRADE_PID: String(process.pid),
+        },
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      });
+      if (!helper.pid) {
+        return yield* Effect.fail(
+          new UpgradeError({
+            error: "Failed to start Windows upgrade helper.",
+          }),
+        );
+      }
+      return;
+    }
     const replace = Effect.gen(function* () {
       yield* fileSystem.rename(targetPath, backupPath);
       yield* fileSystem.rename(tempPath, targetPath);

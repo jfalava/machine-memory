@@ -123,9 +123,10 @@ function migrateSchema(database: Database) {
     return;
   }
 
+  // journal_mode cannot be changed while a transaction is active.
+  runWithRetry(database, "PRAGMA journal_mode=WAL");
   runWithRetry(database, "BEGIN IMMEDIATE");
   try {
-    runWithRetry(database, "PRAGMA journal_mode=WAL");
     runWithRetry(
       database,
       `
