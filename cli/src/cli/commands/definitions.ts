@@ -23,6 +23,7 @@ import { handleMigrateCommand } from "./migrate";
 import { handleVerifyCommand } from "./verify";
 import { handleDeleteCommand } from "./delete";
 import { handleGetCommand } from "./get";
+import { remoteCommand } from "./remote";
 import { VERSION } from "../../constants";
 import { printJson } from "../../cli-utils";
 import { upgrade } from "../../upgrade";
@@ -333,6 +334,7 @@ export const featureCommands = [
   migrateCommand,
   tagMapCommand,
   updateAgentsCommand,
+  remoteCommand,
 ] as const;
 
 export function builtinCommands() {

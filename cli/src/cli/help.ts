@@ -72,6 +72,13 @@ export function helpPayload() {
         description:
           "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file",
       },
+      remote: {
+        setup: {
+          usage: "remote setup [--url <worker-url>] [--token <worker-token>]",
+          description:
+            "Store Cloudflare D1 Worker credentials in the OS keychain",
+        },
+      },
     },
     enums: {
       memory_type: MEMORY_TYPES,

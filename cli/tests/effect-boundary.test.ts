@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { CommandError, MemoryDatabaseError } from "@/effect/errors";
 import { compareFact } from "@/cli/features/memory/compare";
 import { normalizeSqliteRow, parseIdSpec } from "@/cli/shared";
-import { databaseConfig } from "@/database-config";
+import { databaseConfig, normalizeRemoteUrl } from "@/database-config";
 
 describe("Effect application boundaries", () => {
   it("represents command failures as tagged errors", () => {
@@ -56,5 +56,8 @@ describe("Effect application boundaries", () => {
       token: "secret",
     });
     expect(databaseConfig({})).toEqual({ kind: "local" });
+    expect(normalizeRemoteUrl("https://memory.example.workers.dev/")).toBe(
+      "https://memory.example.workers.dev/query",
+    );
   });
 });

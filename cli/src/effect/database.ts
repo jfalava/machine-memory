@@ -7,7 +7,7 @@ import {
   type DbAccessMode,
   type SqlQueryBinding,
 } from "../db";
-import { databaseConfig } from "../database-config";
+import { loadDatabaseConfig } from "../database-config";
 import { MemoryDatabaseError } from "./errors";
 import { remoteLayer } from "./remote-database";
 
@@ -55,14 +55,9 @@ function effectful<T>(
   });
 }
 
-export const layer = (
+function localLayer(
   mode: DbAccessMode,
-): Layer.Layer<MemoryDatabase, MemoryDatabaseError> => {
-  const config = databaseConfig();
-  if (config.kind === "remote") {
-    return remoteLayer(config.url, config.token);
-  }
-
+): Layer.Layer<MemoryDatabase, MemoryDatabaseError> {
   return Layer.effect(
     MemoryDatabase,
     Effect.gen(function* () {
@@ -84,4 +79,28 @@ export const layer = (
       });
     }),
   );
-};
+}
+
+export const layer = (
+  mode: DbAccessMode,
+): Layer.Layer<MemoryDatabase, MemoryDatabaseError> =>
+  Layer.unwrap(
+    Effect.tryPromise({
+      try: () => loadDatabaseConfig(),
+      catch: (cause) =>
+        new MemoryDatabaseError({
+          operation: "config",
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Could not load database credentials.",
+          cause,
+        }),
+    }).pipe(
+      Effect.map((config) =>
+        config.kind === "remote"
+          ? remoteLayer(config.url, config.token)
+          : localLayer(mode),
+      ),
+    ),
+  );

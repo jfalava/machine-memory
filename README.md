@@ -44,6 +44,15 @@ MACHINE_MEMORY_DB_URL=https://memory-api.example.workers.dev/query \
 MACHINE_MEMORY_DB_TOKEN=... machine-memory list
 ```
 
+On a developer machine, save those credentials interactively in the OS
+keychain instead:
+
+```sh
+machine-memory remote setup
+```
+
+The setup command also accepts `--url <worker-url>` and `--token <token>`.
+
 The adapter is an Alchemy-managed Cloudflare Worker in `remote-db/d1`. It
 creates a D1 database, applies the memory schema and FTS5 triggers, and uses
 `@effect/sql-d1` for remote reads. Deploy it with a token in the environment:
