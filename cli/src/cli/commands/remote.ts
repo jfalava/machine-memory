@@ -1,3 +1,6 @@
+import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import pc from "picocolors";
 import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
@@ -16,8 +19,16 @@ import {
   stringSpec,
 } from "../runtime/command";
 
-function commandError(message: string, cause?: unknown): CommandError {
-  return new CommandError({ message, command: "remote setup", cause });
+const DEFAULT_STACK_NAME = "machine-memory-remote-db";
+const DEFAULT_DATABASE_NAME = "machine-memory-db";
+const DEFAULT_API_NAME = "machine-memory-api";
+
+function commandError(
+  message: string,
+  cause?: unknown,
+  command = "remote setup",
+): CommandError {
+  return new CommandError({ message, command, cause });
 }
 
 function ask(label: string, fallback: string | undefined): string {
@@ -33,13 +44,35 @@ function ask(label: string, fallback: string | undefined): string {
   return value;
 }
 
-function remoteSetup(context: CommandContext) {
+function configuredName(
+  context: CommandContext,
+  options: {
+    flag: string;
+    environment: string;
+    label: string;
+    fallback: string;
+    current: string | undefined;
+  },
+): string {
+  return (
+    getFlagValue(context.args, options.flag) ??
+    process.env[options.environment]?.trim() ??
+    options.current ??
+    ask(options.label, options.fallback)
+  );
+}
+
+function loadCurrentRemote() {
+  return Effect.tryPromise({
+    try: () => loadDatabaseConfig(),
+    catch: (cause) =>
+      commandError("Could not read stored remote credentials.", cause),
+  });
+}
+
+export function remoteSetup(context: CommandContext) {
   return Effect.gen(function* () {
-    const current = yield* Effect.tryPromise({
-      try: () => loadDatabaseConfig(),
-      catch: (cause) =>
-        commandError("Could not read stored credentials.", cause),
-    });
+    const current = yield* loadCurrentRemote();
     const currentRemote = current.kind === "remote" ? current : undefined;
     const urlInput =
       getFlagValue(context.args, "--url") ??
@@ -51,6 +84,7 @@ function remoteSetup(context: CommandContext) {
         commandError(
           cause instanceof Error ? cause.message : "Invalid Worker URL.",
           cause,
+          "remote setup",
         ),
     });
 
@@ -63,22 +97,210 @@ function remoteSetup(context: CommandContext) {
     }
 
     yield* Effect.tryPromise({
-      try: () => saveRemoteCredentials({ url, token }),
+      try: () =>
+        saveRemoteCredentials({
+          url,
+          token,
+          stackName: currentRemote?.stackName,
+          databaseName: currentRemote?.databaseName,
+          apiName: currentRemote?.apiName,
+        }),
       catch: (cause) =>
         commandError("Could not store credentials in the OS keychain.", cause),
     });
 
+    yield* Effect.sync(() => printRemoteSaved(url));
+  });
+}
+
+export function remoteProvision(context: CommandContext) {
+  return Effect.gen(function* () {
+    const current = yield* loadCurrentRemote();
+    const currentRemote = current.kind === "remote" ? current : undefined;
+    const stackName = configuredName(
+      context,
+      {
+        flag: "--stack-name",
+        environment: "MACHINE_MEMORY_STACK_NAME",
+        label: "Alchemy stack name",
+        fallback: DEFAULT_STACK_NAME,
+        current: currentRemote?.stackName,
+      },
+    );
+    const databaseName = configuredName(
+      context,
+      {
+        flag: "--database-name",
+        environment: "MACHINE_MEMORY_DB_NAME",
+        label: "D1 database name",
+        fallback: DEFAULT_DATABASE_NAME,
+        current: currentRemote?.databaseName,
+      },
+    );
+    const apiName = configuredName(
+      context,
+      {
+        flag: "--api-name",
+        environment: "MACHINE_MEMORY_API_NAME",
+        label: "Worker API name",
+        fallback: DEFAULT_API_NAME,
+        current: currentRemote?.apiName,
+      },
+    );
+    const workerToken =
+      process.env["MACHINE_MEMORY_DB_TOKEN"]?.trim() ??
+      randomBytes(32).toString("hex");
+
+    const deployment = yield* Effect.tryPromise({
+      try: () =>
+        runAlchemyDeploy({
+          stackName,
+          databaseName,
+          apiName,
+          workerToken,
+        }),
+      catch: (cause) =>
+        commandError(
+          cause instanceof Error
+            ? cause.message
+            : "Could not deploy the remote database.",
+          cause,
+          "remote provision",
+        ),
+    });
+    const url = yield* Effect.try({
+      try: () => normalizeRemoteUrl(deployment.url),
+      catch: (cause) =>
+        commandError(
+          "Alchemy did not return a valid Worker URL.",
+          cause,
+          "remote provision",
+        ),
+    });
+
+    yield* Effect.tryPromise({
+      try: () =>
+        saveRemoteCredentials({
+          url,
+          token: workerToken,
+          stackName,
+          databaseName,
+          apiName,
+        }),
+      catch: (cause) =>
+        commandError(
+          "The remote database was deployed, but credentials could not be stored in the OS keychain.",
+          cause,
+          "remote provision",
+        ),
+    });
+
     yield* Effect.sync(() => {
       console.info();
-      console.info(pc.green(pc.bold("✓ Remote Worker credentials saved")));
-      console.info(`${pc.dim("URL")}   ${pc.cyan(url)}`);
-      console.info(`${pc.dim("Token")} ${pc.dim("stored in the OS keychain")}`);
+      console.info(pc.green(pc.bold("✓ Remote database provisioned")));
+      console.info(`${pc.dim("URL")}       ${pc.cyan(url)}`);
+      console.info(`${pc.dim("Stack")}     ${stackName}`);
+      console.info(`${pc.dim("Database")}  ${databaseName}`);
+      console.info(`${pc.dim("API")}       ${apiName}`);
+      console.info(`${pc.dim("Token")}     ${pc.dim("stored in the OS keychain")}`);
       console.info();
-      console.info(
-        `${pc.dim("Next")}   ${pc.bold("machine-memory list")} will use this Worker.`,
-      );
     });
   });
+}
+
+function printRemoteSaved(url: string) {
+  console.info();
+  console.info(pc.green(pc.bold("✓ Remote Worker credentials saved")));
+  console.info(`${pc.dim("URL")}   ${pc.cyan(url)}`);
+  console.info(`${pc.dim("Token")} ${pc.dim("stored in the OS keychain")}`);
+  console.info();
+  console.info(
+    `${pc.dim("Next")}   ${pc.bold("machine-memory list")} will use this Worker.`,
+  );
+}
+
+function remoteStackDirectory(): string {
+  const candidates = [
+    process.env["MACHINE_MEMORY_REMOTE_DB_DIR"],
+    resolve(process.cwd(), "remote-db", "d1"),
+    resolve(import.meta.dir, "../../../../remote-db/d1"),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const directory = candidates.find((candidate) =>
+    existsSync(resolve(candidate, "alchemy.run.ts")),
+  );
+  if (!directory) {
+    throw new Error(
+      "The Alchemy remote stack is unavailable. Set MACHINE_MEMORY_REMOTE_DB_DIR to the remote-db/d1 stack directory.",
+    );
+  }
+  return directory;
+}
+
+async function runAlchemyDeploy(options: {
+  stackName: string;
+  databaseName: string;
+  apiName: string;
+  workerToken: string;
+}): Promise<{ url: string }> {
+  const directory = remoteStackDirectory();
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  const child = Bun.spawn(["bun", "run", "alchemy", "deploy", "--yes"], {
+    cwd: directory,
+    env: {
+      ...environment,
+      MACHINE_MEMORY_STACK_NAME: options.stackName,
+      MACHINE_MEMORY_DB_NAME: options.databaseName,
+      MACHINE_MEMORY_API_NAME: options.apiName,
+      MACHINE_MEMORY_DB_TOKEN: options.workerToken,
+    },
+    stdin: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  const output = stripTerminalColors(`${stdout}\n${stderr}`);
+  if (output.trim()) {
+    console.info(output.trim());
+  }
+  if (exitCode !== 0) {
+    throw new Error(`Alchemy deploy failed with exit code ${exitCode}.`);
+  }
+  const url =
+    output.match(/\burl\s*[:=]\s*["']?(https?:\/\/[^\s"']+)/i)?.[1] ??
+    output.match(/https?:\/\/[^\s"']+workers\.dev[^\s"']*/i)?.[0];
+  if (!url) {
+    throw new Error(
+      "Alchemy deploy completed but did not report the Worker URL. Run `machine-memory remote provision` again or configure the Worker URL with `machine-memory remote setup`.",
+    );
+  }
+  return { url };
+}
+
+function stripTerminalColors(value: string): string {
+  const escape = String.fromCharCode(27);
+  return [
+    "0",
+    "1",
+    "2",
+    "22",
+    "31",
+    "32",
+    "33",
+    "36",
+    "39",
+    "90",
+  ].reduce(
+    (current, code) => current.replaceAll(`${escape}[${code}m`, ""),
+    value,
+  );
 }
 
 const remoteSetupCommand = effectCommand(
@@ -93,11 +315,27 @@ const remoteSetupCommand = effectCommand(
   remoteSetup,
 );
 
+const remoteProvisionCommand = effectCommand(
+  "provision",
+  {
+    args: positionalArgs(),
+    "stack-name": stringFlag("stack-name"),
+    "database-name": stringFlag("database-name"),
+    "api-name": stringFlag("api-name"),
+  },
+  [stringSpec("stack-name"), stringSpec("database-name"), stringSpec("api-name")],
+  undefined,
+  remoteProvision,
+);
+
 export const remoteCommand = Command.make("remote", {}, () =>
   Effect.sync(() => {
-    console.info(`${pc.bold("Usage:")} machine-memory remote setup`);
+    console.info(`${pc.bold("Usage:")} machine-memory remote <setup|provision>`);
     console.info(
-      `${pc.dim("Options:")} --url <worker-url> --token <worker-token>`,
+      `${pc.dim("Setup:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
+    );
+    console.info(
+      `${pc.dim("Provision:")} machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]`,
     );
   }),
-).pipe(Command.withSubcommands([remoteSetupCommand]));
+).pipe(Command.withSubcommands([remoteSetupCommand, remoteProvisionCommand]));

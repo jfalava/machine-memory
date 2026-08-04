@@ -6,11 +6,17 @@ export type DatabaseConfig =
       readonly kind: "remote";
       readonly url: string;
       readonly token: string | undefined;
+      readonly stackName?: string;
+      readonly databaseName?: string;
+      readonly apiName?: string;
     };
 
 export type RemoteCredentials = {
   readonly url: string;
   readonly token: string;
+  readonly stackName?: string;
+  readonly databaseName?: string;
+  readonly apiName?: string;
 };
 
 export const REMOTE_CREDENTIALS_SECRET = {
@@ -95,7 +101,17 @@ function parseRemoteCredentials(stored: string): RemoteCredentials {
       "Stored remote credentials are invalid. Run 'machine-memory remote setup' again.",
     );
   }
-  return { url: candidate.url, token: candidate.token };
+  return {
+    url: candidate.url,
+    token: candidate.token,
+    ...(typeof candidate.stackName === "string"
+      ? { stackName: candidate.stackName }
+      : {}),
+    ...(typeof candidate.databaseName === "string"
+      ? { databaseName: candidate.databaseName }
+      : {}),
+    ...(typeof candidate.apiName === "string" ? { apiName: candidate.apiName } : {}),
+  };
 }
 
 export function normalizeRemoteUrl(value: string): string {

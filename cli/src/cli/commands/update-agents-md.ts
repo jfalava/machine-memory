@@ -1,6 +1,9 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
+import { DB_PATH } from "../../constants";
+import { loadDatabaseConfig } from "../../database-config";
 import type { CommandContext } from "../runtime/context";
+import { remoteProvision, remoteSetup } from "./remote";
 
 const MEMORY_BLOCK_START = "<!-- machine-memory:start -->";
 const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
@@ -10,6 +13,7 @@ const AGENTS_MD_CONTENT = [
   "## Project memory",
   "",
   "This project uses `machine-memory` with its database at `machine-memory.db`.",
+  "On first setup, `machine-memory update-agents-md` can use local memory, connect an existing remote Worker, or provision the Alchemy D1 stack. Remote provisioning accepts `--stack-name`, `--database-name`, and `--api-name` through `machine-memory remote provision`.",
   "",
   "Before editing, run exactly one focused retrieval command from the repository root:",
   "",
@@ -49,7 +53,9 @@ function replaceMemoryBlock(content: string): string {
 export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
   return Effect.gen(function* () {
-    const existingContent = (yield* commandCtx.fileSystem.exists(agentsMdPath))
+    const agentsExists = yield* commandCtx.fileSystem.exists(agentsMdPath);
+    yield* offerFirstRunSetup(commandCtx, agentsExists);
+    const existingContent = agentsExists
       ? new TextDecoder().decode(
           yield* commandCtx.fileSystem.readFile(agentsMdPath),
         )
@@ -63,5 +69,44 @@ export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
         "Updated AGENTS.md with recommendations on machine-memory usage",
       ),
     );
+  });
+}
+
+function offerFirstRunSetup(
+  commandCtx: CommandContext,
+  agentsExists: boolean,
+): Effect.Effect<void, unknown> {
+  return Effect.gen(function* () {
+    if (agentsExists || (yield* commandCtx.fileSystem.exists(DB_PATH))) {
+      return;
+    }
+
+    const configured = yield* Effect.tryPromise({
+      try: () => loadDatabaseConfig(),
+      catch: (cause) => cause,
+    });
+    if (configured.kind === "remote") {
+      return;
+    }
+
+    const choice = yield* Effect.sync(() => {
+      const answer = globalThis.prompt(
+        "No memory backend is configured. Choose local, remote, create, or skip [local]:",
+      );
+      return (answer?.trim().toLowerCase() || "local") as
+        | "local"
+        | "remote"
+        | "create"
+        | "skip";
+    });
+    if (choice === "remote") {
+      yield* remoteSetup(commandCtx);
+    } else if (choice === "create") {
+      yield* remoteProvision(commandCtx);
+    } else if (choice !== "local" && choice !== "skip") {
+      yield* Effect.fail(
+        new Error("Choose local, remote, create, or skip during first-run setup."),
+      );
+    }
   });
 }

@@ -78,6 +78,12 @@ export function helpPayload() {
           description:
             "Store Cloudflare D1 Worker credentials in the OS keychain",
         },
+        provision: {
+          usage:
+            "remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
+          description:
+            "Deploy the Alchemy D1 stack and store its Worker credentials",
+        },
       },
     },
     enums: {
