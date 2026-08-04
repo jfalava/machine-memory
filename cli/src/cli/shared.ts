@@ -19,6 +19,7 @@ import {
 } from "../constants";
 import type { MemoryDatabaseApi } from "../effect/database";
 import { CommandError, MemoryDatabaseError } from "../effect/errors";
+import { repositoryForCurrentDirectory } from "../repository";
 
 export function isMemoryType(value: string): value is MemoryType {
   return (MEMORY_TYPES as readonly string[]).includes(value);
@@ -593,6 +594,8 @@ export function applySqlFilters(
   options: { defaultActiveOnly?: boolean; columnPrefix?: string } = {},
 ) {
   const prefix = options.columnPrefix ?? "";
+  clauses.push(`${prefix}repository = ?`);
+  params.push(repositoryForCurrentDirectory());
   if (filters.tag) {
     clauses.push(`${prefix}tags LIKE ?`);
     params.push(`%${filters.tag}%`);
@@ -618,7 +621,10 @@ export function getMemoryById(
   id: number,
 ): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
   return database
-    .get("SELECT * FROM memories WHERE id = ?", [id])
+    .get("SELECT * FROM memories WHERE repository = ? AND id = ?", [
+      repositoryForCurrentDirectory(),
+      id,
+    ])
     .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
 }
 
@@ -637,10 +643,11 @@ export function findMemoryByMatch(
        FROM memories m
        JOIN memories_fts ON m.id = memories_fts.rowid
        WHERE memories_fts MATCH ?
+         AND m.repository = ?
          AND m.status = 'active'
        ORDER BY bm25(memories_fts)
        LIMIT 5`,
-      [ftsQuery],
+      [ftsQuery, repositoryForCurrentDirectory()],
     )
     .pipe(Effect.map((rows) => shapeRowsWithScore(rows, terms)[0] ?? null));
 }
@@ -658,8 +665,15 @@ export function detectPotentialConflicts(
     return Effect.succeed([]);
   }
 
-  const clauses = ["memories_fts MATCH ?", "m.status = 'active'"];
-  const params: (string | number)[] = [ftsQuery];
+  const clauses = [
+    "memories_fts MATCH ?",
+    "m.repository = ?",
+    "m.status = 'active'",
+  ];
+  const params: (string | number)[] = [
+    ftsQuery,
+    repositoryForCurrentDirectory(),
+  ];
   if (options.excludeId !== undefined) {
     clauses.push("m.id != ?");
     params.push(options.excludeId);
@@ -685,12 +699,18 @@ export function findExactDuplicate(
   return database
     .get(
       `SELECT * FROM memories
-       WHERE status = 'active'
+       WHERE repository = ?
+         AND status = 'active'
          AND content = ?
          AND tags = ?
          AND context = ?
        LIMIT 1`,
-      [payload.content, payload.tags ?? "", payload.context ?? ""],
+      [
+        repositoryForCurrentDirectory(),
+        payload.content,
+        payload.tags ?? "",
+        payload.context ?? "",
+      ],
     )
     .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
 }
@@ -987,11 +1007,12 @@ export function findStatusCascadeCandidates(
   return database
     .all(
       `SELECT * FROM memories
-       WHERE status = 'active'
+       WHERE repository = ?
+         AND status = 'active'
          AND memory_type = 'status'
          AND id != ?
        ORDER BY updated_at DESC, id DESC`,
-      [excludeId],
+      [repositoryForCurrentDirectory(), excludeId],
     )
     .pipe(
       Effect.map((rows) =>

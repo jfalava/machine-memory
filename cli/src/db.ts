@@ -2,8 +2,9 @@ import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { DB_PATH } from "./constants";
+import { repositoryForCurrentDirectory } from "./repository";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const BUSY_TIMEOUT_MS = Number(
   process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
 );
@@ -133,6 +134,7 @@ function migrateSchema(database: Database) {
       `
       CREATE TABLE IF NOT EXISTS memories (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repository TEXT NOT NULL,
         content TEXT NOT NULL,
         tags TEXT DEFAULT '',
         context TEXT DEFAULT '',
@@ -233,6 +235,7 @@ function isSchemaReady(database: Database): boolean {
     "certainty",
     "refs",
     "expires_after_days",
+    "repository",
   ];
   return required.every((columnName) => columns.has(columnName));
 }
@@ -277,6 +280,10 @@ function ensureMemoryTableColumns(database: Database) {
       name: "expires_after_days",
       sql: "ALTER TABLE memories ADD COLUMN expires_after_days INTEGER",
     },
+    {
+      name: "repository",
+      sql: "ALTER TABLE memories ADD COLUMN repository TEXT",
+    },
   ];
 
   for (const migration of migrations) {
@@ -284,6 +291,8 @@ function ensureMemoryTableColumns(database: Database) {
       runWithRetry(database, migration.sql);
     }
   }
+
+  ensureRepository(database);
 
   // Migrate legacy certainty values to the current vocabulary.
   runWithRetry(
@@ -296,5 +305,35 @@ function ensureMemoryTableColumns(database: Database) {
          ELSE certainty
        END
      WHERE certainty IN ('hard', 'soft', 'uncertain')`,
+  );
+}
+
+function ensureRepository(database: Database) {
+  runWithRetry(
+    database,
+    "UPDATE memories SET repository = ? WHERE repository IS NULL",
+    [repositoryForCurrentDirectory()],
+  );
+  runWithRetry(
+    database,
+    `
+    CREATE TRIGGER IF NOT EXISTS memories_repository_required
+    BEFORE INSERT ON memories
+    WHEN NEW.repository IS NULL OR trim(NEW.repository) = ''
+    BEGIN
+      SELECT RAISE(ABORT, 'repository is required');
+    END
+  `,
+  );
+  runWithRetry(
+    database,
+    `
+    CREATE TRIGGER IF NOT EXISTS memories_repository_update_required
+    BEFORE UPDATE OF repository ON memories
+    WHEN NEW.repository IS NULL OR trim(NEW.repository) = ''
+    BEGIN
+      SELECT RAISE(ABORT, 'repository is required');
+    END
+  `,
   );
 }

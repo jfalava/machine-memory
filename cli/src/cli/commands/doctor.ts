@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { printJson } from "../../cli-utils";
+import { repositoryForCurrentDirectory } from "../../repository";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
 import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
@@ -163,8 +164,10 @@ function loadActiveMemories(
   return requireDatabase(commandCtx)
     .all(
       `SELECT * FROM memories
-       WHERE status = 'active'
+       WHERE repository = ?
+         AND status = 'active'
        ORDER BY updated_at DESC, id DESC`,
+      [repositoryForCurrentDirectory()],
     )
     .pipe(
       Effect.map((rows) =>

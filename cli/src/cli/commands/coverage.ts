@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
 import { getFlagValue, printJson } from "../../cli-utils";
+import { repositoryForCurrentDirectory } from "../../repository";
 import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 
@@ -14,7 +15,8 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
       commandCtx.fileSystem,
     );
     const rows = yield* database.all(
-      "SELECT tags FROM memories WHERE status = 'active'",
+      "SELECT tags FROM memories WHERE repository = ? AND status = 'active'",
+      [repositoryForCurrentDirectory()],
     );
     const tagDistribution: Record<string, number> = {};
     const tagSet = new Set<string>();

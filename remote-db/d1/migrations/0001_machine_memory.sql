@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS memories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository TEXT NOT NULL,
   content TEXT NOT NULL,
   tags TEXT DEFAULT '',
   context TEXT DEFAULT '',
@@ -22,6 +23,23 @@ USING fts5(content, tags, context, content='memories', content_rowid='id');
 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
   INSERT INTO memories_fts(rowid, content, tags, context)
   VALUES (new.id, new.content, new.tags, new.context);
+END;
+
+CREATE INDEX IF NOT EXISTS memories_repository_idx
+ON memories(repository);
+
+CREATE TRIGGER IF NOT EXISTS memories_repository_required
+BEFORE INSERT ON memories
+WHEN trim(NEW.repository) = ''
+BEGIN
+  SELECT RAISE(ABORT, 'repository is required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_repository_update_required
+BEFORE UPDATE OF repository ON memories
+WHEN trim(NEW.repository) = ''
+BEGIN
+  SELECT RAISE(ABORT, 'repository is required');
 END;
 
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN

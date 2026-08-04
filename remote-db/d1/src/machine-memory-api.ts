@@ -43,7 +43,7 @@ function parseQueryRequest(value: unknown): QueryRequest {
 }
 
 export default class Api extends Cloudflare.Worker<Api>()(
-  "MachineMemoryApi",
+  "machine-memory-api",
   { main: import.meta.url },
   Effect.gen(function* () {
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);

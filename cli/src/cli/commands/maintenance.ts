@@ -26,6 +26,7 @@ import {
   stringValue,
 } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { repositoryForCurrentDirectory } from "../../repository";
 import { resolve } from "node:path";
 
 type ImportNormalized = {
@@ -207,11 +208,12 @@ function runImportInsert(
   if (value.createdAt && value.updatedAt) {
     return database.run(
       `INSERT INTO memories (
-       content, tags, context, memory_type, status, superseded_by, source_agent,
+       repository, content, tags, context, memory_type, status, superseded_by, source_agent,
        last_updated_by, update_count, certainty, refs, expires_after_days,
        created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        repositoryForCurrentDirectory(),
         value.content,
         value.tags,
         value.memoContext,
@@ -232,10 +234,11 @@ function runImportInsert(
 
   return database.run(
     `INSERT INTO memories (
-     content, tags, context, memory_type, status, superseded_by, source_agent,
+     repository, content, tags, context, memory_type, status, superseded_by, source_agent,
      last_updated_by, update_count, certainty, refs, expires_after_days
    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      repositoryForCurrentDirectory(),
       value.content,
       value.tags,
       value.memoContext,
@@ -394,7 +397,8 @@ function processImportEntry(
 export function handleStatsCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const rows = yield* requireDatabase(commandCtx).all(
-      "SELECT * FROM memories",
+      "SELECT * FROM memories WHERE repository = ?",
+      [repositoryForCurrentDirectory()],
     );
     const memories = rows.map((row) => normalizeSqliteRow(row));
     const accumulator = createStatsAccumulator();

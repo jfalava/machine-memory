@@ -51,6 +51,23 @@ function isKnownBunCanaryExit(result: { code: number; stderr: string }) {
 async function createProject(): Promise<{ cwd: string; dbPath: string }> {
   const cwd = await mkdtemp(join(tmpdir(), "machine-memory-cli-"));
   tempDirectories.push(cwd);
+  await new Promise<void>((resolve, reject) => {
+    execFileCallback("git", ["init", "--quiet"], { cwd }, (error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    execFileCallback(
+      "git",
+      ["remote", "add", "origin", "git@github.com:jfalava/machine-memory.git"],
+      { cwd },
+      (error) => {
+        if (error) reject(error);
+        else resolve();
+      },
+    );
+  });
   return { cwd, dbPath: join(cwd, ".agents", "memory.db") };
 }
 
@@ -85,6 +102,28 @@ database.close();`,
     },
   );
   expect(result.code === 0 || isKnownBunCanaryExit(result)).toBe(true);
+}
+
+async function insertMemoryFromRepository(
+  dbPath: string,
+  repository: string,
+  content: string,
+): Promise<number> {
+  const result = await execBun(
+    [
+      "-e",
+      `import { Database } from "bun:sqlite";
+const database = new Database(process.env.MACHINE_MEMORY_DB_PATH);
+database.run("INSERT INTO memories (repository, content) VALUES (?, ?)", [${JSON.stringify(repository)}, ${JSON.stringify(content)}]);
+console.log(database.query("SELECT last_insert_rowid() AS id").get().id);
+database.close();`,
+    ],
+    {
+      env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath },
+    },
+  );
+  expect(result.code === 0 || isKnownBunCanaryExit(result)).toBe(true);
+  return Number(result.stdout.trim());
 }
 
 afterEach(async () => {
@@ -136,10 +175,27 @@ describe("CLI rewrite integration", () => {
     const fetched = await runCli(cwd, dbPath, "get", String(id));
     expect(fetched.json.content).toBe("Use Effect for all CLI effects");
     expect(fetched.json.last_updated_by).toBe("integration-test");
+    expect(fetched.json.repository).toBe("jfalava/machine-memory");
 
     const deprecated = await runCli(cwd, dbPath, "deprecate", String(id));
     expect(deprecated.code).toBe(0);
     expect((deprecated.json as { status: string }).status).toBe("deprecated");
+  });
+
+  it("isolates records from other repositories in a shared database", async () => {
+    const { cwd, dbPath } = await createProject();
+    const local = await runCli(cwd, dbPath, "add", "Current repository memory", "--quiet");
+    const foreignId = await insertMemoryFromRepository(
+      dbPath,
+      "someone/another-repository",
+      "Foreign repository memory",
+    );
+
+    const queried = await runCli(cwd, dbPath, "query", "repository", "--json-min");
+    expect(queried.json.ids).toEqual([Number(local.json.id)]);
+
+    const fetched = await runCli(cwd, dbPath, "get", String(foreignId));
+    expect(fetched.json).toEqual({ error: "Not found" });
   });
 
   it("applies path tag mappings when adding a memory", async () => {
@@ -179,6 +235,7 @@ describe("CLI rewrite integration", () => {
     const fetched = await runCli(cwd, dbPath, "get", "1");
     expect(fetched.json.certainty).toBe("verified");
     expect(fetched.json.memory_type).toBe("convention");
+    expect(fetched.json.repository).toBe("jfalava/machine-memory");
   });
 });
 

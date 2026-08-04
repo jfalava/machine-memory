@@ -30,6 +30,7 @@ import {
   UPDATE_FLAGS_WITH_VALUES,
   UPDATE_USAGE,
 } from "../features/memory/usage";
+import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 
 const UPSERT_MIN_SIMILARITY = 0.62;
@@ -207,10 +208,10 @@ function updateFromAddPayload(
     sets.push(spec.clause);
     params.push(spec.value);
   }
-  return database.run(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, [
-    ...params,
-    targetId,
-  ]);
+  return database.run(
+    `UPDATE memories SET ${sets.join(", ")} WHERE repository = ? AND id = ?`,
+    [...params, repositoryForCurrentDirectory(), targetId],
+  );
 }
 
 function printUpsertResult(mode: "created" | "updated", id: number) {
@@ -282,10 +283,11 @@ function addInsert(
 ): Effect.Effect<unknown, MemoryDatabaseError> {
   return database.run(
     `INSERT INTO memories (
-     content, tags, context, memory_type, certainty, status, superseded_by,
+     repository, content, tags, context, memory_type, certainty, status, superseded_by,
      source_agent, last_updated_by, update_count, refs, expires_after_days
-   ) VALUES (?, ?, ?, ?, ?, 'active', NULL, ?, ?, 0, ?, ?)`,
+   ) VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, 0, ?, ?)`,
     [
+      repositoryForCurrentDirectory(),
       content,
       metadata.tags,
       metadata.memo,
@@ -527,8 +529,8 @@ function runBatchMemoryUpdate(
     const missingIds: number[] = [];
     for (const targetId of targetIds) {
       yield* database.run(
-        `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
-        [...params, targetId],
+        `UPDATE memories SET ${sets.join(", ")} WHERE repository = ? AND id = ?`,
+        [...params, repositoryForCurrentDirectory(), targetId],
       );
       const updated = yield* getMemoryById(database, targetId);
       if (updated) {
