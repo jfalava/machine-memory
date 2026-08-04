@@ -1,5 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
-import pkg from "../../package.json";
+import pkg from "../../../package.json";
 
 export const VERSION = pkg.version;
 export const REPO = "jfalava/machine-memory";

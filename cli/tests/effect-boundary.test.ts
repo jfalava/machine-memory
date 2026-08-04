@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
-import { CommandError, MemoryDatabaseError } from "../src/lib/effect/errors";
-import { compareFact } from "../src/lib/cli/features/memory/compare";
-import { normalizeSqliteRow, parseIdSpec } from "../src/lib/cli/shared";
+import { CommandError, MemoryDatabaseError } from "../cli/src/lib/effect/errors";
+import { compareFact } from "../cli/src/lib/cli/features/memory/compare";
+import { normalizeSqliteRow, parseIdSpec } from "../cli/src/lib/cli/shared";
 
 describe("Effect application boundaries", () => {
   it("represents command failures as tagged errors", () => {

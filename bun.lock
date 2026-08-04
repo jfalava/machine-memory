@@ -19,6 +19,24 @@
       },
     },
   },
+  "catalogs": {
+    "build": {
+      "oxlint-tsgolint": "7.0.2001",
+      "typescript": "7.0.2",
+    },
+    "effect": {
+      "@effect/platform-bun": "^4.0.0-beta.103",
+      "effect": "^4.0.0-beta.103",
+    },
+    "maintenance": {
+      "oxfmt": "0.62.0",
+      "oxlint": "1.77.0",
+      "vitest": "4.1.10",
+    },
+    "types": {
+      "@types/bun": "1.3.14",
+    },
+  },
   "packages": {
     "@effect/platform-bun": ["@effect/platform-bun@4.0.0-beta.103", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-beta.103" }, "peerDependencies": { "effect": "^4.0.0-beta.103" } }, "sha512-/ay1/lhE9FUKEiDRQs56463eJ9u9ivtUtOCi2eeqI8Aooau7PupKNtV5zKjoRBCLInZMAX7JezT46NW5AdACBQ=="],
 

@@ -16,19 +16,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: bun-linux-x64
-            outfile: dist/machine-memory-linux-x64
+            outfile: cli/dist/machine-memory-linux-x64
             artifact_name: machine-memory-linux-x64
           - os: ubuntu-24.04-arm
             target: bun-linux-arm64
-            outfile: dist/machine-memory-linux-arm64
+            outfile: cli/dist/machine-memory-linux-arm64
             artifact_name: machine-memory-linux-arm64
           - os: macos-latest
             target: bun-darwin-arm64
-            outfile: dist/machine-memory-darwin-arm64
+            outfile: cli/dist/machine-memory-darwin-arm64
             artifact_name: machine-memory-darwin-arm64
           - os: windows-latest
             target: bun-windows-x64
-            outfile: dist/machine-memory-windows-x64.exe
+            outfile: cli/dist/machine-memory-windows-x64.exe
             artifact_name: machine-memory-windows-x64
     runs-on: ${{ matrix.os }}
     steps:
@@ -45,11 +45,11 @@ jobs:
         shell: bash
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          sed -i.bak "s/\"version\": \".*\"/\"version\": \"${TAG}\"/" package.json
+          sed -i.bak "s/\"version\": \".*\"/\"version\": \"${TAG}\"/" cli/package.json
           rm -f package.json.bak
 
       - name: Build target
-        run: bun build --compile --target=${{ matrix.target }} src/app.ts --outfile ${{ matrix.outfile }}
+        run: bun build --compile --target=${{ matrix.target }} cli/src/app.ts --outfile ${{ matrix.outfile }}
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4

@@ -22,7 +22,7 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
 
-    "paths": { "@/*": ["./src/*"], "#/*": ["../../*"] },
+    "paths": { "@/*": ["cli/src/*"], "#/*": ["../../*"] },
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
