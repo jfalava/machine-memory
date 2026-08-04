@@ -1,11 +1,7 @@
 import { Effect } from "effect";
 import { printJson } from "../../cli";
 import type { MemoryDatabaseError } from "../../effect/database";
-import {
-  parseTags,
-  stringValue,
-  uniqueLowerPreserveOrder,
-} from "../shared";
+import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
 import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 

@@ -42,7 +42,12 @@ function setTagMap(
     }
     yield* upsertPathTagMapEntry(context.fileSystem, pathPrefix, tags);
     yield* Effect.sync(() =>
-      printJson({ status: "ok", path_prefix: pathPrefix, tags, file: pathTagMapFilePath() }),
+      printJson({
+        status: "ok",
+        path_prefix: pathPrefix,
+        tags,
+        file: pathTagMapFilePath(),
+      }),
     );
   });
 }
@@ -89,7 +94,10 @@ export function handleTagMapCommand(context: CommandContext): TagMapEffect {
     delete: () => deleteTagMap(context, first),
     suggest: () => suggestTagMap(context, first),
   };
-  return handlers[action ?? ""]?.() ?? Effect.sync(() =>
-    usageError("Usage: tag-map <list|set|delete|suggest> [args]"),
+  return (
+    handlers[action ?? ""]?.() ??
+    Effect.sync(() =>
+      usageError("Usage: tag-map <list|set|delete|suggest> [args]"),
+    )
   );
 }

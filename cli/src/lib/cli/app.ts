@@ -1,15 +1,9 @@
 import { BunServices } from "@effect/platform-bun";
 import { Effect } from "effect";
-import {
-  CliError,
-  CliOutput,
-  Command,
-} from "effect/unstable/cli";
+import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { printJson } from "../cli";
 import { VERSION } from "../constants";
-import {
-  MemoryDatabaseError,
-} from "../effect/database";
+import { MemoryDatabaseError } from "../effect/database";
 import { CommandError } from "../effect/errors";
 import { UpgradeError } from "../upgrade";
 import { builtinCommands, featureCommands } from "./commands/definitions";
@@ -90,9 +84,11 @@ export function runCli(args: ReadonlyArray<string>) {
       Effect.sync(() => {
         renderError(error);
         if (
-          !(CliError.isCliError(error) &&
+          !(
+            CliError.isCliError(error) &&
             error._tag === "ShowHelp" &&
-            error.errors.length === 0)
+            error.errors.length === 0
+          )
         ) {
           process.exitCode = 1;
         }

@@ -13,13 +13,13 @@
     "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 src/app.ts --outfile dist/machine-memory-darwin-x64",
     "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/app.ts --outfile dist/machine-memory-linux-arm64",
     "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/app.ts --outfile dist/machine-memory-linux-x64",
-    "check": "tsgo --noEmit && vitest run",
+    "check": "oxlint && vitest run",
     "format": "oxfmt",
-    "lint": "oxlint --type-aware",
+    "lint": "oxlint",
     "test": "vitest run",
     "test:unit": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsgo --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:effect",

@@ -4,10 +4,7 @@ import { handleDoctorCommand } from "./doctor";
 import { handleCoverageCommand } from "./coverage";
 import { handleExportCommand } from "./export";
 import { handleGcCommand } from "./gc";
-import {
-  handleImportCommand,
-  handleStatsCommand,
-} from "./maintenance";
+import { handleImportCommand, handleStatsCommand } from "./maintenance";
 import {
   handleListCommand,
   handleQueryCommand,
@@ -126,7 +123,13 @@ const listCommand = effectCommand(
   handleListCommand,
 );
 
-const getCommand = effectCommand("get", { args: positionalArgs() }, [], "read", handleGetCommand);
+const getCommand = effectCommand(
+  "get",
+  { args: positionalArgs() },
+  [],
+  "read",
+  handleGetCommand,
+);
 const updateCommand = effectCommand(
   "update",
   {
@@ -167,7 +170,13 @@ const deprecateCommand = effectCommand(
   "write",
   handleDeprecateCommand,
 );
-const deleteCommand = effectCommand("delete", { args: positionalArgs() }, [], "write", handleDeleteCommand);
+const deleteCommand = effectCommand(
+  "delete",
+  { args: positionalArgs() },
+  [],
+  "write",
+  handleDeleteCommand,
+);
 
 const suggestCommand = effectCommand(
   "suggest",
@@ -220,23 +229,88 @@ const sweepCommand = effectCommand(
   handleSweepCommand,
 );
 
-const doctorCommand = effectCommand("doctor", outputConfig(), outputSpecs, "read", handleDoctorCommand);
-const verifyCommand = effectCommand("verify", { args: positionalArgs() }, [], "read", handleVerifyCommand);
-const diffCommand = effectCommand("diff", { args: positionalArgs() }, [], "read", handleDiffCommand);
-const coverageCommand = effectCommand("coverage", { args: positionalArgs(), root: stringFlag("root") }, [stringSpec("root")], "read", handleCoverageCommand);
-const gcCommand = effectCommand("gc", { args: positionalArgs(), "dry-run": booleanFlag("dry-run") }, [booleanSpec("dry-run")], "read", handleGcCommand);
+const doctorCommand = effectCommand(
+  "doctor",
+  outputConfig(),
+  outputSpecs,
+  "read",
+  handleDoctorCommand,
+);
+const verifyCommand = effectCommand(
+  "verify",
+  { args: positionalArgs() },
+  [],
+  "read",
+  handleVerifyCommand,
+);
+const diffCommand = effectCommand(
+  "diff",
+  { args: positionalArgs() },
+  [],
+  "read",
+  handleDiffCommand,
+);
+const coverageCommand = effectCommand(
+  "coverage",
+  { args: positionalArgs(), root: stringFlag("root") },
+  [stringSpec("root")],
+  "read",
+  handleCoverageCommand,
+);
+const gcCommand = effectCommand(
+  "gc",
+  { args: positionalArgs(), "dry-run": booleanFlag("dry-run") },
+  [booleanSpec("dry-run")],
+  "read",
+  handleGcCommand,
+);
 const statsCommand = effectCommand("stats", {}, [], "read", handleStatsCommand);
-const importCommand = effectCommand("import", { args: positionalArgs() }, [], "write", handleImportCommand);
+const importCommand = effectCommand(
+  "import",
+  { args: positionalArgs() },
+  [],
+  "write",
+  handleImportCommand,
+);
 const exportCommand = effectCommand(
   "export",
-  { args: positionalArgs(), tags: stringFlag("tags"), type: stringFlag("type"), certainty: stringFlag("certainty"), since: stringFlag("since") },
-  [stringSpec("tags"), stringSpec("type"), stringSpec("certainty"), stringSpec("since")],
+  {
+    args: positionalArgs(),
+    tags: stringFlag("tags"),
+    type: stringFlag("type"),
+    certainty: stringFlag("certainty"),
+    since: stringFlag("since"),
+  },
+  [
+    stringSpec("tags"),
+    stringSpec("type"),
+    stringSpec("certainty"),
+    stringSpec("since"),
+  ],
   "read",
   handleExportCommand,
 );
-const migrateCommand = effectCommand("migrate", {}, [], "write", handleMigrateCommand);
-const tagMapCommand = effectCommand("tag-map", { args: positionalArgs() }, [], undefined, handleTagMapCommand);
-const updateAgentsCommand = effectCommand("update-agents-md", {}, [], undefined, handleUpdateAgentsMdCommand);
+const migrateCommand = effectCommand(
+  "migrate",
+  {},
+  [],
+  "write",
+  handleMigrateCommand,
+);
+const tagMapCommand = effectCommand(
+  "tag-map",
+  { args: positionalArgs() },
+  [],
+  undefined,
+  handleTagMapCommand,
+);
+const updateAgentsCommand = effectCommand(
+  "update-agents-md",
+  {},
+  [],
+  undefined,
+  handleUpdateAgentsMdCommand,
+);
 
 export const featureCommands = [
   addCommand,
@@ -269,7 +343,9 @@ export function builtinCommands() {
     Effect.sync(() => printJson({ version: VERSION })),
   );
   const upgradeCommand = Command.make("upgrade", {}, () =>
-    upgrade().pipe(Effect.tap((result) => Effect.sync(() => printJson(result)))),
+    upgrade().pipe(
+      Effect.tap((result) => Effect.sync(() => printJson(result))),
+    ),
   );
   return [helpCommand, versionCommand, upgradeCommand] as const;
 }

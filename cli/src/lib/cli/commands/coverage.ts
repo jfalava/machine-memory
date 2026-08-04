@@ -1,11 +1,7 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
 import { getFlagValue, printJson } from "../../cli";
-import {
-  collectDirectoriesEffect,
-  parseTags,
-  stringValue,
-} from "../shared";
+import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 
 export function handleCoverageCommand(commandCtx: CommandContext) {

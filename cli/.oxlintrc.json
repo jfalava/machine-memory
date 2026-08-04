@@ -1,5 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true,
+    "typeCheck": true
+  },
   "plugins": [
     "eslint",
     "react",
@@ -25,6 +29,7 @@
       }
     }
   ],
+  "ignorePatterns": ["*.d.ts", "**/*.d.ts", "tests/**"],
   "rules": {
     "typescript/no-explicit-any": "error",
     "typescript/no-unsafe-assignment": "error",

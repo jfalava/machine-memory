@@ -1,13 +1,6 @@
 import { Effect, FileSystem, Option } from "effect";
-import {
-  Argument,
-  Command,
-  Flag,
-} from "effect/unstable/cli";
-import {
-  MemoryDatabase,
-  layer as databaseLayer,
-} from "../../effect/database";
+import { Argument, Command, Flag } from "effect/unstable/cli";
+import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
 import type { DbAccessMode } from "../../db";
 import type { CommandContext } from "./context";
 import { parseOutputMode } from "./output";
@@ -21,11 +14,19 @@ export type CommandHandler = (
   context: CommandContext,
 ) => Effect.Effect<void, unknown, never>;
 
-export const positionalArgs = () => Argument.string("arg").pipe(Argument.variadic());
-export const stringFlag = (name: string) => Flag.string(name).pipe(Flag.optional);
+export const positionalArgs = () =>
+  Argument.string("arg").pipe(Argument.variadic());
+export const stringFlag = (name: string) =>
+  Flag.string(name).pipe(Flag.optional);
 export const booleanFlag = (name: string) => Flag.boolean(name);
-export const stringSpec = (name: string): FlagSpec => ({ name, kind: "string" });
-export const booleanSpec = (name: string): FlagSpec => ({ name, kind: "boolean" });
+export const stringSpec = (name: string): FlagSpec => ({
+  name,
+  kind: "string",
+});
+export const booleanSpec = (name: string): FlagSpec => ({
+  name,
+  kind: "boolean",
+});
 
 export const outputConfig = () => ({
   brief: booleanFlag("brief"),
