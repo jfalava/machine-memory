@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { Effect } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import pc from "picocolors";
 import { printJson } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
@@ -38,6 +39,32 @@ const formatter: CliOutput.Formatter = {
     JSON.stringify({ error: errors.map((error) => error.message).join("\n") }),
 };
 
+const HUMAN_COMMANDS = new Set([
+  "update-agents-md",
+  "remote setup",
+  "remote provision",
+]);
+
+function renderHumanCommandError(error: CommandError): void {
+  console.error();
+  console.error(pc.red(pc.bold(`✗ ${error.command} failed`)));
+  console.error(`  ${String(error.message)}`);
+  if (error.command === "update-agents-md") {
+    console.error(
+      `  ${pc.dim("Usage:")} machine-memory update-agents-md (--local|--remote)`,
+    );
+  } else if (error.command === "remote setup") {
+    console.error(
+      `  ${pc.dim("Next:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
+    );
+  } else if (error.command === "remote provision") {
+    console.error(
+      `  ${pc.dim("Next:")} machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]`,
+    );
+  }
+  console.error();
+}
+
 function unknownCommand(args: ReadonlyArray<string>): string | undefined {
   const command = args[0];
   return command && !command.startsWith("-") && !knownCommands.has(command)
@@ -54,6 +81,10 @@ function renderError(error: unknown): void {
     return;
   }
   if (error instanceof MemoryDatabaseError || error instanceof CommandError) {
+    if (error instanceof CommandError && HUMAN_COMMANDS.has(error.command)) {
+      renderHumanCommandError(error);
+      return;
+    }
     printJson({
       error: error.message,
       ...(error instanceof MemoryDatabaseError

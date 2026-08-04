@@ -9,6 +9,7 @@ import {
   type DatabaseBackendFlags,
 } from "../../database-config";
 import type { CommandContext } from "../runtime/context";
+import { CommandError } from "../../effect/errors";
 import { remoteProvision, remoteSetup } from "./remote";
 import {
   replaceMemoryBlock,
@@ -24,7 +25,15 @@ export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
     };
     yield* Effect.try({
       try: () => validateDatabaseBackendFlags(backendFlags, true),
-      catch: (cause) => cause,
+      catch: (cause) =>
+        new CommandError({
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Choose a database backend explicitly with --local or --remote.",
+          command: "update-agents-md",
+          cause,
+        }),
     });
     const agentsExists = yield* commandCtx.fileSystem.exists(agentsMdPath);
     yield* offerFirstRunSetup(commandCtx, agentsExists, backendFlags);
