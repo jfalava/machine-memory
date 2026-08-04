@@ -1,7 +1,7 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import Api from "./src/machine-memory-api";
+import Api from "./src/worker";
 import { Database } from "./src/database";
 
 export default Alchemy.Stack(

@@ -18,7 +18,8 @@
       },
       "build": {
         "oxlint-tsgolint": "7.0.2001",
-        "typescript": "7.0.2"
+        "typescript": "7.0.2",
+        "wrangler": "4.118.0"
       },
       "maintenance": {
         "oxfmt": "0.62.0",
