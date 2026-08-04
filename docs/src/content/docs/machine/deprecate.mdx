@@ -1,0 +1,21 @@
+---
+title: deprecate
+description: Mark memories deprecated or link them to a replacement.
+sidebar:
+  order: 9
+---
+
+## Usage
+
+```sh
+machine-memory deprecate <id|id,id,...> --remote
+machine-memory deprecate --match "old topic" --superseded-by <id> --remote
+```
+
+Without `--superseded-by`, targeted memories receive the `deprecated` status.
+With it, they receive `superseded_by` and point at the canonical replacement.
+`--updated-by` records who made the change.
+
+The command accepts either IDs or an active-memory `--match` query. It returns
+the changed rows, missing IDs for batch requests, and the count of updated
+memories.

@@ -14,6 +14,20 @@ const nimbusConfig = defineNimbusConfig({
   locale: "en",
   github: "https://github.com/jfalava/machine-memory",
   socialImageAlt: "Machine Memory documentation",
+  sidebar: {
+    items: [
+      {
+        label: "Human commands",
+        items: [{ autogenerate: { directory: "human" } }],
+        landing: "/human",
+      },
+      {
+        label: "Machine commands",
+        items: [{ autogenerate: { directory: "machine" } }],
+        landing: "/machine",
+      },
+    ],
+  },
 });
 
 export default defineConfig({
@@ -23,6 +37,13 @@ export default defineConfig({
   // Astro 7's Vite 8 bundler).
   vite: {
     plugins: [tailwindcss()],
+    // Bun hoists workspace dependencies into the repository-level .bun store;
+    // allow Vite to serve self-hosted font assets through that symlink.
+    server: {
+      fs: {
+        allow: [".", ".."],
+      },
+    },
   },
   // Hover-prefetch link targets so full-page navigations feel instant without
   // a client-side router.

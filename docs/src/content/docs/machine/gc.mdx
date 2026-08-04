@@ -1,0 +1,19 @@
+---
+title: gc
+description: Preview memories whose expiry windows have elapsed.
+sidebar:
+  order: 21
+---
+
+## Usage
+
+```sh
+machine-memory gc --dry-run --remote
+```
+
+`gc` requires `--dry-run` and never deletes or changes memories. It finds
+active memories with `expires_after_days` set whose update time plus that
+window is in the past, then returns the count and normalized expired rows.
+
+Review the result before deciding whether to deprecate or delete those
+memories explicitly.

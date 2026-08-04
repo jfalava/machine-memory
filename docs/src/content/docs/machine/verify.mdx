@@ -1,0 +1,20 @@
+---
+title: verify
+description: Check whether a proposed fact is consistent with a memory.
+sidebar:
+  order: 13
+---
+
+## Usage
+
+```sh
+machine-memory verify <id> <fact> --remote
+```
+
+`verify` compares the proposed fact with the stored content. A consistent
+comparison returns `{ "ok": true, "result": "consistent" }`; a conflict
+returns `{ "ok": false, "result": "conflict" }`. Both include a similarity
+score. A missing ID returns an error object.
+
+Use this before treating a remembered fact as still valid when current work
+may have changed the underlying behavior.

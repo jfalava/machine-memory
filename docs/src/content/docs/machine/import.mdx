@@ -1,0 +1,20 @@
+---
+title: import
+description: Import a JSON memory export into the current repository.
+sidebar:
+  order: 19
+---
+
+## Usage
+
+```sh
+machine-memory import memories.json --remote
+```
+
+The input must be a JSON array of memory objects. Each entry is normalized and
+validated before insertion. Exact duplicates are skipped, potential conflicts
+are reported without insertion, and successful entries return their new IDs.
+
+Import preserves supported content metadata such as tags, context, type,
+certainty, status, references, expiry, and valid timestamps. The imported
+memories belong to the repository from which the command is run.

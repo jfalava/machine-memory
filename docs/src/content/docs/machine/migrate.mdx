@@ -1,0 +1,18 @@
+---
+title: migrate
+description: Apply pending database schema migrations.
+sidebar:
+  order: 20
+---
+
+## Usage
+
+```sh
+machine-memory migrate --remote
+```
+
+Opening the selected write-capable backend applies any pending schema
+migrations. The command then returns `{ "status": "ok", "migrated": true }`.
+Run it after upgrading the CLI when the database reports an outdated schema.
+
+Choose exactly one backend flag. In this repository that is `--remote`.

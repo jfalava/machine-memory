@@ -1,0 +1,22 @@
+---
+title: doctor
+description: Audit memory quality and return actionable maintenance suggestions.
+sidebar:
+  order: 15
+---
+
+## Usage
+
+```sh
+machine-memory doctor --remote
+machine-memory doctor --remote --json-min
+```
+
+`doctor` scans active memories for exact and near duplicates, stale status
+overlaps, canonical-thread overlaps, missing status expiry, type-boundary
+problems, tag hygiene issues, and malformed references. It does not modify the
+database.
+
+Findings include suggested commands such as `update`, `deprecate`, or
+`delete`. Review those suggestions before applying them. `--brief`,
+`--json-min`, and `--quiet` provide progressively smaller responses.

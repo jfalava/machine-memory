@@ -1,0 +1,16 @@
+---
+title: diff
+description: Compare proposed content with an existing memory.
+sidebar:
+  order: 14
+---
+
+## Usage
+
+```sh
+machine-memory diff <id> <new_content> --remote
+```
+
+`diff` returns whether the proposed content conflicts with the stored content,
+its similarity score, the terms added, and the terms removed. It is a
+read-only comparison; use `update` to persist the proposed content.

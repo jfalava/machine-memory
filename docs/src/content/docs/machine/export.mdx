@@ -1,0 +1,21 @@
+---
+title: export
+description: Export repository memories as portable JSON.
+sidebar:
+  order: 18
+---
+
+## Usage
+
+```sh
+machine-memory export --remote > memories.json
+machine-memory export --type decision --since 2026-01-01 --remote
+```
+
+`export` writes a JSON array ordered by most recently updated. Active memories
+are selected by default. Filter with `--tags`, `--type`, `--certainty`, and
+`--since <date>` before handing the result to another repository or a backup
+workflow.
+
+The output includes the memory content and stored metadata, including IDs,
+statuses, references, timestamps, and expiry fields.

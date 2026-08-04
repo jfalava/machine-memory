@@ -1,0 +1,17 @@
+---
+title: delete
+description: Permanently remove memories from the current repository.
+sidebar:
+  order: 10
+---
+
+## Usage
+
+```sh
+machine-memory delete <id> --remote
+machine-memory delete <id,id,...> --remote
+```
+
+`delete` removes the specified memory rows permanently. It is intentionally
+ID-based and does not support matching or a dry-run mode. Use `deprecate` when
+the historical record should remain available.

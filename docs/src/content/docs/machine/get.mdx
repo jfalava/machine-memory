@@ -1,0 +1,17 @@
+---
+title: get
+description: Fetch one or more memories by ID.
+sidebar:
+  order: 7
+---
+
+## Usage
+
+```sh
+machine-memory get <id> --remote
+machine-memory get <id,id,...> --remote
+```
+
+`get` retrieves exact memory IDs for the current repository. A single ID
+returns one object; multiple IDs return a `results` array and report any
+missing IDs separately. It does not take output-mode flags.

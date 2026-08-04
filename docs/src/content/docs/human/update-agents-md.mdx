@@ -1,0 +1,41 @@
+---
+title: update-agents-md
+description: Create or replace the managed machine-memory instructions in AGENTS.md.
+sidebar:
+  order: 1
+---
+
+## Usage
+
+```sh
+machine-memory update-agents-md (--local|--remote)
+```
+
+This command creates `AGENTS.md` when it does not exist, or replaces the
+content between the `machine-memory:start` and `machine-memory:end` markers
+when it already exists. Everything outside those markers is preserved.
+
+The generated block tells future agents how to scan memory, which backend to
+use, and how to maintain durable project context. The selected backend is
+written into the block so its examples stay consistent with the command you
+ran.
+
+## Backend selection
+
+Exactly one flag is required:
+
+```sh
+machine-memory update-agents-md --remote
+machine-memory update-agents-md --local
+```
+
+If no remote credentials or local database exist during a first run, the
+command can offer to run [`remote setup`](/human/remote-setup) or
+[`remote provision`](/human/remote-provision) first. It can also create a local
+database or skip setup interactively.
+
+## When to run it
+
+Run this after changing the project’s memory workflow or backend policy. It is
+safe to run again: the managed block is updated in place rather than appended
+repeatedly.

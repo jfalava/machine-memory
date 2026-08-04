@@ -1,0 +1,38 @@
+---
+title: add
+description: Create a memory or upsert a strong match.
+sidebar:
+  order: 4
+---
+
+## Usage
+
+```sh
+machine-memory add <content> --remote
+machine-memory add --from-file <path> --remote
+```
+
+`add` creates an active memory for the current repository. It can store tags,
+context, memory type, certainty, source agent, references, and an optional
+expiry window. The command checks for potential conflicts and, for status
+memories, reports older overlapping status entries that may need deprecation.
+
+Use `--upsert-match <query>` when an existing strong match should be updated
+instead of creating a second memory:
+
+```sh
+machine-memory add "The API uses remote D1" \
+  --upsert-match "remote D1 API" --type decision --remote
+```
+
+## Options
+
+`--path` enables path-driven tag suggestions. `--tags` and `--context` store
+retrieval metadata. `--type` accepts `decision`, `convention`, `gotcha`,
+`preference`, `constraint`, `reference`, or `status`. `--certainty` accepts
+`verified`, `inferred`, or `speculative`. `--refs` accepts JSON or CSV
+references, and `--expires-after-days` is useful for transient status.
+
+`--from-file` and inline content are mutually exclusive. `--no-conflicts`
+suppresses conflict details; `--brief`, `--json-min`, and `--quiet` select
+smaller responses.
