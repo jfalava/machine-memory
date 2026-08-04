@@ -1,3 +1,5 @@
+import { CommandError } from "./effect/errors";
+
 export function printJson(data: unknown) {
   console.info(JSON.stringify(data));
 }
@@ -15,6 +17,5 @@ export function hasFlag(args: string[], flag: string): boolean {
 }
 
 export function usageError(message: string): never {
-  printJson({ error: message });
-  process.exit(1);
+  throw new CommandError({ message, command: "cli", cause: undefined });
 }

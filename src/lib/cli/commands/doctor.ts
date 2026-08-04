@@ -1,5 +1,6 @@
+import { Effect } from "effect";
 import { printJson } from "../../cli";
-import { allWithRetry } from "../../db";
+import type { MemoryDatabaseError } from "../../effect/database";
 import {
   jaccardSimilarity,
   parseTags,
@@ -7,7 +8,7 @@ import {
   stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
-import type { CommandContext } from "./context";
+import { requireDatabase, type CommandContext } from "./context";
 
 type MemorySnapshot = {
   id: number;
@@ -161,30 +162,35 @@ function maybeInteger(value: unknown): number | null {
   return null;
 }
 
-function loadActiveMemories(commandCtx: CommandContext): MemorySnapshot[] {
-  const rows = allWithRetry(
-    commandCtx.requireDb(),
-    `SELECT * FROM memories
-     WHERE status = 'active'
-     ORDER BY updated_at DESC, id DESC`,
-  ) as Record<string, unknown>[];
-
-  return rows.map((row) => {
-    const id = Number(row.id ?? 0);
-    const content = stringValue(row.content);
-    const tagsRaw = stringValue(row.tags);
-    const memoContext = stringValue(row.context);
-    return {
-      id,
-      content,
-      tagsRaw,
-      memoContext,
-      memoryType: stringValue(row.memory_type),
-      refsRaw: row.refs,
-      expiresAfterDays: maybeInteger(row.expires_after_days),
-      termSet: setFromTerms([content, tagsRaw, memoContext].join(" ")),
-    };
-  });
+function loadActiveMemories(
+  commandCtx: CommandContext,
+): Effect.Effect<MemorySnapshot[], MemoryDatabaseError> {
+  return requireDatabase(commandCtx)
+    .all(
+      `SELECT * FROM memories
+       WHERE status = 'active'
+       ORDER BY updated_at DESC, id DESC`,
+    )
+    .pipe(
+      Effect.map((rows) =>
+      (rows as Record<string, unknown>[]).map((row) => {
+          const id = Number(row.id ?? 0);
+          const content = stringValue(row.content);
+          const tagsRaw = stringValue(row.tags);
+          const memoContext = stringValue(row.context);
+          return {
+            id,
+            content,
+            tagsRaw,
+            memoContext,
+            memoryType: stringValue(row.memory_type),
+            refsRaw: row.refs,
+            expiresAfterDays: maybeInteger(row.expires_after_days),
+            termSet: setFromTerms([content, tagsRaw, memoContext].join(" ")),
+          };
+        }),
+      ),
+    );
 }
 
 function exactDuplicateMap(
@@ -789,54 +795,49 @@ function printDoctorBrief(commands: string[]) {
 }
 
 export function handleDoctorCommand(commandCtx: CommandContext) {
-  const rows = loadActiveMemories(commandCtx);
-  const exact = detectExactDuplicates(rows);
-  const near = detectNearDuplicates(rows, exact.duplicateKeyById);
-  const staleStatus = detectStaleStatusOverlaps(rows);
-  const canonicalThread = detectCanonicalThreadOverlaps(rows);
-  const statusExpiry = detectStatusExpiry(rows);
-  const typeBoundary = detectTypeBoundary(rows);
-  const tags = detectTagHygiene(rows);
-  const refs = detectMalformedRefs(rows);
-
-  const findings: DoctorFindings = {
-    exact_duplicates: exact.findings,
-    near_duplicates: near,
-    stale_status_overlaps: staleStatus,
-    canonical_thread_overlaps: canonicalThread,
-    status_expiry: statusExpiry,
-    type_boundary: typeBoundary,
-    tag_hygiene: tags,
-    malformed_refs: refs,
-  };
-
-  const suggestedCommands = collectSuggestedCommands(findings);
-  const summary = summarizeFindings(rows, findings);
-
-  if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
-    printJson({
-      count:
-        summary.exact_duplicates +
-        summary.near_duplicates +
-        summary.stale_status_overlaps +
-        summary.canonical_thread_overlaps +
-        summary.status_missing_expiry +
-        summary.type_boundary +
-        summary.tag_hygiene +
-        summary.malformed_refs,
-      suggested_commands_count: suggestedCommands.length,
+  return Effect.gen(function* () {
+    const rows = yield* loadActiveMemories(commandCtx);
+    const exact = detectExactDuplicates(rows);
+    const near = detectNearDuplicates(rows, exact.duplicateKeyById);
+    const staleStatus = detectStaleStatusOverlaps(rows);
+    const canonicalThread = detectCanonicalThreadOverlaps(rows);
+    const statusExpiry = detectStatusExpiry(rows);
+    const typeBoundary = detectTypeBoundary(rows);
+    const tags = detectTagHygiene(rows);
+    const refs = detectMalformedRefs(rows);
+    const findings: DoctorFindings = {
+      exact_duplicates: exact.findings,
+      near_duplicates: near,
+      stale_status_overlaps: staleStatus,
+      canonical_thread_overlaps: canonicalThread,
+      status_expiry: statusExpiry,
+      type_boundary: typeBoundary,
+      tag_hygiene: tags,
+      malformed_refs: refs,
+    };
+    const suggestedCommands = collectSuggestedCommands(findings);
+    const summary = summarizeFindings(rows, findings);
+    yield* Effect.sync(() => {
+      if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
+        printJson({
+          count:
+            summary.exact_duplicates +
+            summary.near_duplicates +
+            summary.stale_status_overlaps +
+            summary.canonical_thread_overlaps +
+            summary.status_missing_expiry +
+            summary.type_boundary +
+            summary.tag_hygiene +
+            summary.malformed_refs,
+          suggested_commands_count: suggestedCommands.length,
+        });
+        return;
+      }
+      if (commandCtx.outputMode.brief) {
+        printDoctorBrief(suggestedCommands);
+        return;
+      }
+      printJson({ summary, findings, suggested_commands: suggestedCommands });
     });
-    return;
-  }
-
-  if (commandCtx.outputMode.brief) {
-    printDoctorBrief(suggestedCommands);
-    return;
-  }
-
-  printJson({
-    summary,
-    findings,
-    suggested_commands: suggestedCommands,
   });
 }

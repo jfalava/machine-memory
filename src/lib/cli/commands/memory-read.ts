@@ -1,5 +1,6 @@
+import { Effect } from "effect";
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli";
-import { allWithRetry } from "../../db";
+import type { MemoryDatabaseError } from "../../effect/database";
 import {
   SCORE_COMPONENT_WEIGHTS,
   applySqlFilters,
@@ -24,7 +25,7 @@ import {
   stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
-import type { CommandContext } from "./context";
+import { requireDatabase, type CommandContext } from "./context";
 
 const SWEEP_USAGE =
   'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
@@ -114,14 +115,14 @@ function fetchQueryResults(
   commandCtx: CommandContext,
   term: string,
   options: FetchResultsOptions,
-): QueryResults {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
+): Effect.Effect<QueryResults, MemoryDatabaseError> {
+  const { args } = commandCtx;
+  const database = requireDatabase(commandCtx);
   const filters = parseCommonFilters(args);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
   const ftsQuery = buildFtsQueryFromTerms(queryTokens);
   if (!ftsQuery) {
-    return { results: [], queryTokens, filters };
+    return Effect.succeed({ results: [], queryTokens, filters });
   }
 
   const clauses = ["memories_fts MATCH ?"];
@@ -131,107 +132,117 @@ function fetchQueryResults(
     columnPrefix: "m.",
   });
 
-  const rows = allWithRetry(
-    database,
-    `SELECT m.*, bm25(memories_fts) AS fts_rank
-     FROM memories m
-     JOIN memories_fts ON m.id = memories_fts.rowid
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY bm25(memories_fts)
-     LIMIT 100`,
-    params,
-  );
-
-  const results = shapeRowsWithScore(rows as unknown[], queryTokens, {
-    explainScore: options.explainScore,
-  }).slice(0, options.limit ?? 8);
-  return { results, queryTokens, filters };
+  return database
+    .all(
+      `SELECT m.*, bm25(memories_fts) AS fts_rank
+       FROM memories m
+       JOIN memories_fts ON m.id = memories_fts.rowid
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY bm25(memories_fts)
+       LIMIT 100`,
+      params,
+    )
+    .pipe(
+      Effect.map((rows) => ({
+        results: shapeRowsWithScore(rows, queryTokens, {
+          explainScore: options.explainScore,
+        }).slice(0, options.limit ?? 8),
+        queryTokens,
+        filters,
+      })),
+    );
 }
 
 export function handleQueryCommand(commandCtx: CommandContext) {
-  const { args, outputMode } = commandCtx;
-  const term = args[0];
-  if (!term) {
-    usageError("Usage: query <search_term>");
-  }
-
-  const explainScore = explainScoreEnabled(args);
-  const { results, queryTokens, filters } = fetchQueryResults(
-    commandCtx,
-    term,
-    {
-      explainScore,
-      limit: parseResultLimit(args),
-    },
-  );
-  if (results.length === 0) {
-    printEmptyQueryResults(term, filters, queryTokens, outputMode);
-    return;
-  }
-
-  printScoredResults(outputMode, results, {
-    explainScore,
-    wrapResults: explainScore,
+  return Effect.gen(function* () {
+    const { args, outputMode } = commandCtx;
+    const term = args[0];
+    if (!term) {
+      usageError("Usage: query <search_term>");
+    }
+    const explainScore = explainScoreEnabled(args);
+    const { results, queryTokens, filters } = yield* fetchQueryResults(
+      commandCtx,
+      term,
+      { explainScore, limit: parseResultLimit(args) },
+    );
+    yield* Effect.sync(() => {
+      if (results.length === 0) {
+        printEmptyQueryResults(term, filters, queryTokens, outputMode);
+        return;
+      }
+      printScoredResults(outputMode, results, {
+        explainScore,
+        wrapResults: explainScore,
+      });
+    });
   });
 }
 
 export function handleGetCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const idSpec = args[0];
-  if (!idSpec) {
-    usageError("Usage: get <id>");
-  }
-  const ids = parseIdSpec(idSpec);
-  const rows = ids
-    .map((id) => getMemoryById(database, id))
-    .filter((row): row is Record<string, unknown> => row !== null);
-  const missingIds = ids.filter(
-    (id) => !rows.some((row) => Number(row.id) === id),
-  );
-  if (ids.length === 1) {
-    printJson(rows[0] ?? { error: "Not found" });
-    return;
-  }
-  printJson({
-    results: rows,
-    ...(missingIds.length > 0 ? { missing_ids: missingIds } : {}),
+  return Effect.gen(function* () {
+    const { args } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    const idSpec = args[0];
+    if (!idSpec) {
+      usageError("Usage: get <id>");
+    }
+    const ids = parseIdSpec(idSpec);
+    const fetched = yield* Effect.all(ids.map((id) => getMemoryById(database, id)));
+    const rows = fetched.filter(
+      (row): row is Record<string, unknown> => row !== null,
+    );
+    const missingIds = ids.filter(
+      (id) => !rows.some((row) => Number(row.id) === id),
+    );
+    yield* Effect.sync(() => {
+      if (ids.length === 1) {
+        printJson(rows[0] ?? { error: "Not found" });
+        return;
+      }
+      printJson({
+        results: rows,
+        ...(missingIds.length > 0 ? { missing_ids: missingIds } : {}),
+      });
+    });
   });
 }
 
 export function handleListCommand(commandCtx: CommandContext) {
-  const { args, outputMode, requireDb } = commandCtx;
-  const database = requireDb();
-  const filters = parseCommonFilters(args);
-  const clauses: string[] = [];
-  const params: (string | number)[] = [];
-  applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
-
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-  const rows = allWithRetry(
-    database,
-    `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC LIMIT 100`,
-    params,
-  );
-  const normalized = (rows as unknown[])
-    .map((row) => normalizeSqliteRow(row))
-    .slice(0, parseResultLimit(args, 100));
-  if (outputMode.jsonMin || outputMode.quiet) {
-    const payload: Record<string, unknown> = {
-      count: normalized.length,
-      ids: resultIds(normalized),
-    };
-    if (outputMode.jsonMin) {
-      payload.results = normalized.map(minimalResultSummary);
-    }
-    printJson(payload);
-    return;
-  }
-  if (outputMode.brief) {
-    printBriefLines(normalized);
-    return;
-  }
-  printJson(normalized);
+  return Effect.gen(function* () {
+    const { args, outputMode } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    const filters = parseCommonFilters(args);
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = yield* database.all(
+      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC LIMIT 100`,
+      params,
+    );
+    const normalized = rows
+      .map((row) => normalizeSqliteRow(row))
+      .slice(0, parseResultLimit(args, 100));
+    yield* Effect.sync(() => {
+      if (outputMode.jsonMin || outputMode.quiet) {
+        const payload: Record<string, unknown> = {
+          count: normalized.length,
+          ids: resultIds(normalized),
+        };
+        if (outputMode.jsonMin) {
+          payload.results = normalized.map(minimalResultSummary);
+        }
+        printJson(payload);
+        return;
+      }
+      if (outputMode.brief) {
+        printBriefLines(normalized);
+        return;
+      }
+      printJson(normalized);
+    });
+  });
 }
 
 function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
@@ -256,9 +267,9 @@ function fetchFtsSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   options: FetchResultsOptions,
-): Record<string, unknown>[] {
+): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
   if (snapshot.ftsQuery === undefined) {
-    return [];
+    return Effect.succeed([]);
   }
   const ftsClauses = ["memories_fts MATCH ?"];
   const ftsParams: (string | number)[] = [snapshot.ftsQuery];
@@ -266,37 +277,43 @@ function fetchFtsSuggestResults(
     defaultActiveOnly: true,
     columnPrefix: "m.",
   });
-  const rows = allWithRetry(
-    commandCtx.requireDb(),
-    `SELECT m.*, bm25(memories_fts) AS fts_rank
-     FROM memories m
-     JOIN memories_fts ON m.id = memories_fts.rowid
-     WHERE ${ftsClauses.join(" AND ")}
-     ORDER BY bm25(memories_fts)
-     LIMIT 100`,
-    ftsParams,
-  );
-  return shapeRowsWithScore(rows as unknown[], snapshot.suggestTerms, {
-    explainScore: options.explainScore,
-  }).slice(0, options.limit ?? 8);
+  return requireDatabase(commandCtx)
+    .all(
+      `SELECT m.*, bm25(memories_fts) AS fts_rank
+       FROM memories m
+       JOIN memories_fts ON m.id = memories_fts.rowid
+       WHERE ${ftsClauses.join(" AND ")}
+       ORDER BY bm25(memories_fts)
+       LIMIT 100`,
+      ftsParams,
+    )
+    .pipe(
+      Effect.map((rows) =>
+        shapeRowsWithScore(rows, snapshot.suggestTerms, {
+          explainScore: options.explainScore,
+        }).slice(0, options.limit ?? 8),
+      ),
+    );
 }
 
 function collectSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   options: FetchResultsOptions,
-): Record<string, unknown>[] {
-  const neighborhoodResults = queryNeighborhoodMatches(
-    commandCtx.requireDb(),
-    snapshot.neighborhood,
-    snapshot.filters,
-    options.limit ?? 8,
-  );
-  const ftsResults = fetchFtsSuggestResults(commandCtx, snapshot, options);
-  return mergeSuggestionResults(ftsResults, neighborhoodResults).slice(
-    0,
-    options.limit ?? 8,
-  );
+): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
+  return Effect.gen(function* () {
+    const neighborhoodResults = yield* queryNeighborhoodMatches(
+      requireDatabase(commandCtx),
+      snapshot.neighborhood,
+      snapshot.filters,
+      options.limit ?? 8,
+    );
+    const ftsResults = yield* fetchFtsSuggestResults(commandCtx, snapshot, options);
+    return mergeSuggestionResults(ftsResults, neighborhoodResults).slice(
+      0,
+      options.limit ?? 8,
+    );
+  });
 }
 
 function printSuggestResults(
@@ -340,13 +357,17 @@ function printSuggestResults(
 }
 
 export function handleSuggestCommand(commandCtx: CommandContext) {
-  const explainScore = explainScoreEnabled(commandCtx.args);
-  const snapshot = buildSuggestSnapshot(commandCtx.args);
-  const results = collectSuggestResults(commandCtx, snapshot, {
-    explainScore,
-    limit: parseResultLimit(commandCtx.args),
+  return Effect.gen(function* () {
+    const explainScore = explainScoreEnabled(commandCtx.args);
+    const snapshot = buildSuggestSnapshot(commandCtx.args);
+    const results = yield* collectSuggestResults(commandCtx, snapshot, {
+      explainScore,
+      limit: parseResultLimit(commandCtx.args),
+    });
+    yield* Effect.sync(() =>
+      printSuggestResults(commandCtx, snapshot, results, { explainScore }),
+    );
   });
-  printSuggestResults(commandCtx, snapshot, results, { explainScore });
 }
 
 function ensureSweepFileArgs(args: string[]) {
@@ -372,10 +393,10 @@ function fetchListScoredResults(
   commandCtx: CommandContext,
   scoreTerms: string[],
   options: FetchResultsOptions,
-): {
-  results: Record<string, unknown>[];
-  filters: ReturnType<typeof parseCommonFilters>;
-} {
+): Effect.Effect<
+  { results: Record<string, unknown>[]; filters: ReturnType<typeof parseCommonFilters> },
+  MemoryDatabaseError
+> {
   const filters = parseCommonFilters(commandCtx.args);
   const clauses: string[] = [];
   const params: (string | number)[] = [];
@@ -384,21 +405,23 @@ function fetchListScoredResults(
     columnPrefix: "m.",
   });
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-  const rows = allWithRetry(
-    commandCtx.requireDb(),
-    `SELECT m.*, 0 AS fts_rank
-     FROM memories m
-     ${where}
-     ORDER BY m.updated_at DESC, m.id DESC
-     LIMIT 100`,
-    params,
-  );
-  return {
-    results: shapeRowsWithScore(rows as unknown[], scoreTerms, {
-      explainScore: options.explainScore,
-    }).slice(0, options.limit ?? 8),
-    filters,
-  };
+  return requireDatabase(commandCtx)
+    .all(
+      `SELECT m.*, 0 AS fts_rank
+       FROM memories m
+       ${where}
+       ORDER BY m.updated_at DESC, m.id DESC
+       LIMIT 100`,
+      params,
+    )
+    .pipe(
+      Effect.map((rows) => ({
+        results: shapeRowsWithScore(rows, scoreTerms, {
+          explainScore: options.explainScore,
+        }).slice(0, options.limit ?? 8),
+        filters,
+      })),
+    );
 }
 
 function mergeSweepRows(
@@ -444,75 +467,71 @@ function mergeSweepResults(
 }
 
 export function handleSweepCommand(commandCtx: CommandContext) {
-  const { args, outputMode } = commandCtx;
-  ensureSweepFileArgs(args);
-  const queryTerm = parseSweepQueryArg(args);
-  const explainScore = explainScoreEnabled(args);
-  const limit = parseResultLimit(args);
-
-  const snapshot = buildSuggestSnapshot(args);
-  const suggestResults = collectSuggestResults(commandCtx, snapshot, {
-    explainScore,
-    limit,
-  });
-
-  const queryBundle = queryTerm
-    ? fetchQueryResults(commandCtx, queryTerm, { explainScore, limit })
-    : {
-        results: [],
-        queryTokens: [] as string[],
-        filters: parseCommonFilters(args),
-      };
-
-  const listScoreTerms = uniqueLowerPreserveOrder([
-    ...snapshot.suggestTerms,
-    ...queryBundle.queryTokens,
-    ...extractTerms(queryBundle.filters.tag ?? ""),
-  ]);
-  const listBundle = fetchListScoredResults(commandCtx, listScoreTerms, {
-    explainScore,
-    limit,
-  });
-
-  const results = mergeSweepResults([
-    { source: "suggest", rows: suggestResults },
-    { source: "query", rows: queryBundle.results },
-    { source: "list", rows: listBundle.results },
-  ]).slice(0, limit);
-
-  if (outputMode.jsonMin || outputMode.quiet) {
-    const payload: Record<string, unknown> = {
-      count: results.length,
-      ids: resultIds(results),
-    };
-    if (outputMode.jsonMin) {
-      payload.results = results.map((row) => ({
-        ...minimalResultSummary(row),
-        sources: row.sources,
-      }));
-    }
-    if (explainScore) {
-      payload.score_weights = SCORE_COMPONENT_WEIGHTS;
-    }
-    printJson(payload);
-    return;
-  }
-  if (outputMode.brief) {
-    printBriefLines(results);
-    return;
-  }
-
-  printJson({
-    files: snapshot.files,
-    normalized_files: snapshot.files,
-    normalized_path_terms: snapshot.normalizedPathTerms,
-    derived_terms: snapshot.suggestTerms,
-    query: queryTerm ?? null,
-    filters: {
-      tags: listBundle.filters.tag ?? null,
-    },
-    ...(explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
-    results,
+  return Effect.gen(function* () {
+    const { args, outputMode } = commandCtx;
+    ensureSweepFileArgs(args);
+    const queryTerm = parseSweepQueryArg(args);
+    const explainScore = explainScoreEnabled(args);
+    const limit = parseResultLimit(args);
+    const snapshot = buildSuggestSnapshot(args);
+    const suggestResults = yield* collectSuggestResults(commandCtx, snapshot, {
+      explainScore,
+      limit,
+    });
+    const queryBundle = queryTerm
+      ? yield* fetchQueryResults(commandCtx, queryTerm, { explainScore, limit })
+      : {
+          results: [],
+          queryTokens: [] as string[],
+          filters: parseCommonFilters(args),
+        };
+    const listScoreTerms = uniqueLowerPreserveOrder([
+      ...snapshot.suggestTerms,
+      ...queryBundle.queryTokens,
+      ...extractTerms(queryBundle.filters.tag ?? ""),
+    ]);
+    const listBundle = yield* fetchListScoredResults(commandCtx, listScoreTerms, {
+      explainScore,
+      limit,
+    });
+    const results = mergeSweepResults([
+      { source: "suggest", rows: suggestResults },
+      { source: "query", rows: queryBundle.results },
+      { source: "list", rows: listBundle.results },
+    ]).slice(0, limit);
+    yield* Effect.sync(() => {
+      if (outputMode.jsonMin || outputMode.quiet) {
+        const payload: Record<string, unknown> = {
+          count: results.length,
+          ids: resultIds(results),
+        };
+        if (outputMode.jsonMin) {
+          payload.results = results.map((row) => ({
+            ...minimalResultSummary(row),
+            sources: row.sources,
+          }));
+        }
+        if (explainScore) {
+          payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+        }
+        printJson(payload);
+        return;
+      }
+      if (outputMode.brief) {
+        printBriefLines(results);
+        return;
+      }
+      printJson({
+        files: snapshot.files,
+        normalized_files: snapshot.files,
+        normalized_path_terms: snapshot.normalizedPathTerms,
+        derived_terms: snapshot.suggestTerms,
+        query: queryTerm ?? null,
+        filters: { tags: listBundle.filters.tag ?? null },
+        ...(explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
+        results,
+      });
+    });
   });
 }
 
@@ -530,50 +549,41 @@ function parseFactArgs(args: string[], usage: string) {
 }
 
 export function handleVerifyCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const { id, fact } = parseFactArgs(args, "Usage: verify <id> <fact>");
-  const memory = getMemoryById(database, id);
-  if (!memory) {
-    printJson({ error: "Not found" });
-    return;
-  }
-  const storedContent = stringValue(memory.content);
-  const result = compareFact(storedContent, fact);
-  if (result.conflict) {
-    printJson({
-      id,
-      ok: false,
-      result: "conflict",
-      warning: "Conflict",
-      similarity: result.similarity,
+  return Effect.gen(function* () {
+    const { id, fact } = parseFactArgs(commandCtx.args, "Usage: verify <id> <fact>");
+    const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
+    yield* Effect.sync(() => {
+      if (!memory) {
+        printJson({ error: "Not found" });
+        return;
+      }
+      const result = compareFact(stringValue(memory.content), fact);
+      printJson(
+        result.conflict
+          ? { id, ok: false, result: "conflict", warning: "Conflict", similarity: result.similarity }
+          : { id, ok: true, result: "consistent", similarity: result.similarity },
+      );
     });
-    return;
-  }
-  printJson({
-    id,
-    ok: true,
-    result: "consistent",
-    similarity: result.similarity,
   });
 }
 
 export function handleDiffCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const { id, fact } = parseFactArgs(args, "Usage: diff <id> <new_content>");
-  const memory = getMemoryById(database, id);
-  if (!memory) {
-    printJson({ error: "Not found" });
-    return;
-  }
-  const currentContent = stringValue(memory.content);
-  const result = compareFact(currentContent, fact);
-  printJson({
-    id,
-    conflict: result.conflict,
-    similarity: result.similarity,
-    added_terms: result.addedTerms,
-    removed_terms: result.removedTerms,
+  return Effect.gen(function* () {
+    const { id, fact } = parseFactArgs(commandCtx.args, "Usage: diff <id> <new_content>");
+    const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
+    yield* Effect.sync(() => {
+      if (!memory) {
+        printJson({ error: "Not found" });
+        return;
+      }
+      const result = compareFact(stringValue(memory.content), fact);
+      printJson({
+        id,
+        conflict: result.conflict,
+        similarity: result.similarity,
+        added_terms: result.addedTerms,
+        removed_terms: result.removedTerms,
+      });
+    });
   });
 }

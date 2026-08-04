@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { Effect } from "effect";
 import { resolve } from "node:path";
+import type { CommandContext } from "./context";
 
 const MEMORY_BLOCK_START = "<!-- machine-memory:start -->";
 const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
@@ -43,13 +43,20 @@ function replaceMemoryBlock(content: string): string {
   return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${AGENTS_MD_CONTENT}\n`;
 }
 
-export async function handleUpdateAgentsMdCommand() {
+export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
-  const existingContent = existsSync(agentsMdPath)
-    ? await readFile(agentsMdPath, "utf-8")
-    : "";
-  await writeFile(agentsMdPath, replaceMemoryBlock(existingContent), "utf-8");
-  console.info(
-    "Updated AGENTS.md with recommendations on machine-memory usage",
-  );
+  return Effect.gen(function* () {
+    const existingContent = (yield* commandCtx.fileSystem.exists(agentsMdPath))
+      ? new TextDecoder().decode(yield* commandCtx.fileSystem.readFile(agentsMdPath))
+      : "";
+    yield* commandCtx.fileSystem.writeFile(
+      agentsMdPath,
+      new TextEncoder().encode(replaceMemoryBlock(existingContent)),
+    );
+    yield* Effect.sync(() =>
+      console.info(
+        "Updated AGENTS.md with recommendations on machine-memory usage",
+      ),
+    );
+  });
 }

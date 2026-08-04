@@ -1,5 +1,9 @@
+import { Effect } from "effect";
 import { getFlagValue, printJson, usageError } from "../../cli";
-import { allWithRetry, runWithRetry } from "../../db";
+import type {
+  MemoryDatabaseApi,
+  MemoryDatabaseError,
+} from "../../effect/database";
 import {
   CERTAINTY_LEVELS,
   MEMORY_TYPES,
@@ -9,9 +13,8 @@ import {
 } from "../../constants";
 import {
   applySqlFilters,
-  assertFileExists,
   canonicalizeCertainty,
-  collectDirectories,
+  collectDirectoriesEffect,
   detectPotentialConflicts,
   findExactDuplicate,
   isMemoryStatus,
@@ -26,8 +29,7 @@ import {
   sqliteDateToMs,
   stringValue,
 } from "../shared";
-import type { CommandContext } from "./context";
-import { readFileSync } from "node:fs";
+import { requireDatabase, type CommandContext } from "./context";
 import { resolve } from "node:path";
 
 type ImportNormalized = {
@@ -203,12 +205,11 @@ function normalizeImportEntry(rawEntry: unknown): ImportParseResult {
 }
 
 function runImportInsert(
-  database: ReturnType<CommandContext["requireDb"]>,
+  database: MemoryDatabaseApi,
   value: ImportNormalized,
-) {
+): Effect.Effect<unknown, MemoryDatabaseError> {
   if (value.createdAt && value.updatedAt) {
-    return runWithRetry(
-      database,
+    return database.run(
       `INSERT INTO memories (
        content, tags, context, memory_type, status, superseded_by, source_agent,
        last_updated_by, update_count, certainty, refs, expires_after_days,
@@ -233,8 +234,7 @@ function runImportInsert(
     );
   }
 
-  return runWithRetry(
-    database,
+  return database.run(
     `INSERT INTO memories (
      content, tags, context, memory_type, status, superseded_by, source_agent,
      last_updated_by, update_count, certainty, refs, expires_after_days
@@ -256,27 +256,28 @@ function runImportInsert(
   );
 }
 
-function parseImportFile(path: string | undefined): unknown[] {
+function parseImportFile(
+  path: string | undefined,
+  fileSystem: CommandContext["fileSystem"],
+): Effect.Effect<unknown[], unknown> {
   if (!path) {
     usageError("Usage: import <memories.json>");
   }
-  const filePath = assertFileExists(path);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(filePath, "utf-8")) as unknown;
-  } catch (parseError) {
-    printJson({
-      error: `Failed to parse JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+  const filePath = resolve(process.cwd(), path);
+  return Effect.gen(function* () {
+    if (!(yield* fileSystem.exists(filePath))) {
+      usageError(`File not found: ${path}`);
+    }
+    const raw = yield* fileSystem.readFileString(filePath);
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(raw) as unknown,
+      catch: (cause) => new Error(`Failed to parse JSON: ${String(cause)}`),
     });
-    process.exit(1);
-  }
-
-  if (!Array.isArray(parsed)) {
-    usageError("Import file must contain a JSON array.");
-  }
-
-  return parsed;
+    if (!Array.isArray(parsed)) {
+      usageError("Import file must contain a JSON array.");
+    }
+    return parsed;
+  });
 }
 
 function createStatsAccumulator(): StatsAccumulator {
@@ -345,167 +346,150 @@ function ingestMemoryStats(
 }
 
 function processImportEntry(
-  database: ReturnType<CommandContext["requireDb"]>,
+  database: MemoryDatabaseApi,
   index: number,
   rawEntry: unknown,
-): Record<string, unknown> {
+): Effect.Effect<Record<string, unknown>, MemoryDatabaseError> {
   const normalized = normalizeImportEntry(rawEntry);
   if (normalized.status === "skip") {
-    return {
+    return Effect.succeed({
       index,
       status: "skip",
       reason: normalized.reason,
       ...normalized.extra,
-    };
+    });
   }
 
   const value = normalized.value;
-  const duplicate = findExactDuplicate(database, {
-    content: value.content,
-    tags: value.tags,
-    context: value.memoContext,
+  return Effect.gen(function* () {
+    const duplicate = yield* findExactDuplicate(database, {
+      content: value.content,
+      tags: value.tags,
+      context: value.memoContext,
+    });
+    if (duplicate) {
+      return {
+        index,
+        status: "skip",
+        reason: "exact_duplicate",
+        existing_id: duplicate.id,
+      };
+    }
+    const conflicts =
+      value.statusRaw === "active"
+        ? yield* detectPotentialConflicts(database, {
+            content: value.content,
+            tags: value.tags,
+            context: value.memoContext,
+          })
+        : [];
+    if (conflicts.length > 0) {
+      return { index, status: "conflict", potential_conflicts: conflicts };
+    }
+    const insert = yield* runImportInsert(database, value);
+    return {
+      index,
+      status: "success",
+      id: (insert as { lastInsertRowid: unknown }).lastInsertRowid,
+    };
   });
-  if (duplicate) {
-    return {
-      index,
-      status: "skip",
-      reason: "exact_duplicate",
-      existing_id: duplicate.id,
-    };
-  }
-
-  const conflicts =
-    value.statusRaw === "active"
-      ? detectPotentialConflicts(database, {
-          content: value.content,
-          tags: value.tags,
-          context: value.memoContext,
-        })
-      : [];
-  if (conflicts.length > 0) {
-    return {
-      index,
-      status: "conflict",
-      potential_conflicts: conflicts,
-    };
-  }
-
-  const insert = runImportInsert(database, value);
-  return { index, status: "success", id: insert.lastInsertRowid };
 }
 
 export function handleCoverageCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
-  const directories = collectDirectories(root);
-  const rows = allWithRetry(
-    database,
-    "SELECT tags FROM memories WHERE status = 'active'",
-  ) as { tags?: unknown }[];
-
-  const tagDistribution: Record<string, number> = {};
-  const tagSet = new Set<string>();
-  for (const row of rows) {
-    const tags = parseTags(stringValue(row.tags));
-    for (const tag of tags) {
-      tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
-      tagSet.add(tag.toLowerCase());
+  return Effect.gen(function* () {
+    const { args } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
+    const directories = yield* collectDirectoriesEffect(root, commandCtx.fileSystem);
+    const rows = yield* database.all("SELECT tags FROM memories WHERE status = 'active'");
+    const tagDistribution: Record<string, number> = {};
+    const tagSet = new Set<string>();
+    for (const row of rows as { tags?: unknown }[]) {
+      for (const tag of parseTags(stringValue(row.tags))) {
+        tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
+        tagSet.add(tag.toLowerCase());
+      }
     }
-  }
-
-  const uncoveredPaths = directories.filter((dir) => {
-    const parts = dir
-      .replace(/\/$/, "")
-      .split("/")
-      .map((part) => part.toLowerCase())
-      .filter(Boolean);
-    if (parts.length === 0) {
-      return false;
-    }
-    return !parts.some((part) => tagSet.has(part));
-  });
-
-  printJson({
-    root,
-    uncovered_paths: uncoveredPaths,
-    tag_distribution: tagDistribution,
+    const uncoveredPaths = directories.filter((dir) => {
+      const parts = dir.replace(/\/$/, "").split("/").map((part) => part.toLowerCase()).filter(Boolean);
+      return parts.length > 0 && !parts.some((part) => tagSet.has(part));
+    });
+    yield* Effect.sync(() => printJson({ root, uncovered_paths: uncoveredPaths, tag_distribution: tagDistribution }));
   });
 }
 
 export function handleGcCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const dryRun = args.includes("--dry-run");
-  if (!dryRun) {
-    usageError("Usage: gc --dry-run");
-  }
-  const rows = allWithRetry(
-    database,
-    `SELECT * FROM memories
-     WHERE status = 'active'
-       AND expires_after_days IS NOT NULL
-       AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
-     ORDER BY updated_at ASC`,
-  );
-  const expired = (rows as unknown[]).map((row) => normalizeSqliteRow(row));
-  printJson({ dry_run: true, count: expired.length, expired });
+  return Effect.gen(function* () {
+    const { args } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    if (!args.includes("--dry-run")) {
+      usageError("Usage: gc --dry-run");
+    }
+    const rows = yield* database.all(
+      `SELECT * FROM memories
+       WHERE status = 'active'
+         AND expires_after_days IS NOT NULL
+         AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
+       ORDER BY updated_at ASC`,
+    );
+    const expired = rows.map((row) => normalizeSqliteRow(row));
+    yield* Effect.sync(() => printJson({ dry_run: true, count: expired.length, expired }));
+  });
 }
 
 export function handleStatsCommand(commandCtx: CommandContext) {
-  const rows = allWithRetry(
-    commandCtx.requireDb(),
-    "SELECT * FROM memories",
-  ) as unknown[];
-  const memories = rows.map((row) => normalizeSqliteRow(row));
-  const accumulator = createStatsAccumulator();
-  for (const memory of memories) {
-    ingestMemoryStats(accumulator, memory);
-  }
-
-  printJson({
-    total_memories: memories.length,
-    breakdown_by_memory_type: accumulator.byType,
-    breakdown_by_certainty: accumulator.byCertainty,
-    tag_frequency_map: accumulator.tagFrequency,
-    oldest_memory: accumulator.oldest,
-    memories_not_updated_over_90_days: accumulator.staleCount,
-    memories_with_no_tags: accumulator.noTagsCount,
+  return Effect.gen(function* () {
+    const rows = yield* requireDatabase(commandCtx).all("SELECT * FROM memories");
+    const memories = rows.map((row) => normalizeSqliteRow(row));
+    const accumulator = createStatsAccumulator();
+    for (const memory of memories) {
+      ingestMemoryStats(accumulator, memory);
+    }
+    yield* Effect.sync(() => printJson({
+      total_memories: memories.length,
+      breakdown_by_memory_type: accumulator.byType,
+      breakdown_by_certainty: accumulator.byCertainty,
+      tag_frequency_map: accumulator.tagFrequency,
+      oldest_memory: accumulator.oldest,
+      memories_not_updated_over_90_days: accumulator.staleCount,
+      memories_with_no_tags: accumulator.noTagsCount,
+    }));
   });
 }
 
 export function handleImportCommand(commandCtx: CommandContext) {
-  const database = commandCtx.requireDb();
-  const parsed = parseImportFile(commandCtx.args[0]);
-  const results: Record<string, unknown>[] = [];
-  for (const [index, rawEntry] of parsed.entries()) {
-    results.push(processImportEntry(database, index, rawEntry));
-  }
-  printJson({ results });
+  return Effect.gen(function* () {
+    const parsed = yield* parseImportFile(commandCtx.args[0], commandCtx.fileSystem);
+    const results: Record<string, unknown>[] = [];
+    for (const [index, rawEntry] of parsed.entries()) {
+      results.push(yield* processImportEntry(requireDatabase(commandCtx), index, rawEntry));
+    }
+    yield* Effect.sync(() => printJson({ results }));
+  });
 }
 
 export function handleExportCommand(commandCtx: CommandContext) {
-  const { args, requireDb } = commandCtx;
-  const database = requireDb();
-  const filters = parseCommonFilters(args);
-  const since = parseSinceDate(args);
-  const clauses: string[] = [];
-  const params: (string | number)[] = [];
-  applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
-  if (since) {
-    clauses.push("updated_at >= ?");
-    params.push(sqliteDateForComparison(since));
-  }
-
-  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
-  const rows = allWithRetry(
-    database,
-    `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
-    params,
-  );
-  printJson((rows as unknown[]).map((row) => normalizeSqliteRow(row)));
+  return Effect.gen(function* () {
+    const { args } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    const filters = parseCommonFilters(args);
+    const since = parseSinceDate(args);
+    const clauses: string[] = [];
+    const params: (string | number)[] = [];
+    applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+    if (since) {
+      clauses.push("updated_at >= ?");
+      params.push(sqliteDateForComparison(since));
+    }
+    const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const rows = yield* database.all(
+      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
+      params,
+    );
+    yield* Effect.sync(() => printJson(rows.map((row) => normalizeSqliteRow(row))));
+  });
 }
 
 export function handleMigrateCommand() {
-  printJson({ status: "ok", migrated: true });
+  return Effect.sync(() => printJson({ status: "ok", migrated: true }));
 }

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Effect } from "effect";
 import {
   resolve,
   relative,
@@ -6,7 +6,7 @@ import {
   dirname as pathDirname,
   extname,
 } from "node:path";
-import { existsSync, readdirSync, statSync, readFileSync } from "node:fs";
+import type { FileSystem } from "effect/FileSystem";
 import { getFlagValue, hasFlag, printJson, usageError } from "../cli";
 import {
   CERTAINTY_LEVELS,
@@ -17,8 +17,8 @@ import {
   type MemoryStatus,
   type MemoryType,
 } from "../constants";
-import { allWithRetry, getWithRetry } from "../db";
-import { suggestTagsForPath } from "../path-tags";
+import type { MemoryDatabaseApi } from "../effect/database";
+import { CommandError, MemoryDatabaseError } from "../effect/errors";
 
 export function isMemoryType(value: string): value is MemoryType {
   return (MEMORY_TYPES as readonly string[]).includes(value);
@@ -77,10 +77,9 @@ export function requireMemoryType(
     return undefined;
   }
   if (!isMemoryType(raw)) {
-    printJson({
-      error: `Invalid memory type '${raw}'. Expected one of: ${MEMORY_TYPES.join(", ")}`,
-    });
-    process.exit(1);
+    usageError(
+      `Invalid memory type '${raw}'. Expected one of: ${MEMORY_TYPES.join(", ")}`,
+    );
   }
   return raw;
 }
@@ -95,10 +94,9 @@ export function requireCertainty(
   }
   const normalized = canonicalizeCertainty(raw);
   if (!normalized) {
-    printJson({
-      error: `Invalid certainty '${raw}'. Expected one of: ${CERTAINTY_LEVELS.join(", ")}`,
-    });
-    process.exit(1);
+    usageError(
+      `Invalid certainty '${raw}'. Expected one of: ${CERTAINTY_LEVELS.join(", ")}`,
+    );
   }
   return normalized;
 }
@@ -112,10 +110,9 @@ function requireStatus(
     return undefined;
   }
   if (!isMemoryStatus(raw)) {
-    printJson({
-      error: `Invalid status '${raw}'. Expected one of: ${MEMORY_STATUSES.join(", ")}`,
-    });
-    process.exit(1);
+    usageError(
+      `Invalid status '${raw}'. Expected one of: ${MEMORY_STATUSES.join(", ")}`,
+    );
   }
   return raw;
 }
@@ -134,8 +131,7 @@ export function parseIntegerFlag(
   }
   const parsed = Number(raw);
   if (!Number.isInteger(parsed)) {
-    printJson({ error: `Invalid integer for ${flag}: ${raw}` });
-    process.exit(1);
+    usageError(`Invalid integer for ${flag}: ${raw}`);
   }
   return parsed;
 }
@@ -146,8 +142,7 @@ export function parseResultLimit(args: string[], fallback = 8): number {
     return fallback;
   }
   if (parsed < 1 || parsed > 100) {
-    printJson({ error: "--limit must be an integer between 1 and 100" });
-    process.exit(1);
+    usageError("--limit must be an integer between 1 and 100");
   }
   return parsed;
 }
@@ -176,11 +171,9 @@ function parseRefsValue(raw: string): string[] {
       .map((item) => item.trim())
       .filter(Boolean);
     if (fallback.length === 0) {
-      printJson({
-        error:
-          "Invalid --refs value. Provide a JSON array (e.g. '[\\\"https://...\\\"]') or comma-separated list.",
-      });
-      process.exit(1);
+      usageError(
+        "Invalid --refs value. Provide a JSON array (e.g. '[\\\"https://...\\\"]') or comma-separated list.",
+      );
     }
     return fallback;
   }
@@ -245,13 +238,35 @@ export function collectPositionalArgs(
   return positional;
 }
 
-export function parseContentFromFileFlag(args: string[]): string | undefined {
+export function parseContentFromFileFlag(
+  args: string[],
+  fileSystem: FileSystem,
+): Effect.Effect<string | undefined, CommandError> {
   const path = getFlagValue(args, "--from-file");
   if (path === undefined) {
-    return undefined;
+    return Effect.succeed(undefined);
   }
-  const resolvedPath = assertFileExists(path);
-  return readFileSync(resolvedPath, "utf-8");
+  const resolvedPath = resolve(process.cwd(), path);
+  return Effect.gen(function* () {
+    if (!(yield* fileSystem.exists(resolvedPath))) {
+      return yield* Effect.fail(
+        new CommandError({
+          message: `File not found: ${path}`,
+          command: "cli",
+          cause: undefined,
+        }),
+      );
+    }
+    const bytes = yield* fileSystem.readFile(resolvedPath);
+    return new TextDecoder().decode(bytes);
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        cause instanceof CommandError
+          ? cause
+          : new CommandError({ message: `Unable to read file: ${path}`, command: "cli", cause }),
+    ),
+  );
 }
 
 export function stringValue(value: unknown, fallback = ""): string {
@@ -663,53 +678,48 @@ export function applySqlFilters(
 }
 
 export function getMemoryById(
-  database: Database,
+  database: MemoryDatabaseApi,
   id: number,
-): Record<string, unknown> | null {
-  const row = getWithRetry(database, "SELECT * FROM memories WHERE id = ?", [
-    id,
-  ]);
-  if (!row) {
-    return null;
-  }
-  return normalizeSqliteRow(row);
+): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
+  return database.get("SELECT * FROM memories WHERE id = ?", [id]).pipe(
+    Effect.map((row) => (row ? normalizeSqliteRow(row) : null)),
+  );
 }
 
 export function findMemoryByMatch(
-  database: Database,
+  database: MemoryDatabaseApi,
   query: string,
-): Record<string, unknown> | null {
+): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
   const terms = extractTerms(query);
   const ftsQuery = buildFtsQueryFromTerms(terms);
   if (!ftsQuery) {
-    return null;
+    return Effect.succeed(null);
   }
-  const rows = allWithRetry(
-    database,
-    `SELECT m.*, bm25(memories_fts) AS fts_rank
-     FROM memories m
-     JOIN memories_fts ON m.id = memories_fts.rowid
-     WHERE memories_fts MATCH ?
-       AND m.status = 'active'
-     ORDER BY bm25(memories_fts)
-     LIMIT 5`,
-    [ftsQuery],
-  ) as unknown[];
-  const ranked = shapeRowsWithScore(rows, terms);
-  return ranked[0] ?? null;
+  return database
+    .all(
+      `SELECT m.*, bm25(memories_fts) AS fts_rank
+       FROM memories m
+       JOIN memories_fts ON m.id = memories_fts.rowid
+       WHERE memories_fts MATCH ?
+         AND m.status = 'active'
+       ORDER BY bm25(memories_fts)
+       LIMIT 5`,
+      [ftsQuery],
+    )
+    .pipe(Effect.map((rows) => shapeRowsWithScore(rows, terms)[0] ?? null));
 }
 
 export function detectPotentialConflicts(
-  database: Database,
+  database: MemoryDatabaseApi,
   payload: { content: string; tags?: string; context?: string },
   options: { excludeId?: number; limit?: number } = {},
-): Record<string, unknown>[] {
+): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
   const terms = extractTerms(
     [payload.content, payload.tags ?? "", payload.context ?? ""].join(" "),
   );
   const ftsQuery = buildFtsQueryFromTerms(terms);
   if (!ftsQuery) {
-    return [];
+    return Effect.succeed([]);
   }
 
   const clauses = ["memories_fts MATCH ?", "m.status = 'active'"];
@@ -719,38 +729,40 @@ export function detectPotentialConflicts(
     params.push(options.excludeId);
   }
 
-  const rows = allWithRetry(
-    database,
-    `SELECT m.*, bm25(memories_fts) AS fts_rank
-     FROM memories m
-     JOIN memories_fts ON m.id = memories_fts.rowid
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY bm25(memories_fts)
-     LIMIT ${Number(options.limit ?? 5)}`,
-    params,
-  );
-
-  return shapeRowsWithScore(rows as unknown[], terms);
+  return database
+    .all(
+      `SELECT m.*, bm25(memories_fts) AS fts_rank
+       FROM memories m
+       JOIN memories_fts ON m.id = memories_fts.rowid
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY bm25(memories_fts)
+       LIMIT ${Number(options.limit ?? 5)}`,
+      params,
+    )
+    .pipe(Effect.map((rows) => shapeRowsWithScore(rows, terms)));
 }
 
 export function findExactDuplicate(
-  database: Database,
+  database: MemoryDatabaseApi,
   payload: { content: string; tags?: string; context?: string },
-): Record<string, unknown> | null {
-  const row = getWithRetry(
-    database,
-    `SELECT * FROM memories
-     WHERE status = 'active'
-       AND content = ?
-       AND tags = ?
-       AND context = ?
-     LIMIT 1`,
-    [payload.content, payload.tags ?? "", payload.context ?? ""],
-  );
-  return row ? normalizeSqliteRow(row) : null;
+): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
+  return database
+    .get(
+      `SELECT * FROM memories
+       WHERE status = 'active'
+         AND content = ?
+         AND tags = ?
+         AND context = ?
+       LIMIT 1`,
+      [payload.content, payload.tags ?? "", payload.context ?? ""],
+    )
+    .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
 }
 
-export function collectDirectories(rootPath: string): string[] {
+export function collectDirectoriesEffect(
+  rootPath: string,
+  fileSystem: FileSystem,
+): Effect.Effect<string[], CommandError> {
   const directories: string[] = [];
   const ignoreNames = new Set([
     ".git",
@@ -763,37 +775,36 @@ export function collectDirectories(rootPath: string): string[] {
     ".vscode",
   ]);
 
-  function walk(current: string) {
-    let entries:
-      | {
-          name: string;
-          isDirectory(): boolean;
-        }[]
-      | undefined;
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      return;
+  return Effect.gen(function* () {
+    const walk = (current: string): Effect.Effect<void, unknown> =>
+      Effect.gen(function* () {
+        const entries = yield* fileSystem.readDirectory(current);
+        for (const name of entries) {
+          if (ignoreNames.has(name) || name.startsWith(".")) {
+            continue;
+          }
+          const child = resolve(current, name);
+          const info = yield* fileSystem.stat(child);
+          if (info.type !== "Directory") {
+            continue;
+          }
+          const rel = relative(rootPath, child).split(sep).join("/");
+          directories.push(`${rel}/`);
+          yield* walk(child);
+        }
+      });
+    if ((yield* fileSystem.exists(rootPath)) && (yield* fileSystem.stat(rootPath)).type === "Directory") {
+      yield* walk(rootPath);
     }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-      if (ignoreNames.has(entry.name) || entry.name.startsWith(".")) {
-        continue;
-      }
-      const child = resolve(current, entry.name);
-      const rel = relative(rootPath, child).split(sep).join("/");
-      directories.push(`${rel}/`);
-      walk(child);
-    }
-  }
-
-  if (existsSync(rootPath) && statSync(rootPath).isDirectory()) {
-    walk(rootPath);
-  }
-  directories.sort();
-  return directories;
+    directories.sort();
+    return directories;
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof CommandError
+        ? cause
+        : new CommandError({ message: "Unable to inspect project directories.", command: "coverage", cause }),
+    ),
+  );
 }
 
 export function extractPathTermsFromFiles(paths: string[]): string[] {
@@ -975,9 +986,6 @@ export function deriveNeighborhoodFromFiles(
   for (const filePath of files) {
     const normalized = normalizedPathForMatching(filePath);
     const directory = pathDirname(normalized).replaceAll("\\", "/");
-    for (const tag of suggestTagsForPath(normalized)) {
-      tagHints.push(tag);
-    }
     if (directory && directory !== ".") {
       pathHints.push(`${directory}/`);
       const extension = extname(normalized).replace(/^\./, "");
@@ -1000,11 +1008,11 @@ export function deriveNeighborhoodFromFiles(
 }
 
 export function queryNeighborhoodMatches(
-  database: Database,
+  database: MemoryDatabaseApi,
   neighborhood: SuggestNeighborhood,
   filters: CommonFilters,
   limit = 30,
-): Record<string, unknown>[] {
+): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
   const orClauses: string[] = [];
   const params: (string | number)[] = [];
 
@@ -1022,7 +1030,7 @@ export function queryNeighborhoodMatches(
     params.push(lowered);
   }
   if (orClauses.length === 0) {
-    return [];
+    return Effect.succeed([]);
   }
 
   const clauses = [`(${orClauses.join(" OR ")})`];
@@ -1030,16 +1038,16 @@ export function queryNeighborhoodMatches(
     defaultActiveOnly: true,
     columnPrefix: "m.",
   });
-  const rows = allWithRetry(
-    database,
-    `SELECT m.*, 0 AS fts_rank
-     FROM memories m
-     WHERE ${clauses.join(" AND ")}
-     ORDER BY m.updated_at DESC, m.id DESC
-     LIMIT ${limit}`,
-    params,
-  ) as unknown[];
-  return shapeRowsWithScore(rows, neighborhood.terms);
+  return database
+    .all(
+      `SELECT m.*, 0 AS fts_rank
+       FROM memories m
+       WHERE ${clauses.join(" AND ")}
+       ORDER BY m.updated_at DESC, m.id DESC
+       LIMIT ${limit}`,
+      params,
+    )
+    .pipe(Effect.map((rows) => shapeRowsWithScore(rows, neighborhood.terms)));
 }
 
 export function mergeSuggestionResults(
@@ -1078,31 +1086,35 @@ export function mergeSuggestionResults(
 }
 
 export function findStatusCascadeCandidates(
-  database: Database,
+  database: MemoryDatabaseApi,
   tags: string,
   excludeId: number,
-): Record<string, unknown>[] {
+): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
   const tagSet = new Set(parseTags(tags).map((tag) => tag.toLowerCase()));
   if (tagSet.size === 0) {
-    return [];
+    return Effect.succeed([]);
   }
-  const rows = allWithRetry(
-    database,
-    `SELECT * FROM memories
-     WHERE status = 'active'
-       AND memory_type = 'status'
-       AND id != ?
-     ORDER BY updated_at DESC, id DESC`,
-    [excludeId],
-  ) as unknown[];
-  return rows
-    .map((row) => normalizeSqliteRow(row))
-    .filter((row) => {
-      const memoryTags = parseTags(stringValue(row.tags)).map((tag) =>
-        tag.toLowerCase(),
-      );
-      return memoryTags.some((tag) => tagSet.has(tag));
-    });
+  return database
+    .all(
+      `SELECT * FROM memories
+       WHERE status = 'active'
+         AND memory_type = 'status'
+         AND id != ?
+       ORDER BY updated_at DESC, id DESC`,
+      [excludeId],
+    )
+    .pipe(
+      Effect.map((rows) =>
+        rows
+          .map((row) => normalizeSqliteRow(row))
+          .filter((row) => {
+            const memoryTags = parseTags(stringValue(row.tags)).map((tag) =>
+              tag.toLowerCase(),
+            );
+            return memoryTags.some((tag) => tagSet.has(tag));
+          }),
+      ),
+    );
 }
 
 export function parseSqliteErrorDetails(err: unknown): {
@@ -1149,8 +1161,7 @@ export function parseSinceDate(args: string[]): string | undefined {
   }
   const parsed = Date.parse(value);
   if (Number.isNaN(parsed)) {
-    printJson({ error: `Invalid --since date: ${value}` });
-    process.exit(1);
+    usageError(`Invalid --since date: ${value}`);
   }
   return value;
 }
@@ -1162,15 +1173,6 @@ export function sqliteDateForComparison(isoLike: string): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(
     d.getUTCHours(),
   )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-}
-
-export function assertFileExists(path: string): string {
-  const resolved = resolve(process.cwd(), path);
-  if (!existsSync(resolved)) {
-    printJson({ error: `File not found: ${path}` });
-    process.exit(1);
-  }
-  return resolved;
 }
 
 export const ADD_USAGE =

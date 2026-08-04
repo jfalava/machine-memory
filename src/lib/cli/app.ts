@@ -1,5 +1,5 @@
-import { Database } from "bun:sqlite";
-import { Effect, Option } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Option } from "effect";
 import {
   Argument,
   CliError,
@@ -9,14 +9,10 @@ import {
 } from "effect/unstable/cli";
 import { printJson } from "../cli";
 import { VERSION } from "../constants";
-import { upgrade, UpgradeError } from "../upgrade";
-import { BunServices } from "@effect/platform-bun";
-import {
-  layer as memoryDatabaseLayer,
-  MemoryDatabase,
-  MemoryDatabaseError,
-} from "../effect/database";
+import { MemoryDatabase, MemoryDatabaseError, layer as databaseLayer } from "../effect/database";
+import { CommandError } from "../effect/errors";
 import type { DbAccessMode } from "../db";
+import { upgrade, UpgradeError } from "../upgrade";
 import { handleDoctorCommand } from "./commands/doctor";
 import {
   handleCoverageCommand,
@@ -43,27 +39,24 @@ import {
 } from "./commands/memory-write";
 import { handleTagMapCommand } from "./commands/tag-map";
 import { handleUpdateAgentsMdCommand } from "./commands/update-agents-md";
-import { helpPayload } from "./help";
-import { parseOutputMode, parseSqliteErrorDetails } from "./shared";
 import type { CommandContext } from "./commands/context";
+import { helpPayload } from "./help";
+import { parseOutputMode } from "./shared";
 
 type FlagSpec = {
   readonly name: string;
   readonly kind: "boolean" | "string";
 };
 
+type CommandHandler = (
+  context: CommandContext,
+) => Effect.Effect<void, unknown, never>;
+
 const positionalArgs = () => Argument.string("arg").pipe(Argument.variadic());
-
 const stringFlag = (name: string) => Flag.string(name).pipe(Flag.optional);
-
 const booleanFlag = (name: string) => Flag.boolean(name);
-
 const stringSpec = (name: string): FlagSpec => ({ name, kind: "string" });
-
-const booleanSpec = (name: string): FlagSpec => ({
-  name,
-  kind: "boolean",
-});
+const booleanSpec = (name: string): FlagSpec => ({ name, kind: "boolean" });
 
 const outputConfig = () => ({
   brief: booleanFlag("brief"),
@@ -77,14 +70,13 @@ const outputSpecs: readonly FlagSpec[] = [
   booleanSpec("quiet"),
 ];
 
-function legacyArgs(
+function argvFromInput(
   input: Record<string, unknown>,
   specs: readonly FlagSpec[],
 ): string[] {
   const args = Array.isArray(input.args)
-    ? input.args.filter((arg): arg is string => typeof arg === "string")
+    ? input.args.filter((value): value is string => typeof value === "string")
     : [];
-
   for (const spec of specs) {
     const value = input[spec.name];
     if (spec.kind === "boolean") {
@@ -93,33 +85,46 @@ function legacyArgs(
       }
       continue;
     }
-    const option = value as Option.Option<unknown>;
-    if (Option.isSome(option)) {
-      args.push(`--${spec.name}`, String(option.value));
+    if (Option.isSome(value as Option.Option<unknown>)) {
+      args.push(`--${spec.name}`, String((value as Option.Some<unknown>).value));
     }
   }
   return args;
 }
 
-function legacyCommand<
+function commandContext(
+  input: Record<string, unknown>,
+  specs: readonly FlagSpec[],
+  database: CommandContext["database"],
+  fileSystem: CommandContext["fileSystem"],
+): CommandContext {
+  const args = argvFromInput(input, specs);
+  return { args, outputMode: parseOutputMode(args), database, fileSystem };
+}
+
+function effectCommand<
   const Name extends string,
   const Config extends Command.Command.Config,
->(name: Name, config: Config, specs: readonly FlagSpec[], mode?: DbAccessMode) {
+>(
+  name: Name,
+  config: Config,
+  specs: readonly FlagSpec[],
+  mode: DbAccessMode | undefined,
+  handler: CommandHandler,
+) {
   return Command.make(name, config, (input) => {
-    const args = legacyArgs(input as Record<string, unknown>, specs);
-    const run = mode
-      ? Effect.gen(function* () {
-          const database = yield* MemoryDatabase;
-          yield* Effect.promise(() =>
-            runLegacyCommand(name, args, database.database),
-          );
-        }).pipe(Effect.provide(memoryDatabaseLayer(mode)))
-      : Effect.promise(() => runLegacyCommand(name, args));
-    return run;
+    const resources = Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const database = mode ? yield* MemoryDatabase : undefined;
+      yield* handler(commandContext(input as Record<string, unknown>, specs, database, fileSystem));
+    });
+    return (mode
+      ? resources.pipe(Effect.provide(databaseLayer(mode)))
+      : resources) as Effect.Effect<void, unknown, FileSystem.FileSystem>;
   });
 }
 
-const addCommand = legacyCommand(
+const addCommand = effectCommand(
   "add",
   {
     args: positionalArgs(),
@@ -151,9 +156,10 @@ const addCommand = legacyCommand(
     ...outputSpecs,
   ],
   "write",
+  handleAddCommand,
 );
 
-const queryCommand = legacyCommand(
+const queryCommand = effectCommand(
   "query",
   {
     args: positionalArgs(),
@@ -175,9 +181,10 @@ const queryCommand = legacyCommand(
     ...outputSpecs,
   ],
   "read",
+  handleQueryCommand,
 );
 
-const listCommand = legacyCommand(
+const listCommand = effectCommand(
   "list",
   {
     args: positionalArgs(),
@@ -199,11 +206,11 @@ const listCommand = legacyCommand(
     ...outputSpecs,
   ],
   "read",
+  handleListCommand,
 );
 
-const getCommand = legacyCommand("get", { args: positionalArgs() }, [], "read");
-
-const updateCommand = legacyCommand(
+const getCommand = effectCommand("get", { args: positionalArgs() }, [], "read", handleGetCommand);
+const updateCommand = effectCommand(
   "update",
   {
     args: positionalArgs(),
@@ -218,391 +225,137 @@ const updateCommand = legacyCommand(
     "expires-after-days": stringFlag("expires-after-days"),
   },
   [
-    stringSpec("match"),
-    stringSpec("from-file"),
-    stringSpec("tags"),
-    stringSpec("context"),
-    stringSpec("type"),
-    stringSpec("certainty"),
-    stringSpec("updated-by"),
-    stringSpec("refs"),
-    stringSpec("expires-after-days"),
+    stringSpec("match"), stringSpec("from-file"), stringSpec("tags"),
+    stringSpec("context"), stringSpec("type"), stringSpec("certainty"),
+    stringSpec("updated-by"), stringSpec("refs"), stringSpec("expires-after-days"),
   ],
   "write",
+  handleUpdateCommand,
 );
-
-const deprecateCommand = legacyCommand(
+const deprecateCommand = effectCommand(
   "deprecate",
-  {
-    args: positionalArgs(),
-    match: stringFlag("match"),
-    "superseded-by": stringFlag("superseded-by"),
-    "updated-by": stringFlag("updated-by"),
-  },
+  { args: positionalArgs(), match: stringFlag("match"), "superseded-by": stringFlag("superseded-by"), "updated-by": stringFlag("updated-by") },
   [stringSpec("match"), stringSpec("superseded-by"), stringSpec("updated-by")],
   "write",
+  handleDeprecateCommand,
 );
+const deleteCommand = effectCommand("delete", { args: positionalArgs() }, [], "write", handleDeleteCommand);
 
-const deleteCommand = legacyCommand(
-  "delete",
-  { args: positionalArgs() },
-  [],
-  "write",
-);
-
-const suggestCommand = legacyCommand(
+const suggestCommand = effectCommand(
   "suggest",
   {
-    args: positionalArgs(),
-    files: stringFlag("files"),
-    "files-json": stringFlag("files-json"),
-    tags: stringFlag("tags"),
-    type: stringFlag("type"),
-    certainty: stringFlag("certainty"),
-    "include-deprecated": booleanFlag("include-deprecated"),
-    limit: stringFlag("limit"),
-    "explain-score": booleanFlag("explain-score"),
-    ...outputConfig(),
+    args: positionalArgs(), files: stringFlag("files"), "files-json": stringFlag("files-json"),
+    tags: stringFlag("tags"), type: stringFlag("type"), certainty: stringFlag("certainty"),
+    "include-deprecated": booleanFlag("include-deprecated"), limit: stringFlag("limit"),
+    "explain-score": booleanFlag("explain-score"), ...outputConfig(),
   },
-  [
-    stringSpec("files"),
-    stringSpec("files-json"),
-    stringSpec("tags"),
-    stringSpec("type"),
-    stringSpec("certainty"),
-    booleanSpec("include-deprecated"),
-    stringSpec("limit"),
-    booleanSpec("explain-score"),
-    ...outputSpecs,
-  ],
+  [stringSpec("files"), stringSpec("files-json"), stringSpec("tags"), stringSpec("type"), stringSpec("certainty"), booleanSpec("include-deprecated"), stringSpec("limit"), booleanSpec("explain-score"), ...outputSpecs],
   "read",
+  handleSuggestCommand,
 );
-
-const sweepCommand = legacyCommand(
+const sweepCommand = effectCommand(
   "sweep",
-  {
-    args: positionalArgs(),
-    files: stringFlag("files"),
-    "files-json": stringFlag("files-json"),
-    query: stringFlag("query"),
-    tags: stringFlag("tags"),
-    limit: stringFlag("limit"),
-    ...outputConfig(),
-  },
-  [
-    stringSpec("files"),
-    stringSpec("files-json"),
-    stringSpec("query"),
-    stringSpec("tags"),
-    stringSpec("limit"),
-    ...outputSpecs,
-  ],
+  { args: positionalArgs(), files: stringFlag("files"), "files-json": stringFlag("files-json"), query: stringFlag("query"), tags: stringFlag("tags"), limit: stringFlag("limit"), ...outputConfig() },
+  [stringSpec("files"), stringSpec("files-json"), stringSpec("query"), stringSpec("tags"), stringSpec("limit"), ...outputSpecs],
   "read",
+  handleSweepCommand,
 );
 
-const doctorCommand = legacyCommand(
-  "doctor",
-  outputConfig(),
-  outputSpecs,
-  "read",
-);
+const doctorCommand = effectCommand("doctor", outputConfig(), outputSpecs, "read", handleDoctorCommand);
+const verifyCommand = effectCommand("verify", { args: positionalArgs() }, [], "read", handleVerifyCommand);
+const diffCommand = effectCommand("diff", { args: positionalArgs() }, [], "read", handleDiffCommand);
+const coverageCommand = effectCommand("coverage", { args: positionalArgs(), root: stringFlag("root") }, [stringSpec("root")], "read", handleCoverageCommand);
+const gcCommand = effectCommand("gc", { args: positionalArgs(), "dry-run": booleanFlag("dry-run") }, [booleanSpec("dry-run")], "read", handleGcCommand);
+const statsCommand = effectCommand("stats", {}, [], "read", handleStatsCommand);
+const importCommand = effectCommand("import", { args: positionalArgs() }, [], "write", handleImportCommand);
+const exportCommand = effectCommand("export", { args: positionalArgs(), tags: stringFlag("tags"), type: stringFlag("type"), certainty: stringFlag("certainty"), since: stringFlag("since") }, [stringSpec("tags"), stringSpec("type"), stringSpec("certainty"), stringSpec("since")], "read", handleExportCommand);
+const migrateCommand = effectCommand("migrate", {}, [], "write", handleMigrateCommand);
+const tagMapCommand = effectCommand("tag-map", { args: positionalArgs() }, [], undefined, handleTagMapCommand);
+const updateAgentsCommand = effectCommand("update-agents-md", {}, [], undefined, handleUpdateAgentsMdCommand);
 
-const verifyCommand = legacyCommand(
-  "verify",
-  { args: positionalArgs() },
-  [],
-  "read",
-);
-
-const diffCommand = legacyCommand(
-  "diff",
-  { args: positionalArgs() },
-  [],
-  "read",
-);
-
-const coverageCommand = legacyCommand(
-  "coverage",
-  { args: positionalArgs(), root: stringFlag("root") },
-  [stringSpec("root")],
-  "read",
-);
-
-const gcCommand = legacyCommand(
-  "gc",
-  { args: positionalArgs(), "dry-run": booleanFlag("dry-run") },
-  [booleanSpec("dry-run")],
-  "read",
-);
-
-const statsCommand = legacyCommand("stats", {}, [], "read");
-
-const importCommand = legacyCommand(
-  "import",
-  { args: positionalArgs() },
-  [],
-  "write",
-);
-
-const exportCommand = legacyCommand(
-  "export",
-  {
-    args: positionalArgs(),
-    tags: stringFlag("tags"),
-    type: stringFlag("type"),
-    certainty: stringFlag("certainty"),
-    since: stringFlag("since"),
-  },
-  [
-    stringSpec("tags"),
-    stringSpec("type"),
-    stringSpec("certainty"),
-    stringSpec("since"),
-  ],
-  "read",
-);
-
-const migrateCommand = legacyCommand("migrate", {}, [], "write");
-
-const tagMapCommand = legacyCommand("tag-map", { args: positionalArgs() }, []);
-
-const updateAgentsCommand = legacyCommand("update-agents-md", {}, []);
-
-const helpCommand = Command.make("help", {}, () =>
-  Effect.sync(() => printJson(helpPayload())),
-);
-
-const versionCommand = Command.make("version", {}, () =>
-  Effect.sync(() => printJson({ version: VERSION })),
-);
-
+const helpCommand = Command.make("help", {}, () => Effect.sync(() => printJson(helpPayload())));
+const versionCommand = Command.make("version", {}, () => Effect.sync(() => printJson({ version: VERSION })));
 const upgradeCommand = Command.make("upgrade", {}, () =>
   upgrade().pipe(Effect.tap((result) => Effect.sync(() => printJson(result)))),
 );
 
 const rootCommand = Command.make("machine-memory", {}, () =>
-  Effect.sync(() => {
-    printJson(helpPayload());
-    process.exitCode = 1;
+  Effect.gen(function* () {
+    yield* Effect.sync(() => printJson(helpPayload()));
+    return yield* Effect.fail(
+      new CommandError({
+        message: "A command is required. Run 'machine-memory help' for usage.",
+        command: "machine-memory",
+        cause: undefined,
+      }),
+    );
   }),
 ).pipe(
   Command.withSubcommands([
-    helpCommand,
-    versionCommand,
-    upgradeCommand,
-    addCommand,
-    queryCommand,
-    listCommand,
-    getCommand,
-    updateCommand,
-    deprecateCommand,
-    deleteCommand,
-    suggestCommand,
-    sweepCommand,
-    doctorCommand,
-    verifyCommand,
-    diffCommand,
-    coverageCommand,
-    gcCommand,
-    statsCommand,
-    importCommand,
-    exportCommand,
-    migrateCommand,
-    tagMapCommand,
-    updateAgentsCommand,
+    helpCommand, versionCommand, upgradeCommand, addCommand, queryCommand,
+    listCommand, getCommand, updateCommand, deprecateCommand, deleteCommand,
+    suggestCommand, sweepCommand, doctorCommand, verifyCommand, diffCommand,
+    coverageCommand, gcCommand, statsCommand, importCommand, exportCommand,
+    migrateCommand, tagMapCommand, updateAgentsCommand,
   ]),
 );
 
 const knownCommands = new Set([
-  "help",
-  "version",
-  "upgrade",
-  "add",
-  "query",
-  "list",
-  "get",
-  "update",
-  "deprecate",
-  "delete",
-  "suggest",
-  "sweep",
-  "doctor",
-  "verify",
-  "diff",
-  "coverage",
-  "gc",
-  "stats",
-  "import",
-  "export",
-  "migrate",
-  "tag-map",
+  "help", "version", "upgrade", "add", "query", "list", "get", "update",
+  "deprecate", "delete", "suggest", "sweep", "doctor", "verify", "diff",
+  "coverage", "gc", "stats", "import", "export", "migrate", "tag-map",
   "update-agents-md",
 ]);
 
 const formatter: CliOutput.Formatter = {
   ...CliOutput.defaultFormatter({ colors: false }),
-  formatHelpDoc: (_doc) => JSON.stringify(helpPayload()),
+  formatHelpDoc: () => JSON.stringify(helpPayload()),
   formatVersion: (_name, version) => JSON.stringify({ version }),
   formatCliError: (error) => JSON.stringify({ error: error.message }),
   formatError: (error) => JSON.stringify({ error: error.message }),
-  formatErrors: (errors) =>
-    JSON.stringify({
-      error: errors.map((error) => error.message).join("\n"),
-    }),
+  formatErrors: (errors) => JSON.stringify({ error: errors.map((error) => error.message).join("\n") }),
 };
 
-function isUnknownTopLevelCommand(
-  args: ReadonlyArray<string>,
-): string | undefined {
+function unknownCommand(args: ReadonlyArray<string>): string | undefined {
   const command = args[0];
   return command && !command.startsWith("-") && !knownCommands.has(command)
     ? command
     : undefined;
 }
 
-export async function runCli(args: ReadonlyArray<string>): Promise<void> {
-  const unknownCommand = isUnknownTopLevelCommand(args);
-  if (unknownCommand) {
-    printJson({
-      error: `Unknown command: ${unknownCommand}. Run 'machine-memory help' for usage.`,
-    });
-    process.exitCode = 1;
+function renderError(error: unknown): void {
+  if (CliError.isCliError(error) && error._tag === "ShowHelp") {
     return;
   }
-
-  try {
-    const program = Command.runWith(rootCommand, { version: VERSION })(
-      args,
-    ).pipe(
-      Effect.provide(CliOutput.layer(formatter)),
-      Effect.provide(BunServices.layer),
-    );
-    await Effect.runPromise(program as Effect.Effect<void, unknown, never>);
-  } catch (error) {
-    if (CliError.isCliError(error) && error._tag === "ShowHelp") {
-      process.exitCode = error.errors.length > 0 ? 1 : 0;
-      return;
-    }
-    if (error instanceof UpgradeError) {
-      printJson(error.payload);
-      process.exitCode = 1;
-      return;
-    }
-    if (error instanceof MemoryDatabaseError) {
-      printJson({
-        error: error.message,
-        operation: error.operation,
-      });
-      process.exitCode = 1;
-      return;
-    }
-    printJson({
-      error: error instanceof Error ? error.message : "Unexpected CLI failure.",
-    });
-    process.exitCode = 1;
+  if (error instanceof UpgradeError) {
+    printJson(error.payload);
+    return;
   }
+  if (error instanceof MemoryDatabaseError || error instanceof CommandError) {
+    printJson({ error: error.message, ...(error instanceof MemoryDatabaseError ? { operation: error.operation } : {}) });
+    return;
+  }
+  printJson({ error: error instanceof Error ? error.message : "Unexpected CLI failure." });
 }
 
-async function runLegacyCommand(
-  command: string,
-  args: string[],
-  database?: Database,
-): Promise<void> {
-  if (command === "tag-map") {
-    handleTagMapCommand(args);
-    return;
+export function runCli(args: ReadonlyArray<string>) {
+  const command = unknownCommand(args);
+  if (command) {
+    return Effect.sync(() => {
+      printJson({ error: `Unknown command: ${command}. Run 'machine-memory help' for usage.` });
+      process.exitCode = 1;
+    });
   }
-
-  if (command === "update-agents-md") {
-    await handleUpdateAgentsMdCommand();
-    return;
-  }
-
-  const outputMode = parseOutputMode(args);
-
-  const requireDb = (): Database => {
-    if (!database) {
-      throw new Error("Database is not initialized for this command.");
-    }
-    return database;
-  };
-
-  const commandContext: CommandContext = {
-    args,
-    outputMode,
-    requireDb,
-  };
-
-  try {
-    switch (command) {
-      case "add":
-        handleAddCommand(commandContext);
-        break;
-      case "query":
-        handleQueryCommand(commandContext);
-        break;
-      case "get":
-        handleGetCommand(commandContext);
-        break;
-      case "update":
-        handleUpdateCommand(commandContext);
-        break;
-      case "deprecate":
-        handleDeprecateCommand(commandContext);
-        break;
-      case "delete":
-        handleDeleteCommand(commandContext);
-        break;
-      case "list":
-        handleListCommand(commandContext);
-        break;
-      case "suggest":
-        handleSuggestCommand(commandContext);
-        break;
-      case "sweep":
-        handleSweepCommand(commandContext);
-        break;
-      case "doctor":
-        handleDoctorCommand(commandContext);
-        break;
-      case "verify":
-        handleVerifyCommand(commandContext);
-        break;
-      case "diff":
-        handleDiffCommand(commandContext);
-        break;
-      case "coverage":
-        handleCoverageCommand(commandContext);
-        break;
-      case "gc":
-        handleGcCommand(commandContext);
-        break;
-      case "stats":
-        handleStatsCommand(commandContext);
-        break;
-      case "import":
-        handleImportCommand(commandContext);
-        break;
-      case "export":
-        handleExportCommand(commandContext);
-        break;
-      case "migrate":
-        handleMigrateCommand();
-        break;
-    }
-  } catch (error) {
-    const details = parseSqliteErrorDetails(error);
-    const payload: Record<string, unknown> = {
-      error: details.message,
-      command,
-    };
-    if (details.hint) {
-      payload.hint = details.hint;
-    }
-    if (error instanceof Error) {
-      payload.details = error.message;
-    }
-    printJson(payload);
-    process.exitCode = 1;
-  }
+  return Command.runWith(rootCommand, { version: VERSION })(args).pipe(
+    Effect.provide(CliOutput.layer(formatter)),
+    Effect.provide(BunServices.layer),
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        renderError(error);
+        if (!(CliError.isCliError(error) && error._tag === "ShowHelp" && error.errors.length === 0)) {
+          process.exitCode = 1;
+        }
+      }),
+    ),
+  );
 }

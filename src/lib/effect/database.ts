@@ -1,19 +1,12 @@
-import { Database, type SQLQueryBindings } from "bun:sqlite";
-import { Context, Effect, Layer, Schema } from "effect";
+import type { SQLQueryBindings } from "bun:sqlite";
+import { Context, Effect, Layer } from "effect";
 import { ensureDb, allWithRetry, getWithRetry, runWithRetry } from "../db";
 import type { DbAccessMode } from "../db";
+import { MemoryDatabaseError } from "./errors";
 
-export class MemoryDatabaseError extends Schema.TaggedErrorClass<MemoryDatabaseError>()(
-  "MemoryDatabaseError",
-  {
-    operation: Schema.String,
-    message: Schema.String,
-    cause: Schema.Unknown,
-  },
-) {}
+export { MemoryDatabaseError } from "./errors";
 
 export type MemoryDatabaseApi = {
-  readonly database: Database;
   readonly run: (
     sql: string,
     params?: SQLQueryBindings[],
@@ -67,7 +60,6 @@ export const layer = (
       );
 
       return MemoryDatabase.of({
-        database,
         run: (sql, params = []) =>
           effectful("run", () => runWithRetry(database, sql, params)),
         get: (sql, params = []) =>
