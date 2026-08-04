@@ -1,5 +1,6 @@
 import { Effect } from "effect";
-import { resolve } from "node:path";
+import pc from "picocolors";
+import { relative, resolve } from "node:path";
 import { DB_PATH } from "../../constants";
 import {
   databaseConfig,
@@ -39,11 +40,20 @@ export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
       agentsMdPath,
       new TextEncoder().encode(replaceMemoryBlock(existingContent, backend)),
     );
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      const action = agentsExists ? "Updated" : "Created";
+      const backendFlag = `--${backend}`;
+      const displayPath = relative(process.cwd(), agentsMdPath) || "AGENTS.md";
+      console.info();
+      console.info(pc.green(pc.bold(`✓ ${action} ${displayPath}`)));
       console.info(
-        `Updated AGENTS.md with ${backend} machine-memory recommendations`,
-      ),
-    );
+        `${pc.dim("Backend")}  ${pc.cyan(backend)} ${pc.dim(`(${backendFlag} required on memory commands)`)}`,
+      );
+      console.info(
+        `${pc.dim("Next")}     ${pc.bold(`machine-memory list ${backendFlag}`)}`,
+      );
+      console.info();
+    });
   });
 }
 
