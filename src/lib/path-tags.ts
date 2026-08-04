@@ -69,15 +69,14 @@ export function loadPathTagMap(
     }
     return next;
   }).pipe(
-    Effect.mapError(
-      (cause) =>
-        cause instanceof CommandError
-          ? cause
-          : new CommandError({
-              message: "Unable to read path tag map.",
-              command: "tag-map",
-              cause,
-            }),
+    Effect.mapError((cause) =>
+      cause instanceof CommandError
+        ? cause
+        : new CommandError({
+            message: "Unable to read path tag map.",
+            command: "tag-map",
+            cause,
+          }),
     ),
   );
 }

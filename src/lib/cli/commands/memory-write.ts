@@ -104,9 +104,10 @@ function resolveAddMetadata(
     refs: getFlagValue(args, "--refs") !== undefined,
     expiresAfterDays: getFlagValue(args, "--expires-after-days") !== undefined,
   };
-  return (pathContext
-    ? suggestTagsForPath(fileSystem, pathContext)
-    : Effect.succeed([])
+  return (
+    pathContext
+      ? suggestTagsForPath(fileSystem, pathContext)
+      : Effect.succeed([])
   ).pipe(
     Effect.map((mappedTags) => ({
       mappedTags,
@@ -204,10 +205,10 @@ function updateFromAddPayload(
     sets.push(spec.clause);
     params.push(spec.value);
   }
-  return database.run(
-    `UPDATE memories SET ${sets.join(", ")} WHERE id = ?`,
-    [...params, targetId],
-  );
+  return database.run(`UPDATE memories SET ${sets.join(", ")} WHERE id = ?`, [
+    ...params,
+    targetId,
+  ]);
 }
 
 function printUpsertResult(mode: "created" | "updated", id: number) {
@@ -248,10 +249,13 @@ function detectAddConflicts(
   outputMode: CommandContext["outputMode"],
   content: string,
   metadata: AddMetadata,
-): Effect.Effect<{
-  includeConflicts: boolean;
-  potentialConflicts: Record<string, unknown>[];
-}, MemoryDatabaseError> {
+): Effect.Effect<
+  {
+    includeConflicts: boolean;
+    potentialConflicts: Record<string, unknown>[];
+  },
+  MemoryDatabaseError
+> {
   const includeConflicts = !(
     outputMode.noConflicts || hasMinimalOutput(outputMode)
   );
@@ -260,7 +264,12 @@ function detectAddConflicts(
         content,
         tags: metadata.tags,
         context: metadata.memo,
-      }).pipe(Effect.map((potentialConflicts) => ({ includeConflicts, potentialConflicts })))
+      }).pipe(
+        Effect.map((potentialConflicts) => ({
+          includeConflicts,
+          potentialConflicts,
+        })),
+      )
     : Effect.succeed({ includeConflicts, potentialConflicts: [] });
 }
 
@@ -362,7 +371,9 @@ export function handleAddCommand(commandCtx: CommandContext) {
       metadata,
     );
     const result = yield* addInsert(database, content, metadata);
-    const insertId = Number((result as { lastInsertRowid: unknown }).lastInsertRowid);
+    const insertId = Number(
+      (result as { lastInsertRowid: unknown }).lastInsertRowid,
+    );
     const created = yield* getMemoryById(database, insertId);
     const createdId = Number(created?.id ?? insertId);
     const statusCascade =
@@ -532,13 +543,25 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const { targetIds, contentFromArg } = yield* resolveUpdateTargets(args, database);
-    const content = yield* resolveUpdateContent(args, contentFromArg, commandCtx.fileSystem);
+    const { targetIds, contentFromArg } = yield* resolveUpdateTargets(
+      args,
+      database,
+    );
+    const content = yield* resolveUpdateContent(
+      args,
+      contentFromArg,
+      commandCtx.fileSystem,
+    );
     if (targetIds.length === 0) {
       usageError(`Usage: ${UPDATE_USAGE}`);
     }
     const { sets, params } = updateSetsAndParams(args, content);
-    const { rows, missingIds } = yield* runBatchMemoryUpdate(database, targetIds, sets, params);
+    const { rows, missingIds } = yield* runBatchMemoryUpdate(
+      database,
+      targetIds,
+      sets,
+      params,
+    );
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
         printJson(rows[0] ?? { error: "Not found" });
@@ -609,13 +632,22 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     const database = requireDatabase(commandCtx);
     const targetIds = yield* resolveDeprecateTargets(args, database);
     const { sets, params } = deprecateSetsAndParams(args, targetIds);
-    const { rows, missingIds } = yield* runBatchMemoryUpdate(database, targetIds, sets, params);
+    const { rows, missingIds } = yield* runBatchMemoryUpdate(
+      database,
+      targetIds,
+      sets,
+      params,
+    );
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
         printJson(rows[0] ?? { error: "Not found" });
         return;
       }
-      printJson({ deprecated: rows, not_found: missingIds, count: rows.length });
+      printJson({
+        deprecated: rows,
+        not_found: missingIds,
+        count: rows.length,
+      });
     });
   });
 }
@@ -633,7 +665,11 @@ export function handleDeleteCommand(commandCtx: CommandContext) {
       yield* database.run("DELETE FROM memories WHERE id = ?", [id]);
     }
     yield* Effect.sync(() =>
-      printJson(ids.length === 1 ? { deleted: ids[0] } : { deleted: ids, count: ids.length }),
+      printJson(
+        ids.length === 1
+          ? { deleted: ids[0] }
+          : { deleted: ids, count: ids.length },
+      ),
     );
   });
 }

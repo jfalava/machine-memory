@@ -260,11 +260,14 @@ export function parseContentFromFileFlag(
     const bytes = yield* fileSystem.readFile(resolvedPath);
     return new TextDecoder().decode(bytes);
   }).pipe(
-    Effect.mapError(
-      (cause) =>
-        cause instanceof CommandError
-          ? cause
-          : new CommandError({ message: `Unable to read file: ${path}`, command: "cli", cause }),
+    Effect.mapError((cause) =>
+      cause instanceof CommandError
+        ? cause
+        : new CommandError({
+            message: `Unable to read file: ${path}`,
+            command: "cli",
+            cause,
+          }),
     ),
   );
 }
@@ -681,9 +684,9 @@ export function getMemoryById(
   database: MemoryDatabaseApi,
   id: number,
 ): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
-  return database.get("SELECT * FROM memories WHERE id = ?", [id]).pipe(
-    Effect.map((row) => (row ? normalizeSqliteRow(row) : null)),
-  );
+  return database
+    .get("SELECT * FROM memories WHERE id = ?", [id])
+    .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
 }
 
 export function findMemoryByMatch(
@@ -793,7 +796,10 @@ export function collectDirectoriesEffect(
           yield* walk(child);
         }
       });
-    if ((yield* fileSystem.exists(rootPath)) && (yield* fileSystem.stat(rootPath)).type === "Directory") {
+    if (
+      (yield* fileSystem.exists(rootPath)) &&
+      (yield* fileSystem.stat(rootPath)).type === "Directory"
+    ) {
       yield* walk(rootPath);
     }
     directories.sort();
@@ -802,7 +808,11 @@ export function collectDirectoriesEffect(
     Effect.mapError((cause) =>
       cause instanceof CommandError
         ? cause
-        : new CommandError({ message: "Unable to inspect project directories.", command: "coverage", cause }),
+        : new CommandError({
+            message: "Unable to inspect project directories.",
+            command: "coverage",
+            cause,
+          }),
     ),
   );
 }

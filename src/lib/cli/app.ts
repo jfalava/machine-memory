@@ -9,7 +9,11 @@ import {
 } from "effect/unstable/cli";
 import { printJson } from "../cli";
 import { VERSION } from "../constants";
-import { MemoryDatabase, MemoryDatabaseError, layer as databaseLayer } from "../effect/database";
+import {
+  MemoryDatabase,
+  MemoryDatabaseError,
+  layer as databaseLayer,
+} from "../effect/database";
 import { CommandError } from "../effect/errors";
 import type { DbAccessMode } from "../db";
 import { upgrade, UpgradeError } from "../upgrade";
@@ -86,7 +90,10 @@ function argvFromInput(
       continue;
     }
     if (Option.isSome(value as Option.Option<unknown>)) {
-      args.push(`--${spec.name}`, String((value as Option.Some<unknown>).value));
+      args.push(
+        `--${spec.name}`,
+        String((value as Option.Some<unknown>).value),
+      );
     }
   }
   return args;
@@ -116,11 +123,18 @@ function effectCommand<
     const resources = Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const database = mode ? yield* MemoryDatabase : undefined;
-      yield* handler(commandContext(input as Record<string, unknown>, specs, database, fileSystem));
+      yield* handler(
+        commandContext(
+          input as Record<string, unknown>,
+          specs,
+          database,
+          fileSystem,
+        ),
+      );
     });
-    return (mode
-      ? resources.pipe(Effect.provide(databaseLayer(mode)))
-      : resources) as Effect.Effect<void, unknown, FileSystem.FileSystem>;
+    return (
+      mode ? resources.pipe(Effect.provide(databaseLayer(mode))) : resources
+    ) as Effect.Effect<void, unknown, FileSystem.FileSystem>;
   });
 }
 
@@ -209,7 +223,13 @@ const listCommand = effectCommand(
   handleListCommand,
 );
 
-const getCommand = effectCommand("get", { args: positionalArgs() }, [], "read", handleGetCommand);
+const getCommand = effectCommand(
+  "get",
+  { args: positionalArgs() },
+  [],
+  "read",
+  handleGetCommand,
+);
 const updateCommand = effectCommand(
   "update",
   {
@@ -225,56 +245,179 @@ const updateCommand = effectCommand(
     "expires-after-days": stringFlag("expires-after-days"),
   },
   [
-    stringSpec("match"), stringSpec("from-file"), stringSpec("tags"),
-    stringSpec("context"), stringSpec("type"), stringSpec("certainty"),
-    stringSpec("updated-by"), stringSpec("refs"), stringSpec("expires-after-days"),
+    stringSpec("match"),
+    stringSpec("from-file"),
+    stringSpec("tags"),
+    stringSpec("context"),
+    stringSpec("type"),
+    stringSpec("certainty"),
+    stringSpec("updated-by"),
+    stringSpec("refs"),
+    stringSpec("expires-after-days"),
   ],
   "write",
   handleUpdateCommand,
 );
 const deprecateCommand = effectCommand(
   "deprecate",
-  { args: positionalArgs(), match: stringFlag("match"), "superseded-by": stringFlag("superseded-by"), "updated-by": stringFlag("updated-by") },
+  {
+    args: positionalArgs(),
+    match: stringFlag("match"),
+    "superseded-by": stringFlag("superseded-by"),
+    "updated-by": stringFlag("updated-by"),
+  },
   [stringSpec("match"), stringSpec("superseded-by"), stringSpec("updated-by")],
   "write",
   handleDeprecateCommand,
 );
-const deleteCommand = effectCommand("delete", { args: positionalArgs() }, [], "write", handleDeleteCommand);
+const deleteCommand = effectCommand(
+  "delete",
+  { args: positionalArgs() },
+  [],
+  "write",
+  handleDeleteCommand,
+);
 
 const suggestCommand = effectCommand(
   "suggest",
   {
-    args: positionalArgs(), files: stringFlag("files"), "files-json": stringFlag("files-json"),
-    tags: stringFlag("tags"), type: stringFlag("type"), certainty: stringFlag("certainty"),
-    "include-deprecated": booleanFlag("include-deprecated"), limit: stringFlag("limit"),
-    "explain-score": booleanFlag("explain-score"), ...outputConfig(),
+    args: positionalArgs(),
+    files: stringFlag("files"),
+    "files-json": stringFlag("files-json"),
+    tags: stringFlag("tags"),
+    type: stringFlag("type"),
+    certainty: stringFlag("certainty"),
+    "include-deprecated": booleanFlag("include-deprecated"),
+    limit: stringFlag("limit"),
+    "explain-score": booleanFlag("explain-score"),
+    ...outputConfig(),
   },
-  [stringSpec("files"), stringSpec("files-json"), stringSpec("tags"), stringSpec("type"), stringSpec("certainty"), booleanSpec("include-deprecated"), stringSpec("limit"), booleanSpec("explain-score"), ...outputSpecs],
+  [
+    stringSpec("files"),
+    stringSpec("files-json"),
+    stringSpec("tags"),
+    stringSpec("type"),
+    stringSpec("certainty"),
+    booleanSpec("include-deprecated"),
+    stringSpec("limit"),
+    booleanSpec("explain-score"),
+    ...outputSpecs,
+  ],
   "read",
   handleSuggestCommand,
 );
 const sweepCommand = effectCommand(
   "sweep",
-  { args: positionalArgs(), files: stringFlag("files"), "files-json": stringFlag("files-json"), query: stringFlag("query"), tags: stringFlag("tags"), limit: stringFlag("limit"), ...outputConfig() },
-  [stringSpec("files"), stringSpec("files-json"), stringSpec("query"), stringSpec("tags"), stringSpec("limit"), ...outputSpecs],
+  {
+    args: positionalArgs(),
+    files: stringFlag("files"),
+    "files-json": stringFlag("files-json"),
+    query: stringFlag("query"),
+    tags: stringFlag("tags"),
+    limit: stringFlag("limit"),
+    ...outputConfig(),
+  },
+  [
+    stringSpec("files"),
+    stringSpec("files-json"),
+    stringSpec("query"),
+    stringSpec("tags"),
+    stringSpec("limit"),
+    ...outputSpecs,
+  ],
   "read",
   handleSweepCommand,
 );
 
-const doctorCommand = effectCommand("doctor", outputConfig(), outputSpecs, "read", handleDoctorCommand);
-const verifyCommand = effectCommand("verify", { args: positionalArgs() }, [], "read", handleVerifyCommand);
-const diffCommand = effectCommand("diff", { args: positionalArgs() }, [], "read", handleDiffCommand);
-const coverageCommand = effectCommand("coverage", { args: positionalArgs(), root: stringFlag("root") }, [stringSpec("root")], "read", handleCoverageCommand);
-const gcCommand = effectCommand("gc", { args: positionalArgs(), "dry-run": booleanFlag("dry-run") }, [booleanSpec("dry-run")], "read", handleGcCommand);
+const doctorCommand = effectCommand(
+  "doctor",
+  outputConfig(),
+  outputSpecs,
+  "read",
+  handleDoctorCommand,
+);
+const verifyCommand = effectCommand(
+  "verify",
+  { args: positionalArgs() },
+  [],
+  "read",
+  handleVerifyCommand,
+);
+const diffCommand = effectCommand(
+  "diff",
+  { args: positionalArgs() },
+  [],
+  "read",
+  handleDiffCommand,
+);
+const coverageCommand = effectCommand(
+  "coverage",
+  { args: positionalArgs(), root: stringFlag("root") },
+  [stringSpec("root")],
+  "read",
+  handleCoverageCommand,
+);
+const gcCommand = effectCommand(
+  "gc",
+  { args: positionalArgs(), "dry-run": booleanFlag("dry-run") },
+  [booleanSpec("dry-run")],
+  "read",
+  handleGcCommand,
+);
 const statsCommand = effectCommand("stats", {}, [], "read", handleStatsCommand);
-const importCommand = effectCommand("import", { args: positionalArgs() }, [], "write", handleImportCommand);
-const exportCommand = effectCommand("export", { args: positionalArgs(), tags: stringFlag("tags"), type: stringFlag("type"), certainty: stringFlag("certainty"), since: stringFlag("since") }, [stringSpec("tags"), stringSpec("type"), stringSpec("certainty"), stringSpec("since")], "read", handleExportCommand);
-const migrateCommand = effectCommand("migrate", {}, [], "write", handleMigrateCommand);
-const tagMapCommand = effectCommand("tag-map", { args: positionalArgs() }, [], undefined, handleTagMapCommand);
-const updateAgentsCommand = effectCommand("update-agents-md", {}, [], undefined, handleUpdateAgentsMdCommand);
+const importCommand = effectCommand(
+  "import",
+  { args: positionalArgs() },
+  [],
+  "write",
+  handleImportCommand,
+);
+const exportCommand = effectCommand(
+  "export",
+  {
+    args: positionalArgs(),
+    tags: stringFlag("tags"),
+    type: stringFlag("type"),
+    certainty: stringFlag("certainty"),
+    since: stringFlag("since"),
+  },
+  [
+    stringSpec("tags"),
+    stringSpec("type"),
+    stringSpec("certainty"),
+    stringSpec("since"),
+  ],
+  "read",
+  handleExportCommand,
+);
+const migrateCommand = effectCommand(
+  "migrate",
+  {},
+  [],
+  "write",
+  handleMigrateCommand,
+);
+const tagMapCommand = effectCommand(
+  "tag-map",
+  { args: positionalArgs() },
+  [],
+  undefined,
+  handleTagMapCommand,
+);
+const updateAgentsCommand = effectCommand(
+  "update-agents-md",
+  {},
+  [],
+  undefined,
+  handleUpdateAgentsMdCommand,
+);
 
-const helpCommand = Command.make("help", {}, () => Effect.sync(() => printJson(helpPayload())));
-const versionCommand = Command.make("version", {}, () => Effect.sync(() => printJson({ version: VERSION })));
+const helpCommand = Command.make("help", {}, () =>
+  Effect.sync(() => printJson(helpPayload())),
+);
+const versionCommand = Command.make("version", {}, () =>
+  Effect.sync(() => printJson({ version: VERSION })),
+);
 const upgradeCommand = Command.make("upgrade", {}, () =>
   upgrade().pipe(Effect.tap((result) => Effect.sync(() => printJson(result)))),
 );
@@ -292,18 +435,55 @@ const rootCommand = Command.make("machine-memory", {}, () =>
   }),
 ).pipe(
   Command.withSubcommands([
-    helpCommand, versionCommand, upgradeCommand, addCommand, queryCommand,
-    listCommand, getCommand, updateCommand, deprecateCommand, deleteCommand,
-    suggestCommand, sweepCommand, doctorCommand, verifyCommand, diffCommand,
-    coverageCommand, gcCommand, statsCommand, importCommand, exportCommand,
-    migrateCommand, tagMapCommand, updateAgentsCommand,
+    helpCommand,
+    versionCommand,
+    upgradeCommand,
+    addCommand,
+    queryCommand,
+    listCommand,
+    getCommand,
+    updateCommand,
+    deprecateCommand,
+    deleteCommand,
+    suggestCommand,
+    sweepCommand,
+    doctorCommand,
+    verifyCommand,
+    diffCommand,
+    coverageCommand,
+    gcCommand,
+    statsCommand,
+    importCommand,
+    exportCommand,
+    migrateCommand,
+    tagMapCommand,
+    updateAgentsCommand,
   ]),
 );
 
 const knownCommands = new Set([
-  "help", "version", "upgrade", "add", "query", "list", "get", "update",
-  "deprecate", "delete", "suggest", "sweep", "doctor", "verify", "diff",
-  "coverage", "gc", "stats", "import", "export", "migrate", "tag-map",
+  "help",
+  "version",
+  "upgrade",
+  "add",
+  "query",
+  "list",
+  "get",
+  "update",
+  "deprecate",
+  "delete",
+  "suggest",
+  "sweep",
+  "doctor",
+  "verify",
+  "diff",
+  "coverage",
+  "gc",
+  "stats",
+  "import",
+  "export",
+  "migrate",
+  "tag-map",
   "update-agents-md",
 ]);
 
@@ -313,7 +493,8 @@ const formatter: CliOutput.Formatter = {
   formatVersion: (_name, version) => JSON.stringify({ version }),
   formatCliError: (error) => JSON.stringify({ error: error.message }),
   formatError: (error) => JSON.stringify({ error: error.message }),
-  formatErrors: (errors) => JSON.stringify({ error: errors.map((error) => error.message).join("\n") }),
+  formatErrors: (errors) =>
+    JSON.stringify({ error: errors.map((error) => error.message).join("\n") }),
 };
 
 function unknownCommand(args: ReadonlyArray<string>): string | undefined {
@@ -332,17 +513,26 @@ function renderError(error: unknown): void {
     return;
   }
   if (error instanceof MemoryDatabaseError || error instanceof CommandError) {
-    printJson({ error: error.message, ...(error instanceof MemoryDatabaseError ? { operation: error.operation } : {}) });
+    printJson({
+      error: error.message,
+      ...(error instanceof MemoryDatabaseError
+        ? { operation: error.operation }
+        : {}),
+    });
     return;
   }
-  printJson({ error: error instanceof Error ? error.message : "Unexpected CLI failure." });
+  printJson({
+    error: error instanceof Error ? error.message : "Unexpected CLI failure.",
+  });
 }
 
 export function runCli(args: ReadonlyArray<string>) {
   const command = unknownCommand(args);
   if (command) {
     return Effect.sync(() => {
-      printJson({ error: `Unknown command: ${command}. Run 'machine-memory help' for usage.` });
+      printJson({
+        error: `Unknown command: ${command}. Run 'machine-memory help' for usage.`,
+      });
       process.exitCode = 1;
     });
   }
@@ -352,7 +542,13 @@ export function runCli(args: ReadonlyArray<string>) {
     Effect.catch((error) =>
       Effect.sync(() => {
         renderError(error);
-        if (!(CliError.isCliError(error) && error._tag === "ShowHelp" && error.errors.length === 0)) {
+        if (
+          !(
+            CliError.isCliError(error) &&
+            error._tag === "ShowHelp" &&
+            error.errors.length === 0
+          )
+        ) {
           process.exitCode = 1;
         }
       }),

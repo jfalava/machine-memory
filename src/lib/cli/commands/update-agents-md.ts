@@ -47,7 +47,9 @@ export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
   return Effect.gen(function* () {
     const existingContent = (yield* commandCtx.fileSystem.exists(agentsMdPath))
-      ? new TextDecoder().decode(yield* commandCtx.fileSystem.readFile(agentsMdPath))
+      ? new TextDecoder().decode(
+          yield* commandCtx.fileSystem.readFile(agentsMdPath),
+        )
       : "";
     yield* commandCtx.fileSystem.writeFile(
       agentsMdPath,

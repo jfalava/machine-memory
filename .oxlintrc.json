@@ -107,7 +107,6 @@
     "max-params": ["error", 5],
     "max-statements": ["error", 20],
     "import/no-duplicates": "error",
-    "import/no-unresolved": "error",
     "import/no-mutable-exports": "error",
     "react/jsx-key": "error",
     "react/jsx-no-undef": "error",

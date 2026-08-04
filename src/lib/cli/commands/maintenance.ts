@@ -400,8 +400,13 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
     const { args } = commandCtx;
     const database = requireDatabase(commandCtx);
     const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
-    const directories = yield* collectDirectoriesEffect(root, commandCtx.fileSystem);
-    const rows = yield* database.all("SELECT tags FROM memories WHERE status = 'active'");
+    const directories = yield* collectDirectoriesEffect(
+      root,
+      commandCtx.fileSystem,
+    );
+    const rows = yield* database.all(
+      "SELECT tags FROM memories WHERE status = 'active'",
+    );
     const tagDistribution: Record<string, number> = {};
     const tagSet = new Set<string>();
     for (const row of rows as { tags?: unknown }[]) {
@@ -411,10 +416,20 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
       }
     }
     const uncoveredPaths = directories.filter((dir) => {
-      const parts = dir.replace(/\/$/, "").split("/").map((part) => part.toLowerCase()).filter(Boolean);
+      const parts = dir
+        .replace(/\/$/, "")
+        .split("/")
+        .map((part) => part.toLowerCase())
+        .filter(Boolean);
       return parts.length > 0 && !parts.some((part) => tagSet.has(part));
     });
-    yield* Effect.sync(() => printJson({ root, uncovered_paths: uncoveredPaths, tag_distribution: tagDistribution }));
+    yield* Effect.sync(() =>
+      printJson({
+        root,
+        uncovered_paths: uncoveredPaths,
+        tag_distribution: tagDistribution,
+      }),
+    );
   });
 }
 
@@ -433,36 +448,47 @@ export function handleGcCommand(commandCtx: CommandContext) {
        ORDER BY updated_at ASC`,
     );
     const expired = rows.map((row) => normalizeSqliteRow(row));
-    yield* Effect.sync(() => printJson({ dry_run: true, count: expired.length, expired }));
+    yield* Effect.sync(() =>
+      printJson({ dry_run: true, count: expired.length, expired }),
+    );
   });
 }
 
 export function handleStatsCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const rows = yield* requireDatabase(commandCtx).all("SELECT * FROM memories");
+    const rows = yield* requireDatabase(commandCtx).all(
+      "SELECT * FROM memories",
+    );
     const memories = rows.map((row) => normalizeSqliteRow(row));
     const accumulator = createStatsAccumulator();
     for (const memory of memories) {
       ingestMemoryStats(accumulator, memory);
     }
-    yield* Effect.sync(() => printJson({
-      total_memories: memories.length,
-      breakdown_by_memory_type: accumulator.byType,
-      breakdown_by_certainty: accumulator.byCertainty,
-      tag_frequency_map: accumulator.tagFrequency,
-      oldest_memory: accumulator.oldest,
-      memories_not_updated_over_90_days: accumulator.staleCount,
-      memories_with_no_tags: accumulator.noTagsCount,
-    }));
+    yield* Effect.sync(() =>
+      printJson({
+        total_memories: memories.length,
+        breakdown_by_memory_type: accumulator.byType,
+        breakdown_by_certainty: accumulator.byCertainty,
+        tag_frequency_map: accumulator.tagFrequency,
+        oldest_memory: accumulator.oldest,
+        memories_not_updated_over_90_days: accumulator.staleCount,
+        memories_with_no_tags: accumulator.noTagsCount,
+      }),
+    );
   });
 }
 
 export function handleImportCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const parsed = yield* parseImportFile(commandCtx.args[0], commandCtx.fileSystem);
+    const parsed = yield* parseImportFile(
+      commandCtx.args[0],
+      commandCtx.fileSystem,
+    );
     const results: Record<string, unknown>[] = [];
     for (const [index, rawEntry] of parsed.entries()) {
-      results.push(yield* processImportEntry(requireDatabase(commandCtx), index, rawEntry));
+      results.push(
+        yield* processImportEntry(requireDatabase(commandCtx), index, rawEntry),
+      );
     }
     yield* Effect.sync(() => printJson({ results }));
   });
@@ -486,7 +512,9 @@ export function handleExportCommand(commandCtx: CommandContext) {
       `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
       params,
     );
-    yield* Effect.sync(() => printJson(rows.map((row) => normalizeSqliteRow(row))));
+    yield* Effect.sync(() =>
+      printJson(rows.map((row) => normalizeSqliteRow(row))),
+    );
   });
 }
 

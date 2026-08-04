@@ -173,7 +173,7 @@ function loadActiveMemories(
     )
     .pipe(
       Effect.map((rows) =>
-      (rows as Record<string, unknown>[]).map((row) => {
+        (rows as Record<string, unknown>[]).map((row) => {
           const id = Number(row.id ?? 0);
           const content = stringValue(row.content);
           const tagsRaw = stringValue(row.tags);
@@ -649,7 +649,10 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function indicatorMatches(text: string, indicators: readonly string[]): string[] {
+function indicatorMatches(
+  text: string,
+  indicators: readonly string[],
+): string[] {
   const matches: string[] = [];
   for (const indicator of indicators) {
     const matched = indicator.includes(" ")

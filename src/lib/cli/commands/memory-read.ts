@@ -188,7 +188,9 @@ export function handleGetCommand(commandCtx: CommandContext) {
       usageError("Usage: get <id>");
     }
     const ids = parseIdSpec(idSpec);
-    const fetched = yield* Effect.all(ids.map((id) => getMemoryById(database, id)));
+    const fetched = yield* Effect.all(
+      ids.map((id) => getMemoryById(database, id)),
+    );
     const rows = fetched.filter(
       (row): row is Record<string, unknown> => row !== null,
     );
@@ -308,7 +310,11 @@ function collectSuggestResults(
       snapshot.filters,
       options.limit ?? 8,
     );
-    const ftsResults = yield* fetchFtsSuggestResults(commandCtx, snapshot, options);
+    const ftsResults = yield* fetchFtsSuggestResults(
+      commandCtx,
+      snapshot,
+      options,
+    );
     return mergeSuggestionResults(ftsResults, neighborhoodResults).slice(
       0,
       options.limit ?? 8,
@@ -394,7 +400,10 @@ function fetchListScoredResults(
   scoreTerms: string[],
   options: FetchResultsOptions,
 ): Effect.Effect<
-  { results: Record<string, unknown>[]; filters: ReturnType<typeof parseCommonFilters> },
+  {
+    results: Record<string, unknown>[];
+    filters: ReturnType<typeof parseCommonFilters>;
+  },
   MemoryDatabaseError
 > {
   const filters = parseCommonFilters(commandCtx.args);
@@ -490,10 +499,14 @@ export function handleSweepCommand(commandCtx: CommandContext) {
       ...queryBundle.queryTokens,
       ...extractTerms(queryBundle.filters.tag ?? ""),
     ]);
-    const listBundle = yield* fetchListScoredResults(commandCtx, listScoreTerms, {
-      explainScore,
-      limit,
-    });
+    const listBundle = yield* fetchListScoredResults(
+      commandCtx,
+      listScoreTerms,
+      {
+        explainScore,
+        limit,
+      },
+    );
     const results = mergeSweepResults([
       { source: "suggest", rows: suggestResults },
       { source: "query", rows: queryBundle.results },
@@ -550,7 +563,10 @@ function parseFactArgs(args: string[], usage: string) {
 
 export function handleVerifyCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { id, fact } = parseFactArgs(commandCtx.args, "Usage: verify <id> <fact>");
+    const { id, fact } = parseFactArgs(
+      commandCtx.args,
+      "Usage: verify <id> <fact>",
+    );
     const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
     yield* Effect.sync(() => {
       if (!memory) {
@@ -560,8 +576,19 @@ export function handleVerifyCommand(commandCtx: CommandContext) {
       const result = compareFact(stringValue(memory.content), fact);
       printJson(
         result.conflict
-          ? { id, ok: false, result: "conflict", warning: "Conflict", similarity: result.similarity }
-          : { id, ok: true, result: "consistent", similarity: result.similarity },
+          ? {
+              id,
+              ok: false,
+              result: "conflict",
+              warning: "Conflict",
+              similarity: result.similarity,
+            }
+          : {
+              id,
+              ok: true,
+              result: "consistent",
+              similarity: result.similarity,
+            },
       );
     });
   });
@@ -569,7 +596,10 @@ export function handleVerifyCommand(commandCtx: CommandContext) {
 
 export function handleDiffCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { id, fact } = parseFactArgs(commandCtx.args, "Usage: diff <id> <new_content>");
+    const { id, fact } = parseFactArgs(
+      commandCtx.args,
+      "Usage: diff <id> <new_content>",
+    );
     const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
     yield* Effect.sync(() => {
       if (!memory) {

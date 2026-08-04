@@ -36,10 +36,14 @@ describe("Effect application boundaries", () => {
 
   it("preserves the existing pure memory semantics", () => {
     expect(parseIdSpec("3,1,3")).toEqual([3, 1]);
-    expect(normalizeSqliteRow({ certainty: "hard", refs: '["docs/a.md"]' })).toMatchObject({
+    expect(
+      normalizeSqliteRow({ certainty: "hard", refs: '["docs/a.md"]' }),
+    ).toMatchObject({
       certainty: "verified",
       refs: ["docs/a.md"],
     });
-    expect(compareFact("Effect is used", "Effect is not used").conflict).toBe(true);
+    expect(compareFact("Effect is used", "Effect is not used").conflict).toBe(
+      true,
+    );
   });
 });

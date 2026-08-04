@@ -36,7 +36,12 @@ export function handleTagMapCommand(commandCtx: CommandContext) {
       }
       yield* upsertPathTagMapEntry(commandCtx.fileSystem, first, tags);
       yield* Effect.sync(() =>
-        printJson({ status: "ok", path_prefix: first, tags, file: pathTagMapFilePath() }),
+        printJson({
+          status: "ok",
+          path_prefix: first,
+          tags,
+          file: pathTagMapFilePath(),
+        }),
       );
       return;
     }
