@@ -1,15 +1,38 @@
-import { chmodSync, existsSync, renameSync, unlinkSync } from "node:fs";
-import { printJson } from "./cli";
+import { Effect, FileSystem, PlatformError } from "effect";
 import { REPO, VERSION } from "./constants";
 
-type ReleaseAsset = { name: string; browser_download_url: string };
-type Release = { tag_name: string; assets: ReleaseAsset[] };
+type ReleaseAsset = {
+  name: string;
+  browser_download_url: string;
+};
 
-const API_BASE =
-  process.env["MACHINE_MEMORY_API_URL"] ??
-  `https://api.github.com/repos/${REPO}`;
-const BIN_PATH = process.env["MACHINE_MEMORY_BIN_PATH"] ?? process.execPath;
+type Release = {
+  tag_name: string;
+  assets: ReleaseAsset[];
+};
+
+export class UpgradeError extends Error {
+  readonly _tag = "UpgradeError";
+
+  constructor(readonly payload: Record<string, unknown>) {
+    super(
+      typeof payload.error === "string" ? payload.error : "Upgrade failed.",
+    );
+  }
+}
+
 const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+
+function apiBase(): string {
+  return (
+    process.env["MACHINE_MEMORY_API_URL"] ??
+    `https://api.github.com/repos/${REPO}`
+  );
+}
+
+function binaryPath(): string {
+  return process.env["MACHINE_MEMORY_BIN_PATH"] ?? process.execPath;
+}
 
 function requestTimeoutMs(): number {
   const raw = process.env["MACHINE_MEMORY_UPGRADE_TIMEOUT_MS"];
@@ -17,130 +40,194 @@ function requestTimeoutMs(): number {
     return DEFAULT_REQUEST_TIMEOUT_MS;
   }
   const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_REQUEST_TIMEOUT_MS;
-  }
-  return parsed;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
-function getPlatformAssetName(): string {
+function platformAssetName(): string {
   const platform = process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   return `machine-memory-${platform}-${arch}`;
 }
 
-function failAndExit(message: string): never {
-  printJson({ error: message });
-  process.exit(1);
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error && cause.message
+    ? cause.message
+    : "Unknown error";
 }
 
-function formatErrorMessage(err: unknown): string {
-  if (err instanceof Error && err.message) {
-    return err.message;
-  }
-  return "Unknown error";
+function promiseEffect<T>(
+  operation: string,
+  run: () => Promise<T>,
+): Effect.Effect<T, UpgradeError> {
+  return Effect.tryPromise({
+    try: run,
+    catch: (cause) =>
+      cause instanceof UpgradeError
+        ? cause
+        : new UpgradeError({ error: `${operation}: ${errorMessage(cause)}` }),
+  });
 }
 
-async function fetchWithTimeout(
+function fetchWithTimeout(
   url: string,
   requestLabel: string,
   timeoutMs: number,
   init?: RequestInit,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+): Effect.Effect<Response, UpgradeError> {
+  return promiseEffect(requestLabel, async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      failAndExit(`${requestLabel}: request timed out after ${timeoutMs}ms`);
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } catch (cause) {
+      if (controller.signal.aborted) {
+        throw new UpgradeError({
+          error: `${requestLabel}: request timed out after ${timeoutMs}ms`,
+        });
+      }
+      throw new UpgradeError({
+        error: `${requestLabel}: ${errorMessage(cause)}`,
+      });
+    } finally {
+      clearTimeout(timer);
     }
-    failAndExit(`${requestLabel}: ${formatErrorMessage(err)}`);
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
-async function fetchLatestRelease(timeoutMs: number): Promise<Release> {
-  const res = await fetchWithTimeout(
-    `${API_BASE}/releases/latest`,
-    "Failed to fetch latest release",
-    timeoutMs,
-    {
-      headers: { Accept: "application/vnd.github+json" },
-    },
-  );
-  if (!res.ok) {
-    failAndExit(`Failed to fetch latest release: ${res.status}`);
-  }
-  return (await res.json()) as Release;
-}
-
-function selectAssetOrExit(release: Release): ReleaseAsset {
-  const assetName = getPlatformAssetName();
-  const asset = release.assets.find((a) => a.name === assetName);
-  if (!asset) {
-    printJson({
-      error: `No binary found for ${assetName}`,
-      available: release.assets.map((a) => a.name),
-    });
-    process.exit(1);
-  }
-  return asset;
-}
-
-async function downloadToTemp(
-  asset: ReleaseAsset,
-  tmpPath: string,
+function fetchLatestRelease(
   timeoutMs: number,
-) {
-  const download = await fetchWithTimeout(
-    asset.browser_download_url,
-    "Download failed",
-    timeoutMs,
+): Effect.Effect<Release, UpgradeError> {
+  return Effect.gen(function* () {
+    const response = yield* fetchWithTimeout(
+      `${apiBase()}/releases/latest`,
+      "Failed to fetch latest release",
+      timeoutMs,
+      { headers: { Accept: "application/vnd.github+json" } },
+    );
+    if (!response.ok) {
+      return yield* Effect.fail(
+        new UpgradeError({
+          error: `Failed to fetch latest release: ${response.status}`,
+        }),
+      );
+    }
+    return yield* promiseEffect(
+      "Failed to decode latest release",
+      () => response.json() as Promise<Release>,
+    );
+  });
+}
+
+function selectAsset(
+  release: Release,
+): Effect.Effect<ReleaseAsset, UpgradeError> {
+  const assetName = platformAssetName();
+  const asset = release.assets.find(
+    (candidate) => candidate.name === assetName,
   );
-  if (!download.ok) {
-    failAndExit(`Download failed: ${download.status}`);
-  }
-  const { writeFile } = await import("node:fs/promises");
-  const buffer = new Uint8Array(await download.arrayBuffer());
-  await writeFile(tmpPath, buffer);
-  chmodSync(tmpPath, 0o755);
+  return asset
+    ? Effect.succeed(asset)
+    : Effect.fail(
+        new UpgradeError({
+          error: `No binary found for ${assetName}`,
+          available: release.assets.map((candidate) => candidate.name),
+        }),
+      );
 }
 
-function replaceBinary(tmpPath: string) {
-  const backupPath = `${BIN_PATH}.bak`;
-  try {
-    renameSync(BIN_PATH, backupPath);
-    renameSync(tmpPath, BIN_PATH);
-    unlinkSync(backupPath);
-  } catch (e) {
-    if (existsSync(backupPath)) {
-      renameSync(backupPath, BIN_PATH);
+function downloadToTemp(
+  asset: ReleaseAsset,
+  tempPath: string,
+  timeoutMs: number,
+): Effect.Effect<
+  void,
+  UpgradeError | PlatformError.PlatformError,
+  FileSystem.FileSystem
+> {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const response = yield* fetchWithTimeout(
+      asset.browser_download_url,
+      "Download failed",
+      timeoutMs,
+    );
+    if (!response.ok) {
+      return yield* Effect.fail(
+        new UpgradeError({ error: `Download failed: ${response.status}` }),
+      );
     }
-    if (existsSync(tmpPath)) {
-      unlinkSync(tmpPath);
-    }
-    throw e;
-  }
+    const buffer = yield* promiseEffect("Download failed", () =>
+      response.arrayBuffer(),
+    );
+    yield* fileSystem.writeFile(tempPath, new Uint8Array(buffer));
+    yield* fileSystem.chmod(tempPath, 0o755);
+  });
 }
 
-export async function upgrade() {
-  const timeoutMs = requestTimeoutMs();
-  const release = await fetchLatestRelease(timeoutMs);
+function replaceBinary(
+  tempPath: string,
+): Effect.Effect<
+  void,
+  UpgradeError | PlatformError.PlatformError,
+  FileSystem.FileSystem
+> {
+  const targetPath = binaryPath();
+  const backupPath = `${targetPath}.bak`;
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const replace = Effect.gen(function* () {
+      yield* fileSystem.rename(targetPath, backupPath);
+      yield* fileSystem.rename(tempPath, targetPath);
+      yield* fileSystem.remove(backupPath);
+    });
 
-  const latest = release.tag_name.replace(/^v/, "");
-  if (latest === VERSION) {
-    printJson({ message: "Already up to date", version: VERSION });
-    return;
-  }
+    yield* replace.pipe(
+      Effect.catch((cause) =>
+        Effect.gen(function* () {
+          if (yield* fileSystem.exists(backupPath)) {
+            yield* fileSystem.rename(backupPath, targetPath);
+          }
+          if (yield* fileSystem.exists(tempPath)) {
+            yield* fileSystem.remove(tempPath);
+          }
+          return yield* Effect.fail(
+            new UpgradeError({
+              error: `Upgrade failed: ${errorMessage(cause)}`,
+            }),
+          );
+        }).pipe(
+          Effect.catch((cleanupCause) =>
+            Effect.fail(
+              new UpgradeError({
+                error: `Upgrade failed: ${errorMessage(cause)}; cleanup failed: ${errorMessage(cleanupCause)}`,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+}
 
-  const asset = selectAssetOrExit(release);
+export function upgrade(): Effect.Effect<
+  Record<string, unknown>,
+  UpgradeError | PlatformError.PlatformError,
+  FileSystem.FileSystem
+> {
+  return Effect.gen(function* () {
+    const release = yield* fetchLatestRelease(requestTimeoutMs());
+    const latest = release.tag_name.replace(/^v/, "");
+    if (latest === VERSION) {
+      return { message: "Already up to date", version: VERSION };
+    }
 
-  const tmpPath = `${BIN_PATH}.tmp`;
-  await downloadToTemp(asset, tmpPath, timeoutMs);
-  replaceBinary(tmpPath);
-
-  printJson({ message: "Upgraded", from: VERSION, to: latest });
+    const asset = yield* selectAsset(release);
+    const tempPath = `${binaryPath()}.tmp`;
+    yield* downloadToTemp(asset, tempPath, requestTimeoutMs());
+    yield* replaceBinary(tempPath);
+    return { message: "Upgraded", from: VERSION, to: latest };
+  });
 }
