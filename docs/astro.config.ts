@@ -7,17 +7,13 @@ import nimbus, {
 import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
 
 const nimbusConfig = defineNimbusConfig({
-  // CHANGE_ME: your site's canonical origin (no trailing slash). Drives
-  // canonical URLs, absolute OG image URLs, robots.txt, sitemap, and the
-  // links in /llms.txt — leaving the placeholder breaks all of them.
-  site: "https://example.com",
-  // CHANGE_ME: your project's name — used for <title>, the home H1, and OG.
-  title: "Nimbus",
-  // CHANGE_ME: a one-line description of your docs — used for meta + OG.
-  description: "Minimal starter consuming nimbus-docs.",
+  site: "https://machine-memory.jfa.dev",
+  title: "Machine Memory",
+  description:
+    "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context so future agent sessions can recall them.",
   locale: "en",
-  github: null,
-  socialImageAlt: "Nimbus documentation preview",
+  github: "https://github.com/jfalava/machine-memory",
+  socialImageAlt: "Machine Memory documentation",
 });
 
 export default defineConfig({
