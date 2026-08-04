@@ -18,6 +18,7 @@ import {
   type MemoryType,
 } from "../constants";
 import { allWithRetry, getWithRetry } from "../db";
+import { suggestTagsForPath } from "../path-tags";
 
 export function isMemoryType(value: string): value is MemoryType {
   return (MEMORY_TYPES as readonly string[]).includes(value);
@@ -134,6 +135,18 @@ export function parseIntegerFlag(
   const parsed = Number(raw);
   if (!Number.isInteger(parsed)) {
     printJson({ error: `Invalid integer for ${flag}: ${raw}` });
+    process.exit(1);
+  }
+  return parsed;
+}
+
+export function parseResultLimit(args: string[], fallback = 8): number {
+  const parsed = parseIntegerFlag(args, "--limit");
+  if (parsed === undefined || parsed === null) {
+    return fallback;
+  }
+  if (parsed < 1 || parsed > 100) {
+    printJson({ error: "--limit must be an integer between 1 and 100" });
     process.exit(1);
   }
   return parsed;
@@ -552,6 +565,18 @@ export function printBriefLines(rows: Record<string, unknown>[]) {
   console.info(lines.join("\n"));
 }
 
+export function minimalResultSummary(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    id: Number(row.id ?? 0),
+    score: Number(row.score ?? 0),
+    memory_type: stringValue(row.memory_type, "convention"),
+    certainty: normalizeCertaintyValue(row.certainty),
+    tags: parseTags(stringValue(row.tags)),
+  };
+}
+
 export function queryEmptyResultPayload(
   term: string,
   filters: CommonFilters,
@@ -950,6 +975,9 @@ export function deriveNeighborhoodFromFiles(
   for (const filePath of files) {
     const normalized = normalizedPathForMatching(filePath);
     const directory = pathDirname(normalized).replaceAll("\\", "/");
+    for (const tag of suggestTagsForPath(normalized)) {
+      tagHints.push(tag);
+    }
     if (directory && directory !== ".") {
       pathHints.push(`${directory}/`);
       const extension = extname(normalized).replace(/^\./, "");
@@ -975,6 +1003,7 @@ export function queryNeighborhoodMatches(
   database: Database,
   neighborhood: SuggestNeighborhood,
   filters: CommonFilters,
+  limit = 30,
 ): Record<string, unknown>[] {
   const orClauses: string[] = [];
   const params: (string | number)[] = [];
@@ -1007,7 +1036,7 @@ export function queryNeighborhoodMatches(
      FROM memories m
      WHERE ${clauses.join(" AND ")}
      ORDER BY m.updated_at DESC, m.id DESC
-     LIMIT 30`,
+     LIMIT ${limit}`,
     params,
   ) as unknown[];
   return shapeRowsWithScore(rows, neighborhood.terms);

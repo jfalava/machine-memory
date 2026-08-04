@@ -1,140 +1,20 @@
-# Project memory
+<!-- machine-memory:start -->
 
-This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
+## Project memory
 
-## One-sweep workflow (use this every task)
+This project uses `machine-memory` with its database at `.agents/memory.db`.
 
-1. **Scan relevant context fast (compact mode)**
-   - `machine-memory suggest --files "<paths you'll touch>" --brief`
-   - `machine-memory query "<feature/topic>" --brief`
-   - `machine-memory list --tags "<domain>" --brief`
-   - Run this sweep once per task; repeat only if touched paths or scope materially change.
-   - Use `machine-memory get <id>` only when you need full detail.
+Before editing, run exactly one focused retrieval command from the repository root:
 
-2. **If your inference may conflict, verify before editing memory**
-   - `machine-memory verify <id> "<inferred fact>"`
-   - `machine-memory diff <id> "<proposed updated wording>"`
+- Known files: `machine-memory suggest --files "path/a.ts,path/b.ts" --json-min`
+- Known topic: `machine-memory query "topic" --json-min`
+- Broad audit: `machine-memory list --tags "area:..." --json-min`
 
-3. **Maintain memories while implementing**
-   - Prefer one canonical memory per feature thread:
-     - `machine-memory update --match "topic query" "new canonical content"`
-     - If no reliable match exists, create with `machine-memory add ... --upsert-match "topic query"` so repeated writes update instead of duplicating.
-   - Add new durable knowledge (prefer path-driven tagging):
-     - `machine-memory add "..." --path "documentation/content/docs/guides/example.mdx" --context "why it matters" --type "decision|reference|status|..." --certainty "verified|inferred|speculative"`
-     - If path mapping is unavailable, use `--tags "area:...,topic:...,kind:..."`.
-   - Update stale memories:
-     - `machine-memory update <id> "new content"`
-     - `machine-memory update <id1,id2,id3> "new content"` (multi-ID)
-     - `machine-memory update --match "topic" --from-file ./notes.md`
-   - Deprecate replaced memories:
-     - `machine-memory deprecate <id> --superseded-by <new_id>`
-     - `machine-memory deprecate <id1,id2,id3> --superseded-by <new_id>` (multi-ID)
-   - Delete invalid memories:
-     - `machine-memory delete <id>` or `machine-memory delete <id1,id2,id3>`
+Fetch full records only when the result looks relevant: `machine-memory get <id>` or `machine-memory get <id,id,...>`.
 
-4. **Use tight tag taxonomy via path mapping (recommended)**
-   - Prefer scoped tags: `area:*`, `topic:*`, `kind:*` (for example: `area:cli,topic:vendor-aws,kind:status`)
-   - `machine-memory tag-map set "documentation/content/docs/guides/example.mdx" "area:docs,topic:guides,kind:reference"`
-   - `machine-memory tag-map suggest "documentation/content/docs/guides/example.mdx"`
-   - `machine-memory add "..." --path "documentation/content/docs/guides/example.mdx"` (preferred over manual tag strings)
+At task end, persist only durable decisions, constraints, preferences, and non-obvious gotchas. Update an existing canonical record when possible; do not store obvious code facts, routine test results, or temporary progress. Use status memories only for short-lived work and give them an expiry.
 
-5. **Status hygiene**
-   - When adding `--type status`, `status_cascade` suggestions are candidates, not auto-actions.
-   - Before any deprecate from `status_cascade`, run `machine-memory get <id>` and `machine-memory verify <id> "<replacement claim>"` (or `diff`) to confirm semantic overlap.
-   - Keep one active status memory per task thread; prefer updating it over adding same-task status memories unless scope materially changes.
-   - Short-lived status should include expiry: `--expires-after-days <n>`.
-   - Run `machine-memory doctor` and review suggested `deprecate`/`update` commands semantically before applying.
+Use exact file paths and put filenames, keys, routes, thresholds, and other retrieval anchors in the first sentence. Prefer path-based tags with `--path` and `tag-map`; use `--upsert-match` only after checking that the match is the intended canonical record.
 
-6. **Write for retrieval**
-   - Put key anchors in the first sentence when possible: command names, API paths, file paths, and exact feature keywords.
-
-7. **Separate durable vs transient facts**
-   - Use `--type reference` for durable implementation facts, reusable docs notes, and non-obvious gotchas.
-   - Use `--type decision` for durable rules/architecture.
-   - Use `--type status` for progress snapshots/current state.
-
-8. **Task-end persistence rule**
-   - Always persist non-obvious outcomes future sessions need (decisions, references, status snapshots, gotchas, tooling notes, user preferences).
-   - Do **not** store obvious code facts, temporary notes, or duplicates.
-
-
-# Project memory
-
-This project uses `machine-memory` for persistent agent context stored at `.agents/memory.db`.
-
-**MANDATORY: Memory scan MUST be completed BEFORE any code changes. Skipping this causes rework, regressions, and wasted time.**
-
-## Required pre-workflow (DO NOT SKIP)
-
-Before touching any code, you MUST complete this scan. No exceptions.
-
-### Step 1: ALWAYS run one of these (choose based on what you know)
-
-- `machine-memory suggest --files "<paths you'll touch>" --brief`
-- `machine-memory query "<feature/topic>" --brief`
-- `machine-memory list --tags "<domain>" --brief`
-
-### Step 2: If results seem relevant, get full details
-
-- `machine-memory get <id>`
-
-**If you skip this:**
-
-- You will miss prior decisions that constrain your solution
-- You will duplicate work already done
-- You will create inconsistencies with existing patterns
-
-## One-sweep workflow (use this every task)
-
-1. **Scan relevant context fast (compact mode)**
-   - `machine-memory suggest --files "<paths you'll touch>" --brief`
-   - `machine-memory query "<feature/topic>" --brief`
-   - `machine-memory list --tags "<domain>" --brief`
-   - Run this sweep once per task; repeat only if touched paths or scope materially change.
-   - Use `machine-memory get <id>` only when you need full detail.
-
-2. **If your inference may conflict, verify before editing memory**
-   - `machine-memory verify <id> "<inferred fact>"`
-   - `machine-memory diff <id> "<proposed updated wording>"`
-
-3. **Maintain memories while implementing**
-   - Prefer one canonical memory per feature thread:
-     - `machine-memory update --match "topic query" "new canonical content"`
-     - If no reliable match exists, create with `machine-memory add ... --upsert-match "topic query"` so repeated writes update instead of duplicating.
-   - Add new durable knowledge (prefer path-driven tagging):
-     - `machine-memory add "..." --path "documentation/content/docs/guides/example.mdx" --context "why it matters" --type "decision|reference|status|..." --certainty "verified|inferred|speculative"`
-     - If path mapping is unavailable, use `--tags "area:...,topic:...,kind:..."`.
-   - Update stale memories:
-     - `machine-memory update <id> "new content"`
-     - `machine-memory update <id1,id2,id3> "new content"` (multi-ID)
-     - `machine-memory update --match "topic" --from-file ./notes.md`
-   - Deprecate replaced memories:
-     - `machine-memory deprecate <id> --superseded-by <new_id>`
-     - `machine-memory deprecate <id1,id2,id3> --superseded-by <new_id>` (multi-ID)
-   - Delete invalid memories:
-     - `machine-memory delete <id>` or `machine-memory delete <id1,id2,id3>`
-
-4. **Use tight tag taxonomy via path mapping (recommended)**
-   - Prefer scoped tags: `area:*`, `topic:*`, `kind:*` (for example: `area:cli,topic:vendor-aws,kind:status`)
-   - `machine-memory tag-map set "documentation/content/docs/guides/example.mdx" "area:docs,topic:guides,kind:reference"`
-   - `machine-memory tag-map suggest "documentation/content/docs/guides/example.mdx"`
-   - `machine-memory add "..." --path "documentation/content/docs/guides/example.mdx"` (preferred over manual tag strings)
-
-5. **Status hygiene**
-   - When adding `--type status`, `status_cascade` suggestions are candidates, not auto-actions.
-   - Before any deprecate from `status_cascade`, run `machine-memory get <id>` and `machine-memory verify <id> "<replacement claim>"` (or `diff`) to confirm semantic overlap.
-   - Keep one active status memory per task thread; prefer updating it over adding same-task status memories unless scope materially changes.
-   - Short-lived status should include expiry: `--expires-after-days <n>`.
-   - Run `machine-memory doctor` and review suggested `deprecate`/`update` commands semantically before applying.
-
-6. **Write for retrieval**
-   - Put key anchors in the first sentence when possible: command names, API paths, file paths, and exact feature keywords.
-
-7. **Separate durable vs transient facts**
-   - Use `--type reference` for durable implementation facts, reusable docs notes, and non-obvious gotchas.
-   - Use `--type decision` for durable rules/architecture.
-   - Use `--type status` for progress snapshots/current state.
-
-8. **Task-end persistence rule**
-   - Always persist non-obvious outcomes future sessions need (decisions, references, status snapshots, gotchas, tooling notes, user preferences).
-   - Do **not** store obvious code facts, temporary notes, or duplicates.
+Run `machine-memory doctor` during maintenance, not every task. Ensure both `.agents/` and `.agents/memory.db` are writable before memory writes.
+<!-- machine-memory:end -->

@@ -1,0 +1,18 @@
+{
+  "src/lib/cli": [
+    "area:cli",
+    "scope:implementation"
+  ],
+  "src/lib/upgrade.ts": [
+    "area:upgrade",
+    "scope:implementation"
+  ],
+  "tests": [
+    "area:tests",
+    "scope:shared"
+  ],
+  "docs": [
+    "area:docs",
+    "scope:reference"
+  ]
+}

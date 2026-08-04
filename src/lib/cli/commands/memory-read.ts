@@ -10,8 +10,11 @@ import {
   extractTerms,
   getMemoryById,
   mergeSuggestionResults,
+  minimalResultSummary,
   normalizeSqliteRow,
+  parseIdSpec,
   parseCommonFilters,
+  parseResultLimit,
   parseSuggestFiles,
   printBriefLines,
   queryEmptyResultPayload,
@@ -24,10 +27,11 @@ import {
 import type { CommandContext } from "./context";
 
 const SWEEP_USAGE =
-  'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--brief|--json-min|--quiet]';
+  'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
 
 type FetchResultsOptions = {
   explainScore: boolean;
+  limit?: number;
 };
 
 type QueryResults = {
@@ -68,6 +72,9 @@ function printScoredResults(
       count: results.length,
       ids: resultIds(results),
     };
+    if (outputMode.jsonMin) {
+      payload.results = results.map(minimalResultSummary);
+    }
     if (options.explainScore) {
       payload.score_weights = SCORE_COMPONENT_WEIGHTS;
     }
@@ -130,13 +137,14 @@ function fetchQueryResults(
      FROM memories m
      JOIN memories_fts ON m.id = memories_fts.rowid
      WHERE ${clauses.join(" AND ")}
-     ORDER BY bm25(memories_fts)`,
+     ORDER BY bm25(memories_fts)
+     LIMIT 100`,
     params,
   );
 
   const results = shapeRowsWithScore(rows as unknown[], queryTokens, {
     explainScore: options.explainScore,
-  });
+  }).slice(0, options.limit ?? 8);
   return { results, queryTokens, filters };
 }
 
@@ -153,6 +161,7 @@ export function handleQueryCommand(commandCtx: CommandContext) {
     term,
     {
       explainScore,
+      limit: parseResultLimit(args),
     },
   );
   if (results.length === 0) {
@@ -169,12 +178,25 @@ export function handleQueryCommand(commandCtx: CommandContext) {
 export function handleGetCommand(commandCtx: CommandContext) {
   const { args, requireDb } = commandCtx;
   const database = requireDb();
-  const id = args[0];
-  if (!id) {
+  const idSpec = args[0];
+  if (!idSpec) {
     usageError("Usage: get <id>");
   }
-  const row = getMemoryById(database, Number(id));
-  printJson(row ?? { error: "Not found" });
+  const ids = parseIdSpec(idSpec);
+  const rows = ids
+    .map((id) => getMemoryById(database, id))
+    .filter((row): row is Record<string, unknown> => row !== null);
+  const missingIds = ids.filter(
+    (id) => !rows.some((row) => Number(row.id) === id),
+  );
+  if (ids.length === 1) {
+    printJson(rows[0] ?? { error: "Not found" });
+    return;
+  }
+  printJson({
+    results: rows,
+    ...(missingIds.length > 0 ? { missing_ids: missingIds } : {}),
+  });
 }
 
 export function handleListCommand(commandCtx: CommandContext) {
@@ -188,10 +210,23 @@ export function handleListCommand(commandCtx: CommandContext) {
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = allWithRetry(
     database,
-    `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC`,
+    `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC LIMIT 100`,
     params,
   );
-  const normalized = (rows as unknown[]).map((row) => normalizeSqliteRow(row));
+  const normalized = (rows as unknown[])
+    .map((row) => normalizeSqliteRow(row))
+    .slice(0, parseResultLimit(args, 100));
+  if (outputMode.jsonMin || outputMode.quiet) {
+    const payload: Record<string, unknown> = {
+      count: normalized.length,
+      ids: resultIds(normalized),
+    };
+    if (outputMode.jsonMin) {
+      payload.results = normalized.map(minimalResultSummary);
+    }
+    printJson(payload);
+    return;
+  }
   if (outputMode.brief) {
     printBriefLines(normalized);
     return;
@@ -238,12 +273,12 @@ function fetchFtsSuggestResults(
      JOIN memories_fts ON m.id = memories_fts.rowid
      WHERE ${ftsClauses.join(" AND ")}
      ORDER BY bm25(memories_fts)
-     LIMIT 20`,
+     LIMIT 100`,
     ftsParams,
   );
   return shapeRowsWithScore(rows as unknown[], snapshot.suggestTerms, {
     explainScore: options.explainScore,
-  });
+  }).slice(0, options.limit ?? 8);
 }
 
 function collectSuggestResults(
@@ -255,9 +290,13 @@ function collectSuggestResults(
     commandCtx.requireDb(),
     snapshot.neighborhood,
     snapshot.filters,
+    options.limit ?? 8,
   );
   const ftsResults = fetchFtsSuggestResults(commandCtx, snapshot, options);
-  return mergeSuggestionResults(ftsResults, neighborhoodResults);
+  return mergeSuggestionResults(ftsResults, neighborhoodResults).slice(
+    0,
+    options.limit ?? 8,
+  );
 }
 
 function printSuggestResults(
@@ -272,6 +311,9 @@ function printSuggestResults(
       count: results.length,
       ids: resultIds(results),
     };
+    if (outputMode.jsonMin) {
+      payload.results = results.map(minimalResultSummary);
+    }
     if (options.explainScore) {
       payload.score_weights = SCORE_COMPONENT_WEIGHTS;
     }
@@ -300,7 +342,10 @@ function printSuggestResults(
 export function handleSuggestCommand(commandCtx: CommandContext) {
   const explainScore = explainScoreEnabled(commandCtx.args);
   const snapshot = buildSuggestSnapshot(commandCtx.args);
-  const results = collectSuggestResults(commandCtx, snapshot, { explainScore });
+  const results = collectSuggestResults(commandCtx, snapshot, {
+    explainScore,
+    limit: parseResultLimit(commandCtx.args),
+  });
   printSuggestResults(commandCtx, snapshot, results, { explainScore });
 }
 
@@ -344,13 +389,14 @@ function fetchListScoredResults(
     `SELECT m.*, 0 AS fts_rank
      FROM memories m
      ${where}
-     ORDER BY m.updated_at DESC, m.id DESC`,
+     ORDER BY m.updated_at DESC, m.id DESC
+     LIMIT 100`,
     params,
   );
   return {
     results: shapeRowsWithScore(rows as unknown[], scoreTerms, {
       explainScore: options.explainScore,
-    }),
+    }).slice(0, options.limit ?? 8),
     filters,
   };
 }
@@ -402,14 +448,16 @@ export function handleSweepCommand(commandCtx: CommandContext) {
   ensureSweepFileArgs(args);
   const queryTerm = parseSweepQueryArg(args);
   const explainScore = explainScoreEnabled(args);
+  const limit = parseResultLimit(args);
 
   const snapshot = buildSuggestSnapshot(args);
   const suggestResults = collectSuggestResults(commandCtx, snapshot, {
     explainScore,
+    limit,
   });
 
   const queryBundle = queryTerm
-    ? fetchQueryResults(commandCtx, queryTerm, { explainScore })
+    ? fetchQueryResults(commandCtx, queryTerm, { explainScore, limit })
     : {
         results: [],
         queryTokens: [] as string[],
@@ -423,19 +471,26 @@ export function handleSweepCommand(commandCtx: CommandContext) {
   ]);
   const listBundle = fetchListScoredResults(commandCtx, listScoreTerms, {
     explainScore,
+    limit,
   });
 
   const results = mergeSweepResults([
     { source: "suggest", rows: suggestResults },
     { source: "query", rows: queryBundle.results },
     { source: "list", rows: listBundle.results },
-  ]);
+  ]).slice(0, limit);
 
   if (outputMode.jsonMin || outputMode.quiet) {
     const payload: Record<string, unknown> = {
       count: results.length,
       ids: resultIds(results),
     };
+    if (outputMode.jsonMin) {
+      payload.results = results.map((row) => ({
+        ...minimalResultSummary(row),
+        sources: row.sources,
+      }));
+    }
     if (explainScore) {
       payload.score_weights = SCORE_COMPONENT_WEIGHTS;
     }

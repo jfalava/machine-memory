@@ -20,13 +20,13 @@ export function helpPayload() {
       },
       query: {
         usage:
-          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--explain-score] [--brief|--json-min|--quiet]",
+          "query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score] [--brief|--json-min|--quiet]",
       },
       list: {
         usage:
-          "list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--brief]",
+          "list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>] [--brief|--json-min|--quiet]",
       },
-      get: { usage: "get <id>" },
+      get: { usage: "get <id|id,id,...>" },
       update: {
         usage: UPDATE_USAGE,
       },
@@ -36,11 +36,11 @@ export function helpPayload() {
       delete: { usage: "delete <id|id,id,...>" },
       suggest: {
         usage:
-          'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--explain-score] [--brief|--json-min|--quiet]',
+          'suggest (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score] [--brief|--json-min|--quiet]',
       },
       sweep: {
         usage:
-          'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--brief|--json-min|--quiet]',
+          'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]',
       },
       doctor: {
         usage: "doctor [--brief|--json-min|--quiet]",
@@ -65,7 +65,7 @@ export function helpPayload() {
       "update-agents-md": {
         usage: "update-agents-md",
         description:
-          "Appends the machine-memory AGENTS.md template to the current directory's AGENTS.md file (creates it if it doesn't exist)",
+          "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file",
       },
     },
     enums: {

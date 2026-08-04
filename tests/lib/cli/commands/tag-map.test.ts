@@ -28,4 +28,20 @@ describe("tag-map", () => {
     ) as Record<string, unknown>;
     expect(created.tags).toBe("schema,types");
   });
+
+  test("uses mapped tags when suggesting by file path", () => {
+    json("tag-map", "set", "src/auth", "area:auth,topic:identity");
+    json("add", "JWT rotation decision", "--tags", "area:auth");
+    json("add", "Unrelated client note", "--tags", "area:client");
+
+    const result = json(
+      "suggest",
+      "--files",
+      "src/auth/jwt.ts",
+      "--limit",
+      "1",
+      "--json-min",
+    ) as Record<string, unknown>;
+    expect(result.ids).toEqual([1]);
+  });
 });

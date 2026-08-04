@@ -22,13 +22,14 @@ describe("update-agents-md", () => {
     const content = readFileSync(agentsPath, "utf-8");
     expect(content).toContain("# Project memory");
     expect(content).toContain("machine-memory");
-    expect(content).toContain("MANDATORY: Memory scan");
-    expect(content).toContain("One-sweep workflow");
+    expect(content).toContain("exactly one focused retrieval");
+    expect(content).toContain("<!-- machine-memory:start -->");
   });
 
-  test("appends to existing AGENTS.md", () => {
+  test("preserves existing AGENTS.md content", () => {
     const agentsPath = join(getTestDir(), "AGENTS.md");
-    const existingContent = "# Existing Project Documentation\n\nSome existing content here.";
+    const existingContent =
+      "# Existing Project Documentation\n\nSome existing content here.";
     writeFileSync(agentsPath, existingContent);
 
     const { stdout, exitCode } = exec("update-agents-md");
@@ -48,7 +49,7 @@ describe("update-agents-md", () => {
     );
   });
 
-  test("appends multiple times without duplicate headers", () => {
+  test("replaces its managed block idempotently", () => {
     const agentsPath = join(getTestDir(), "AGENTS.md");
 
     exec("update-agents-md");
@@ -57,11 +58,8 @@ describe("update-agents-md", () => {
     exec("update-agents-md");
     const secondContent = readFileSync(agentsPath, "utf-8");
 
-    // Content should be appended, not replaced
-    expect(secondContent).toContain(firstContent);
-    expect(secondContent.length).toBeGreaterThan(firstContent.length);
-    // Should have two occurrences of "# Project memory"
-    const matches = secondContent.match(/# Project memory/g);
-    expect(matches).toHaveLength(2);
+    expect(secondContent).toBe(firstContent);
+    const matches = secondContent.match(/<!-- machine-memory:start -->/g);
+    expect(matches).toHaveLength(1);
   });
 });

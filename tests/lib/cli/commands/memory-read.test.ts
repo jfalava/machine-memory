@@ -19,6 +19,14 @@ describe("get", () => {
     expect(result.error).toBe("Not found");
   });
 
+  test("retrieves multiple memories in one call", () => {
+    json("add", "first");
+    json("add", "second");
+    const result = json("get", "1,2") as Record<string, unknown>;
+    const rows = result.results as Record<string, unknown>[];
+    expect(rows.map((row) => row.id)).toEqual([1, 2]);
+  });
+
   test("errors when no id provided", () => {
     const result = exec("get");
     expect(result.exitCode).toBe(1);
@@ -149,6 +157,18 @@ describe("query", () => {
     >;
     expect(result.count).toBe(1);
     expect(result.ids).toEqual([1]);
+    const summaries = result.results as Record<string, unknown>[];
+    expect(summaries[0]?.tags).toEqual(["auth", "jwt"]);
+  });
+
+  test("limits query candidates", () => {
+    json("add", "JWT policy one");
+    json("add", "JWT policy two");
+    const result = json("query", "jwt", "--limit", "1") as Record<
+      string,
+      unknown
+    >[];
+    expect(result).toHaveLength(1);
   });
 
   test("handles hyphenated search terms safely", () => {
