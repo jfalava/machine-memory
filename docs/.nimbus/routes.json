@@ -8,6 +8,7 @@
     "/human/remote-provision",
     "/human/remote-setup",
     "/human/update-agents-md",
+    "/human/upgrade",
     "/installation",
     "/machine",
     "/machine/add",
@@ -29,7 +30,6 @@
     "/machine/sweep",
     "/machine/tag-map",
     "/machine/update",
-    "/machine/upgrade",
     "/machine/verify",
     "/machine/version"
   ],

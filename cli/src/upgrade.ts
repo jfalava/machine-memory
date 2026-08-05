@@ -186,7 +186,7 @@ function selectAsset(
           error: `No binary found for ${assetName}`,
           available: release.assets.map((candidate) => candidate.name),
         }),
-  );
+      );
 }
 
 type ZipDirectory = {
@@ -212,10 +212,7 @@ function uint32(view: DataView, offset: number): number {
   return view.getUint32(offset, true);
 }
 
-function findZipDirectory(
-  archive: Uint8Array,
-  view: DataView,
-): ZipDirectory {
+function findZipDirectory(archive: Uint8Array, view: DataView): ZipDirectory {
   const endOfCentralDirectorySignature = 0x06054b50;
   const minimumEndRecordSize = 22;
   const maximumCommentSize = 0xffff;
@@ -225,7 +222,11 @@ function findZipDirectory(
   );
   let endOffset = -1;
 
-  for (let offset = archive.length - minimumEndRecordSize; offset >= searchStart; offset -= 1) {
+  for (
+    let offset = archive.length - minimumEndRecordSize;
+    offset >= searchStart;
+    offset -= 1
+  ) {
     if (uint32(view, offset) === endOfCentralDirectorySignature) {
       endOffset = offset;
       break;
@@ -242,7 +243,11 @@ function findZipDirectory(
   if (centralDirectoryEnd > archive.length) {
     throw new Error("Downloaded release has an invalid ZIP directory.");
   }
-  return { entryCount, offset: centralDirectoryOffset, end: centralDirectoryEnd };
+  return {
+    entryCount,
+    offset: centralDirectoryOffset,
+    end: centralDirectoryEnd,
+  };
 }
 
 function readZipEntry(
@@ -268,7 +273,9 @@ function readZipEntry(
     compressedSize: uint32(view, offset + 20),
     uncompressedSize: uint32(view, offset + 24),
     localFileOffset: uint32(view, offset + 42),
-    name: new TextDecoder().decode(archive.subarray(fileNameStart, fileNameEnd)),
+    name: new TextDecoder().decode(
+      archive.subarray(fileNameStart, fileNameEnd),
+    ),
     nextOffset,
   };
 }
@@ -303,7 +310,9 @@ function extractZipEntry(
     );
   }
   if (binary.byteLength !== entry.uncompressedSize) {
-    throw new Error("Downloaded release executable size does not match its ZIP entry.");
+    throw new Error(
+      "Downloaded release executable size does not match its ZIP entry.",
+    );
   }
   return binary;
 }
@@ -313,10 +322,18 @@ export function extractZipBinary(
   archive: Uint8Array,
   expectedName: string,
 ): Uint8Array {
-  const view = new DataView(archive.buffer, archive.byteOffset, archive.byteLength);
+  const view = new DataView(
+    archive.buffer,
+    archive.byteOffset,
+    archive.byteLength,
+  );
   const directory = findZipDirectory(archive, view);
   let offset = directory.offset;
-  for (let entry = 0; entry < directory.entryCount && offset < directory.end; entry += 1) {
+  for (
+    let entry = 0;
+    entry < directory.entryCount && offset < directory.end;
+    entry += 1
+  ) {
     const zipEntry = readZipEntry(archive, view, offset);
     if (zipEntry.name === expectedName) {
       return extractZipEntry(archive, view, zipEntry);

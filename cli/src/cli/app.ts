@@ -85,11 +85,7 @@ function renderError(error: unknown): void {
     return;
   }
   if (error instanceof UpgradeError) {
-    if (HUMAN_COMMANDS.has("upgrade")) {
-      renderHumanUpgradeError(error);
-    } else {
-      printJson(error.payload);
-    }
+    renderHumanUpgradeError(error);
     return;
   }
   if (error instanceof MemoryDatabaseError || error instanceof CommandError) {
