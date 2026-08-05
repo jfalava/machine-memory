@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
+import pc from "picocolors";
 import { handleDoctorCommand } from "./doctor";
 import { handleCoverageCommand } from "./coverage";
 import { handleExportCommand } from "./export";
@@ -26,7 +27,11 @@ import { handleGetCommand } from "./get";
 import { remoteCommand } from "./remote";
 import { VERSION } from "../../constants";
 import { printJson } from "../../cli-utils";
-import { upgrade } from "../../upgrade";
+import {
+  upgrade,
+  type UpgradeProgress,
+  type UpgradeOptions,
+} from "../../upgrade";
 import { helpPayload } from "../help";
 import {
   booleanFlag,
@@ -340,6 +345,57 @@ export const featureCommands = [
   remoteCommand,
 ] as const;
 
+function printUpgradeProgress(progress: UpgradeProgress): void {
+  switch (progress.phase) {
+    case "checking":
+      console.info(`  ${pc.cyan("…")} Checking for the latest release`);
+      return;
+    case "found":
+      if (progress.updateAvailable) {
+        console.info(
+          `  ${pc.green("✓")} Found ${pc.cyan(`v${progress.latestVersion}`)} ${pc.dim(`(current v${progress.currentVersion})`)}`,
+        );
+      } else {
+        console.info(
+          `  ${pc.green("✓")} Already on the latest version ${pc.cyan(`v${progress.currentVersion}`)}`,
+        );
+      }
+      return;
+    case "downloading":
+      console.info(
+        `  ${pc.cyan("…")} Downloading ${pc.dim(progress.assetName)}`,
+      );
+      return;
+    case "installing":
+      console.info(`  ${pc.cyan("…")} Installing the new version`);
+      return;
+  }
+}
+
+function printUpgradeResult(result: Record<string, unknown>): void {
+  if (result.message === "Already up to date") {
+    console.info();
+    console.info(pc.green(pc.bold("✓ machine-memory is up to date")));
+    console.info();
+    return;
+  }
+
+  console.info();
+  console.info(pc.green(pc.bold("✓ machine-memory upgraded successfully")));
+  console.info(
+    `  ${pc.dim("Version")}  ${pc.cyan(`v${String(result.from)}`)} ${pc.dim("→")} ${pc.green(`v${String(result.to)}`)}`,
+  );
+  console.info();
+}
+
+function startUpgradeOutput(): UpgradeOptions {
+  console.info();
+  console.info(pc.bold("machine-memory upgrade"));
+  console.info(`${pc.dim("Current")}  ${pc.cyan(`v${VERSION}`)}`);
+  console.info();
+  return { onProgress: printUpgradeProgress };
+}
+
 export function builtinCommands() {
   const helpCommand = Command.make("help", {}, () =>
     Effect.sync(() => printJson(helpPayload())),
@@ -348,8 +404,9 @@ export function builtinCommands() {
     Effect.sync(() => printJson({ version: VERSION })),
   );
   const upgradeCommand = Command.make("upgrade", {}, () =>
-    upgrade().pipe(
-      Effect.tap((result) => Effect.sync(() => printJson(result))),
+    Effect.sync(startUpgradeOutput).pipe(
+      Effect.flatMap((options) => upgrade(options)),
+      Effect.tap((result) => Effect.sync(() => printUpgradeResult(result))),
     ),
   );
   return [helpCommand, versionCommand, upgradeCommand] as const;

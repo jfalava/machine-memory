@@ -13,9 +13,10 @@ machine-memory upgrade
 
 `upgrade` checks the latest release for
 [`jfalava/machine-memory`](https://github.com/jfalava/machine-memory), selects
-the asset matching the current OS and CPU architecture, downloads it to a
-temporary location, and replaces the running binary. It does not use the
-memory database and needs no backend flag.
+the ZIP asset matching the current OS and CPU architecture, extracts the
+normalized `machine-memory` executable to a temporary location, and replaces
+the running binary. It does not use the memory database and needs no backend
+flag.
 
 The request timeout defaults to 15 seconds and can be changed with
 `MACHINE_MEMORY_UPGRADE_TIMEOUT_MS`. `MACHINE_MEMORY_API_URL` overrides the

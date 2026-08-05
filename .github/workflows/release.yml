@@ -1,4 +1,4 @@
-name: Release
+name: CLI - Release
 
 on:
   push:
@@ -83,10 +83,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          archive_dir="$(dirname "${{ matrix.archive }}")"
+          archive_file="$(basename "${{ matrix.archive }}")"
+          binary_file="$(basename "${{ matrix.outfile }}")"
+          cd "$archive_dir"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            7z a -tzip "${{ matrix.archive }}" "${{ matrix.outfile }}"
+            7z a -tzip "$archive_file" "$binary_file"
           else
-            zip -j "${{ matrix.archive }}" "${{ matrix.outfile }}"
+            zip "$archive_file" "$binary_file"
           fi
 
       - name: Upload release artifact

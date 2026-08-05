@@ -40,6 +40,7 @@ const formatter: CliOutput.Formatter = {
 };
 
 const HUMAN_COMMANDS = new Set([
+  "upgrade",
   "update-agents-md",
   "remote setup",
   "remote provision",
@@ -65,6 +66,13 @@ function renderHumanCommandError(error: CommandError): void {
   console.error();
 }
 
+function renderHumanUpgradeError(error: UpgradeError): void {
+  console.error();
+  console.error(pc.red(pc.bold("✗ Upgrade failed")));
+  console.error(`  ${String(error.message)}`);
+  console.error();
+}
+
 function unknownCommand(args: ReadonlyArray<string>): string | undefined {
   const command = args[0];
   return command && !command.startsWith("-") && !knownCommands.has(command)
@@ -77,7 +85,11 @@ function renderError(error: unknown): void {
     return;
   }
   if (error instanceof UpgradeError) {
-    printJson(error.payload);
+    if (HUMAN_COMMANDS.has("upgrade")) {
+      renderHumanUpgradeError(error);
+    } else {
+      printJson(error.payload);
+    }
     return;
   }
   if (error instanceof MemoryDatabaseError || error instanceof CommandError) {

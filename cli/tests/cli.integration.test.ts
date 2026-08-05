@@ -3,7 +3,11 @@ import { execFile as execFileCallback } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { assetNameForPlatform } from "@/upgrade";
+import {
+  assetNameForPlatform,
+  binaryNameForPlatform,
+  extractZipBinary,
+} from "@/upgrade";
 
 type RunResult = {
   code: number;
@@ -297,14 +301,60 @@ describe("CLI rewrite integration", () => {
 describe("release platform selection", () => {
   it("selects the published asset for each supported target", () => {
     expect(assetNameForPlatform("darwin", "arm64")).toBe(
-      "machine-memory-darwin-arm64",
+      "machine-memory-darwin-arm64.zip",
     );
     expect(assetNameForPlatform("linux", "x64")).toBe(
-      "machine-memory-linux-x64",
+      "machine-memory-linux-x64.zip",
     );
     expect(assetNameForPlatform("win32", "x64")).toBe(
-      "machine-memory-windows-x64.exe",
+      "machine-memory-windows-x64.zip",
     );
     expect(assetNameForPlatform("freebsd", "x64")).toBeUndefined();
+  });
+
+  it("uses normalized executable names inside release archives", () => {
+    expect(binaryNameForPlatform("darwin")).toBe("machine-memory");
+    expect(binaryNameForPlatform("linux")).toBe("machine-memory");
+    expect(binaryNameForPlatform("win32")).toBe("machine-memory.exe");
+    expect(binaryNameForPlatform("freebsd")).toBeUndefined();
+  });
+
+  it("extracts the expected executable from a stored ZIP archive", () => {
+    const name = new TextEncoder().encode("machine-memory");
+    const contents = new TextEncoder().encode("binary");
+    const local = new Uint8Array(30 + name.length + contents.length);
+    const localView = new DataView(local.buffer);
+    localView.setUint32(0, 0x04034b50, true);
+    localView.setUint16(8, 0, true);
+    localView.setUint32(18, contents.length, true);
+    localView.setUint32(22, contents.length, true);
+    localView.setUint16(26, name.length, true);
+    local.set(name, 30);
+    local.set(contents, 30 + name.length);
+
+    const central = new Uint8Array(46 + name.length);
+    const centralView = new DataView(central.buffer);
+    centralView.setUint32(0, 0x02014b50, true);
+    centralView.setUint16(10, 0, true);
+    centralView.setUint32(20, contents.length, true);
+    centralView.setUint32(24, contents.length, true);
+    centralView.setUint16(28, name.length, true);
+    centralView.setUint32(42, 0, true);
+    central.set(name, 46);
+
+    const end = new Uint8Array(22);
+    const endView = new DataView(end.buffer);
+    endView.setUint32(0, 0x06054b50, true);
+    endView.setUint16(8, 1, true);
+    endView.setUint16(10, 1, true);
+    endView.setUint32(12, central.length, true);
+    endView.setUint32(16, local.length, true);
+
+    const archive = new Uint8Array(local.length + central.length + end.length);
+    archive.set(local, 0);
+    archive.set(central, local.length);
+    archive.set(end, local.length + central.length);
+
+    expect(extractZipBinary(archive, "machine-memory")).toEqual(contents);
   });
 });
