@@ -12,18 +12,15 @@ machine-memory remote setup --url <worker-url> --token <worker-token>
 ```
 
 `remote setup` connects the CLI to an already deployed authenticated Worker.
-It normalizes the URL so the database query endpoint ends in `/query`, removes
-any query string or fragment, and stores the URL and token in the operating
-system keychain.
+It normalizes the URL so the database query endpoint ends in `/query`, removes any query string or fragment, and stores the URL and token in the operating system keychain.
 
-If flags are omitted, the command prompts for the missing values. Existing
-credentials are used as defaults when available.
+If flags are omitted, the command prompts for the missing values. Existing credentials are used as defaults when available. The interactive Worker token prompt masks each entered character.
 
 ## Options
 
-| Option | Description |
-| --- | --- |
-| `--url <worker-url>` | Existing Worker URL. `http://` and `https://` are accepted. |
+| Option                   | Description                                                  |
+| ------------------------ | ------------------------------------------------------------ |
+| `--url <worker-url>`     | Existing Worker URL. `http://` and `https://` are accepted.  |
 | `--token <worker-token>` | Token accepted by the Worker’s authenticated query endpoint. |
 
 After setup, database-backed commands can use `--remote`:
@@ -32,5 +29,4 @@ After setup, database-backed commands can use `--remote`:
 machine-memory list --remote
 ```
 
-Credentials are not printed back by the command. If keychain storage fails,
-the command reports the error instead of claiming that setup succeeded.
+Credentials are not printed back by the command. If keychain storage fails, the command reports the error instead of claiming that setup succeeded.

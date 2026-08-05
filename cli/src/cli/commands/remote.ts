@@ -45,6 +45,87 @@ function ask(label: string, fallback: string | undefined): string {
   return value;
 }
 
+async function askMasked(label: string): Promise<string> {
+  const stdin = process.stdin;
+  const stdout = process.stdout;
+
+  // Piped input is not echoed by a terminal. Keep the existing prompt as a
+  // fallback for runtimes that do not expose raw terminal input.
+  if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== "function") {
+    return ask(label, undefined);
+  }
+
+  const wasRaw = stdin.isRaw === true;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdout.write(`${pc.cyan(label)}: `);
+
+  return new Promise<string>((resolve, reject) => {
+    let value = "";
+    let inEscapeSequence = false;
+    const decoder = new TextDecoder();
+
+    const restore = () => {
+      stdin.off("data", onData);
+      stdin.setRawMode(wasRaw);
+      stdin.pause();
+    };
+
+    const cancel = () => {
+      restore();
+      stdout.write("\n");
+      reject(commandError(`${label} input was cancelled.`));
+    };
+
+    const onData = (chunk: Uint8Array | string) => {
+      const input =
+        typeof chunk === "string"
+          ? chunk
+          : decoder.decode(chunk, { stream: true });
+      for (const character of input) {
+        if (inEscapeSequence) {
+          // Ignore terminal cursor/navigation sequences pasted or typed into
+          // the prompt instead of treating them as part of the token.
+          if (/[A-Za-z~]/.test(character)) {
+            inEscapeSequence = false;
+          }
+          continue;
+        }
+        if (character === "\u001b") {
+          inEscapeSequence = true;
+          continue;
+        }
+        if (character === "\r" || character === "\n") {
+          restore();
+          stdout.write("\n");
+          resolve(value.trim());
+          return;
+        }
+        if (character === "\u0003" || character === "\u0004") {
+          cancel();
+          return;
+        }
+        if (character === "\u0008" || character === "\u007f") {
+          const characters = Array.from(value);
+          if (characters.length > 0) {
+            characters.pop();
+            value = characters.join("");
+            stdout.write("\b \b");
+          }
+          continue;
+        }
+        if (character.charCodeAt(0) < 32) {
+          continue;
+        }
+        value += character;
+        stdout.write("*");
+      }
+    };
+
+    stdin.on("data", onData);
+  });
+}
+
 function configuredName(
   context: CommandContext,
   options: {
@@ -100,7 +181,7 @@ export function remoteSetup(context: CommandContext) {
     const token =
       getFlagValue(context.args, "--token") ??
       (currentRemote?.token || undefined) ??
-      ask("Worker token", undefined);
+      (yield* Effect.promise(() => askMasked("Worker token")));
     if (!token) {
       return yield* Effect.fail(commandError("Worker token is required."));
     }
