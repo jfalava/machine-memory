@@ -12,11 +12,11 @@ interactive or operational rather than database-query primitives.
 
 ## Before you begin
 
-Run the CLI from the repository you want to configure. `update-agents-md`
+Run the CLI from the repository you want to configure. `init`
 requires exactly one backend flag:
 
 ```sh
-machine-memory update-agents-md --remote
+machine-memory init --remote
 ```
 
 The remote backend stores its Worker URL and token in the operating system
@@ -27,7 +27,7 @@ when you explicitly want a SQLite database for another project.
 
 | Command | Purpose |
 | --- | --- |
-| [`update-agents-md`](/human/update-agents-md) | Create or replace the managed memory block in `AGENTS.md`. |
+| [`init`](/human/init) | Create or replace the managed memory block in `AGENTS.md`. |
 | [`remote setup`](/human/remote-setup) | Save credentials for an existing authenticated Worker. |
 | [`remote provision`](/human/remote-provision) | Deploy a new Alchemy D1 stack and save its credentials. |
 | [`upgrade`](/human/upgrade) | Download and replace the installed CLI binary from the latest GitHub release. |

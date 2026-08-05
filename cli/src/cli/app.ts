@@ -41,7 +41,7 @@ const formatter: CliOutput.Formatter = {
 
 const HUMAN_COMMANDS = new Set([
   "upgrade",
-  "update-agents-md",
+  "init",
   "remote setup",
   "remote provision",
 ]);
@@ -50,9 +50,9 @@ function renderHumanCommandError(error: CommandError): void {
   console.error();
   console.error(pc.red(pc.bold(`✗ ${error.command} failed`)));
   console.error(`  ${String(error.message)}`);
-  if (error.command === "update-agents-md") {
+  if (error.command === "init") {
     console.error(
-      `  ${pc.dim("Usage:")} machine-memory update-agents-md (--local|--remote)`,
+      `  ${pc.dim("Usage:")} machine-memory init (--local|--remote)`,
     );
   } else if (error.command === "remote setup") {
     console.error(

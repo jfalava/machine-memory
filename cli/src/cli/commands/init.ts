@@ -16,7 +16,7 @@ import {
   type AgentsMemoryBackend,
 } from "./agents-md-content";
 
-export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
+export function handleInitCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
   return Effect.gen(function* () {
     const backendFlags: DatabaseBackendFlags = {
@@ -31,7 +31,7 @@ export function handleUpdateAgentsMdCommand(commandCtx: CommandContext) {
             cause instanceof Error
               ? cause.message
               : "Choose a database backend explicitly with --local or --remote.",
-          command: "update-agents-md",
+          command: "init",
           cause,
         }),
     });

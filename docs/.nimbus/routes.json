@@ -7,7 +7,7 @@
     "/human",
     "/human/remote-provision",
     "/human/remote-setup",
-    "/human/update-agents-md",
+    "/human/init",
     "/human/upgrade",
     "/installation",
     "/machine",

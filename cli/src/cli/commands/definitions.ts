@@ -18,7 +18,7 @@ import {
   handleUpdateCommand,
 } from "./memory-write";
 import { handleTagMapCommand } from "./tag-map";
-import { handleUpdateAgentsMdCommand } from "./update-agents-md";
+import { handleInitCommand } from "./init";
 import { handleDiffCommand } from "./diff";
 import { handleMigrateCommand } from "./migrate";
 import { handleVerifyCommand } from "./verify";
@@ -310,15 +310,15 @@ const tagMapCommand = effectCommand(
   undefined,
   handleTagMapCommand,
 );
-const updateAgentsCommand = effectCommand(
-  "update-agents-md",
+const initCommand = effectCommand(
+  "init",
   {
     local: booleanFlag("local"),
     remote: booleanFlag("remote"),
   },
   [booleanSpec("local"), booleanSpec("remote")],
   undefined,
-  handleUpdateAgentsMdCommand,
+  handleInitCommand,
 );
 
 export const featureCommands = [
@@ -341,7 +341,7 @@ export const featureCommands = [
   exportCommand,
   migrateCommand,
   tagMapCommand,
-  updateAgentsCommand,
+  initCommand,
   remoteCommand,
 ] as const;
 
