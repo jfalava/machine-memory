@@ -40,19 +40,23 @@ jobs:
         include:
           - os: ubuntu-latest
             target: bun-linux-x64
-            outfile: cli/dist/machine-memory-linux-x64
+            outfile: cli/dist/machine-memory
+            archive: cli/dist/machine-memory-linux-x64.zip
             artifact_name: machine-memory-linux-x64
           - os: ubuntu-24.04-arm
             target: bun-linux-arm64
-            outfile: cli/dist/machine-memory-linux-arm64
+            outfile: cli/dist/machine-memory
+            archive: cli/dist/machine-memory-linux-arm64.zip
             artifact_name: machine-memory-linux-arm64
           - os: macos-latest
             target: bun-darwin-arm64
-            outfile: cli/dist/machine-memory-darwin-arm64
+            outfile: cli/dist/machine-memory
+            archive: cli/dist/machine-memory-darwin-arm64.zip
             artifact_name: machine-memory-darwin-arm64
           - os: windows-latest
             target: bun-windows-x64
-            outfile: cli/dist/machine-memory-windows-x64.exe
+            outfile: cli/dist/machine-memory.exe
+            archive: cli/dist/machine-memory-windows-x64.zip
             artifact_name: machine-memory-windows-x64
     runs-on: ${{ matrix.os }}
     steps:
@@ -75,11 +79,21 @@ jobs:
       - name: Build target
         run: bun build --compile --target=${{ matrix.target }} cli/src/app.ts --outfile ${{ matrix.outfile }}
 
-      - name: Upload binary artifact
+      - name: Package release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            7z a -tzip "${{ matrix.archive }}" "${{ matrix.outfile }}"
+          else
+            zip -j "${{ matrix.archive }}" "${{ matrix.outfile }}"
+          fi
+
+      - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.outfile }}
+          path: ${{ matrix.archive }}
 
   release:
     needs: build
