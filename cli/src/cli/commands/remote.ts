@@ -60,70 +60,124 @@ async function askMasked(label: string): Promise<string> {
   stdin.resume();
   stdout.write(`${pc.cyan(label)}: `);
 
-  return new Promise<string>((resolve, reject) => {
-    let value = "";
-    let inEscapeSequence = false;
+  return readMaskedInput(stdin, stdout, wasRaw, label);
+}
+
+type MaskedInputState = {
+  value: string;
+  inEscapeSequence: boolean;
+};
+
+type MaskedCharacterAction = "continue" | "submit" | "cancel";
+
+function handleMaskedCharacter(
+  character: string,
+  state: MaskedInputState,
+  stdout: NodeJS.WriteStream,
+): MaskedCharacterAction {
+  if (state.inEscapeSequence) {
+    // Ignore terminal cursor/navigation sequences pasted or typed into the
+    // prompt instead of treating them as part of the token.
+    if (/[A-Za-z~]/.test(character)) {
+      state.inEscapeSequence = false;
+    }
+    return "continue";
+  }
+  if (character === "\u001b") {
+    state.inEscapeSequence = true;
+    return "continue";
+  }
+  if (character === "\r" || character === "\n") {
+    return "submit";
+  }
+  if (character === "\u0003" || character === "\u0004") {
+    return "cancel";
+  }
+  if (character === "\u0008" || character === "\u007f") {
+    return handleMaskedBackspace(state, stdout);
+  }
+  if (character.charCodeAt(0) < 32) {
+    return "continue";
+  }
+  state.value += character;
+  stdout.write("*");
+  return "continue";
+}
+
+function handleMaskedBackspace(
+  state: MaskedInputState,
+  stdout: NodeJS.WriteStream,
+): MaskedCharacterAction {
+  const characters = Array.from(state.value);
+  if (characters.length > 0) {
+    characters.pop();
+    state.value = characters.join("");
+    stdout.write("\b \b");
+  }
+  return "continue";
+}
+
+function decodeMaskedChunk(
+  chunk: Uint8Array | string,
+  decoder: TextDecoder,
+): string {
+  return typeof chunk === "string"
+    ? chunk
+    : decoder.decode(chunk, { stream: true });
+}
+
+function readMaskedInput(
+  stdin: NodeJS.ReadStream,
+  stdout: NodeJS.WriteStream,
+  wasRaw: boolean,
+  label: string,
+): Promise<string> {
+  return new Promise<string>((resolveInput, reject) => {
+    const state: MaskedInputState = { value: "", inEscapeSequence: false };
     const decoder = new TextDecoder();
 
-    const restore = () => {
-      stdin.off("data", onData);
-      stdin.setRawMode(wasRaw);
-      stdin.pause();
-    };
-
-    const cancel = () => {
-      restore();
-      stdout.write("\n");
-      reject(commandError(`${label} input was cancelled.`));
-    };
-
     const onData = (chunk: Uint8Array | string) => {
-      const input =
-        typeof chunk === "string"
-          ? chunk
-          : decoder.decode(chunk, { stream: true });
+      const input = decodeMaskedChunk(chunk, decoder);
       for (const character of input) {
-        if (inEscapeSequence) {
-          // Ignore terminal cursor/navigation sequences pasted or typed into
-          // the prompt instead of treating them as part of the token.
-          if (/[A-Za-z~]/.test(character)) {
-            inEscapeSequence = false;
-          }
-          continue;
-        }
-        if (character === "\u001b") {
-          inEscapeSequence = true;
-          continue;
-        }
-        if (character === "\r" || character === "\n") {
-          restore();
+        const action = handleMaskedCharacter(character, state, stdout);
+        if (action === "submit") {
+          restoreMaskedInput(stdin, onData, wasRaw);
           stdout.write("\n");
-          resolve(value.trim());
+          resolveInput(state.value.trim());
           return;
         }
-        if (character === "\u0003" || character === "\u0004") {
-          cancel();
+        if (action === "cancel") {
+          cancelMaskedInput({ stdin, stdout, onData, wasRaw, label, reject });
           return;
         }
-        if (character === "\u0008" || character === "\u007f") {
-          const characters = Array.from(value);
-          if (characters.length > 0) {
-            characters.pop();
-            value = characters.join("");
-            stdout.write("\b \b");
-          }
-          continue;
-        }
-        if (character.charCodeAt(0) < 32) {
-          continue;
-        }
-        value += character;
-        stdout.write("*");
       }
     };
 
     stdin.on("data", onData);
   });
+}
+
+function restoreMaskedInput(
+  stdin: NodeJS.ReadStream,
+  onData: (chunk: Uint8Array | string) => void,
+  wasRaw: boolean,
+): void {
+  stdin.off("data", onData);
+  stdin.setRawMode(wasRaw);
+  stdin.pause();
+}
+
+function cancelMaskedInput(options: {
+  stdin: NodeJS.ReadStream;
+  stdout: NodeJS.WriteStream;
+  onData: (chunk: Uint8Array | string) => void;
+  wasRaw: boolean;
+  label: string;
+  reject: (reason?: unknown) => void;
+}): void {
+  restoreMaskedInput(options.stdin, options.onData, options.wasRaw);
+  options.stdout.write("\n");
+  options.reject(commandError(`${options.label} input was cancelled.`));
 }
 
 function configuredName(
