@@ -45,6 +45,141 @@ function ask(label: string, fallback: string | undefined): string {
   return value;
 }
 
+async function askMasked(label: string): Promise<string> {
+  const stdin = process.stdin;
+  const stdout = process.stdout;
+
+  // Piped input is not echoed by a terminal. Keep the existing prompt as a
+  // fallback for runtimes that do not expose raw terminal input.
+  if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== "function") {
+    return ask(label, undefined);
+  }
+
+  const wasRaw = stdin.isRaw === true;
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdout.write(`${pc.cyan(label)}: `);
+
+  return readMaskedInput(stdin, stdout, wasRaw, label);
+}
+
+type MaskedInputState = {
+  value: string;
+  inEscapeSequence: boolean;
+};
+
+type MaskedCharacterAction = "continue" | "submit" | "cancel";
+
+function handleMaskedCharacter(
+  character: string,
+  state: MaskedInputState,
+  stdout: NodeJS.WriteStream,
+): MaskedCharacterAction {
+  if (state.inEscapeSequence) {
+    // Ignore terminal cursor/navigation sequences pasted or typed into the
+    // prompt instead of treating them as part of the token.
+    if (/[A-Za-z~]/.test(character)) {
+      state.inEscapeSequence = false;
+    }
+    return "continue";
+  }
+  if (character === "\u001b") {
+    state.inEscapeSequence = true;
+    return "continue";
+  }
+  if (character === "\r" || character === "\n") {
+    return "submit";
+  }
+  if (character === "\u0003" || character === "\u0004") {
+    return "cancel";
+  }
+  if (character === "\u0008" || character === "\u007f") {
+    return handleMaskedBackspace(state, stdout);
+  }
+  if (character.charCodeAt(0) < 32) {
+    return "continue";
+  }
+  state.value += character;
+  stdout.write("*");
+  return "continue";
+}
+
+function handleMaskedBackspace(
+  state: MaskedInputState,
+  stdout: NodeJS.WriteStream,
+): MaskedCharacterAction {
+  const characters = Array.from(state.value);
+  if (characters.length > 0) {
+    characters.pop();
+    state.value = characters.join("");
+    stdout.write("\b \b");
+  }
+  return "continue";
+}
+
+function decodeMaskedChunk(
+  chunk: Uint8Array | string,
+  decoder: TextDecoder,
+): string {
+  return typeof chunk === "string"
+    ? chunk
+    : decoder.decode(chunk, { stream: true });
+}
+
+function readMaskedInput(
+  stdin: NodeJS.ReadStream,
+  stdout: NodeJS.WriteStream,
+  wasRaw: boolean,
+  label: string,
+): Promise<string> {
+  return new Promise<string>((resolveInput, reject) => {
+    const state: MaskedInputState = { value: "", inEscapeSequence: false };
+    const decoder = new TextDecoder();
+
+    const onData = (chunk: Uint8Array | string) => {
+      const input = decodeMaskedChunk(chunk, decoder);
+      for (const character of input) {
+        const action = handleMaskedCharacter(character, state, stdout);
+        if (action === "submit") {
+          restoreMaskedInput(stdin, onData, wasRaw);
+          stdout.write("\n");
+          resolveInput(state.value.trim());
+          return;
+        }
+        if (action === "cancel") {
+          cancelMaskedInput({ stdin, stdout, onData, wasRaw, label, reject });
+          return;
+        }
+      }
+    };
+
+    stdin.on("data", onData);
+  });
+}
+
+function restoreMaskedInput(
+  stdin: NodeJS.ReadStream,
+  onData: (chunk: Uint8Array | string) => void,
+  wasRaw: boolean,
+): void {
+  stdin.off("data", onData);
+  stdin.setRawMode(wasRaw);
+  stdin.pause();
+}
+
+function cancelMaskedInput(options: {
+  stdin: NodeJS.ReadStream;
+  stdout: NodeJS.WriteStream;
+  onData: (chunk: Uint8Array | string) => void;
+  wasRaw: boolean;
+  label: string;
+  reject: (reason?: unknown) => void;
+}): void {
+  restoreMaskedInput(options.stdin, options.onData, options.wasRaw);
+  options.stdout.write("\n");
+  options.reject(commandError(`${options.label} input was cancelled.`));
+}
+
 function configuredName(
   context: CommandContext,
   options: {
@@ -100,7 +235,7 @@ export function remoteSetup(context: CommandContext) {
     const token =
       getFlagValue(context.args, "--token") ??
       (currentRemote?.token || undefined) ??
-      ask("Worker token", undefined);
+      (yield* Effect.promise(() => askMasked("Worker token")));
     if (!token) {
       return yield* Effect.fail(commandError("Worker token is required."));
     }

@@ -1,53 +1,38 @@
 ---
-import BaseLayout from "../layouts/BaseLayout.astro";
-import Header from "../components/Header.astro";
+import DocsLayout from "../layouts/DocsLayout.astro";
+import { getBreadcrumbs, getPrevNext, getSidebar } from "@cloudflare/nimbus-docs";
 import { config } from "virtual:nimbus/config";
+
+const sidebar = await getSidebar("/", { collection: "docs" });
+const breadcrumbs = await getBreadcrumbs("/", { collection: "docs" });
+const prevNext = await getPrevNext("/", { sidebarTree: sidebar });
 ---
 
-<BaseLayout title={config.title} description={config.description}>
-  <div class="flex flex-col min-h-screen">
-    <Header />
-    <main class="flex-1 mx-auto max-w-3xl w-full px-6 py-24">
-      <h1
-        class="text-foreground leading-tight"
-        style="font-size: var(--nb-h1-size); font-weight: var(--nb-h1-weight); letter-spacing: var(--nb-h1-tracking);"
-      >
-        {config.title}
-      </h1>
-      <p class="mt-2 max-w-2xl text-[1.0625rem] text-muted-foreground leading-relaxed">
-        Machine Memory gives LLM agents a persistent, project-scoped place to
-        store and retrieve facts, decisions, references, and short-lived
-        status snapshots.
-      </p>
+<DocsLayout
+  title={config.title}
+  description={config.description}
+  sidebar={sidebar}
+  headings={false}
+  breadcrumbs={breadcrumbs}
+  prevNext={prevNext}
+>
+  <p>
+    Machine Memory gives LLM agents a persistent, project-scoped place to store
+    and retrieve facts, decisions, references, and short-lived status snapshots.
+  </p>
 
-      <p class="mt-4 max-w-2xl text-muted-foreground leading-relaxed">
-        The CLI records memories for the current repository and keeps the
-        command surface deliberately scriptable: database-backed commands
-        return JSON, while setup commands guide humans through configuration.
-      </p>
+  <h2 id="overview">Overview</h2>
+  <p>
+    The CLI records memories for the current repository and keeps the command
+    surface deliberately scriptable: database-backed commands return JSON,
+    while setup commands guide humans through configuration.
+  </p>
 
-      <div class="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <a
-          href="/human"
-          class="block rounded-lg border border-border p-5 transition-colors hover:border-border-strong no-underline"
-        >
-          <div class="font-medium text-foreground">Human commands</div>
-          <div class="mt-1 text-sm text-muted-foreground">
-            Configure the backend, provision remote storage, and maintain
-            AGENTS.md.
-          </div>
-        </a>
-        <a
-          href="/machine"
-          class="block rounded-lg border border-border p-5 transition-colors hover:border-border-strong no-underline"
-        >
-          <div class="font-medium text-foreground">Machine commands</div>
-          <div class="mt-1 text-sm text-muted-foreground">
-            Read, write, search, validate, export, and maintain project memory
-            from scripts and agents.
-          </div>
-        </a>
-      </div>
-    </main>
-  </div>
-</BaseLayout>
+  <h2 id="getting-started">Getting started</h2>
+  <p>Start with installation, or choose the command reference that matches how you are using Machine Memory:</p>
+  <ul>
+    <li><a href="/installation">Installation</a></li>
+    <li><a href="/human">Human commands</a></li>
+    <li><a href="/machine">Machine commands</a></li>
+  </ul>
+</DocsLayout>

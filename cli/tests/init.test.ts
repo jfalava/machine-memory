@@ -4,7 +4,7 @@ import {
   replaceMemoryBlock,
 } from "@/cli/commands/agents-md-content";
 
-describe("update-agents-md templates", () => {
+describe("init templates", () => {
   it("generates local instructions for local memory", () => {
     const content = agentsMdContent("local");
 

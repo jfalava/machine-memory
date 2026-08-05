@@ -1,6 +1,6 @@
 {
   "name": "@machine-memory/cli",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "bin": {
     "machine-memory": "src/app.ts"
   },
@@ -8,10 +8,10 @@
   "module": "src/app.ts",
   "scripts": {
     "build": "bun build --compile src/app.ts --outfile machine-memory",
-    "build:all": "bun run build:darwin-arm64 && bun run build:darwin-x64 && bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:windows-x64",
+    "build:all": "bun run build:darwin-arm64 && bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:windows-x64",
     "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 src/app.ts --outfile dist/machine-memory-darwin-arm64",
+    "build:darwin-arm64:local": "bun build --compile --target=bun-darwin-arm64 src/app.ts --outfile dist/machine-memory-darwin-arm64 && codesign --force --deep --sign - dist/machine-memory-darwin-arm64",
     "build:darwin-x64": "bun build --compile --target=bun-darwin-x64 src/app.ts --outfile dist/machine-memory-darwin-x64",
-    "build:darwin-x64:local": "bun build --compile --target=bun-darwin-x64 src/app.ts --outfile dist/machine-memory-darwin-x64 && codesign --force --deep --sign - dist/machine-memory-darwin-arm64",
     "build:linux-arm64": "bun build --compile --target=bun-linux-arm64 src/app.ts --outfile dist/machine-memory-linux-arm64",
     "build:linux-x64": "bun build --compile --target=bun-linux-x64 src/app.ts --outfile dist/machine-memory-linux-x64",
     "build:windows-x64": "bun build --compile --target=bun-windows-x64 src/app.ts --outfile dist/machine-memory-windows-x64.exe",
@@ -26,7 +26,7 @@
   "dependencies": {
     "@effect/platform-bun": "catalog:effect",
     "effect": "catalog:effect",
-    "picocolors": "^1.1.1"
+    "picocolors": "1.1.1"
   },
   "devDependencies": {
     "@types/bun": "catalog:types",

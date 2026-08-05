@@ -64,8 +64,8 @@ export function helpPayload() {
       },
       version: { usage: "version" },
       upgrade: { usage: "upgrade" },
-      "update-agents-md": {
-        usage: "update-agents-md (--local|--remote)",
+      init: {
+        usage: "init (--local|--remote)",
         description:
           "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file",
       },

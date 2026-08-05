@@ -1,14 +1,14 @@
 ---
-title: update-agents-md
+title: init
 description: Create or replace the managed machine-memory instructions in AGENTS.md.
 sidebar:
-  order: 1
+  order: 2
 ---
 
 ## Usage
 
 ```sh
-machine-memory update-agents-md (--local|--remote)
+machine-memory init (--local|--remote)
 ```
 
 This command creates `AGENTS.md` when it does not exist, or replaces the
@@ -25,8 +25,8 @@ ran.
 Exactly one flag is required:
 
 ```sh
-machine-memory update-agents-md --remote
-machine-memory update-agents-md --local
+machine-memory init --remote
+machine-memory init --local
 ```
 
 If no remote credentials or local database exist during a first run, the

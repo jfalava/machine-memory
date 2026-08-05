@@ -1,0 +1,40 @@
+---
+title: Installation
+description: Download and install the standalone machine-memory CLI binary.
+---
+
+## Download
+
+Download the binary for your platform from the [latest GitHub
+release](https://github.com/jfalava/machine-memory/releases/latest):
+
+| Platform | Release asset |
+| --- | --- |
+| macOS Apple Silicon | `machine-memory-darwin-arm64.zip` |
+| Linux x64 | `machine-memory-linux-x64.zip` |
+| Linux arm64 | `machine-memory-linux-arm64.zip` |
+| Windows x64 | `machine-memory-windows-x64.zip` |
+
+The release asset name must match your operating system and CPU architecture.
+
+## Install
+
+Extract the release archive for your platform. Put the executable inside
+anywhere on your `PATH`; it is already named `machine-memory` (`machine-memory.exe`
+on Windows). Make the Unix binary executable before using it.
+
+```sh
+chmod +x machine-memory
+```
+
+## Upgrade
+
+Once installed, download and replace the binary with the latest release using:
+
+```sh
+machine-memory upgrade
+```
+
+The command selects the matching release asset and replaces the executable in
+place. See the full [`upgrade` command reference](/human/upgrade) for
+additional options.

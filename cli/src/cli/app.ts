@@ -40,7 +40,8 @@ const formatter: CliOutput.Formatter = {
 };
 
 const HUMAN_COMMANDS = new Set([
-  "update-agents-md",
+  "upgrade",
+  "init",
   "remote setup",
   "remote provision",
 ]);
@@ -49,9 +50,9 @@ function renderHumanCommandError(error: CommandError): void {
   console.error();
   console.error(pc.red(pc.bold(`✗ ${error.command} failed`)));
   console.error(`  ${String(error.message)}`);
-  if (error.command === "update-agents-md") {
+  if (error.command === "init") {
     console.error(
-      `  ${pc.dim("Usage:")} machine-memory update-agents-md (--local|--remote)`,
+      `  ${pc.dim("Usage:")} machine-memory init (--local|--remote)`,
     );
   } else if (error.command === "remote setup") {
     console.error(
@@ -62,6 +63,13 @@ function renderHumanCommandError(error: CommandError): void {
       `  ${pc.dim("Next:")} machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]`,
     );
   }
+  console.error();
+}
+
+function renderHumanUpgradeError(error: UpgradeError): void {
+  console.error();
+  console.error(pc.red(pc.bold("✗ Upgrade failed")));
+  console.error(`  ${String(error.message)}`);
   console.error();
 }
 
@@ -77,7 +85,7 @@ function renderError(error: unknown): void {
     return;
   }
   if (error instanceof UpgradeError) {
-    printJson(error.payload);
+    renderHumanUpgradeError(error);
     return;
   }
   if (error instanceof MemoryDatabaseError || error instanceof CommandError) {
