@@ -2,7 +2,7 @@
 title: upgrade
 description: Upgrade the installed binary from the latest GitHub release.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 ## Usage
@@ -11,14 +11,7 @@ sidebar:
 machine-memory upgrade
 ```
 
-`upgrade` checks the latest release for
-[`jfalava/machine-memory`](https://github.com/jfalava/machine-memory), selects
-the ZIP asset matching the current OS and CPU architecture, extracts the
-normalized `machine-memory` executable to a temporary location, and replaces
-the running binary. It does not use the memory database and needs no backend
-flag.
+`upgrade` checks the latest release for [`jfalava/machine-memory`](https://github.com/jfalava/machine-memory), selects the ZIP asset matching the current OS and CPU architecture, extracts the
+normalized `machine-memory` executable to a temporary location, and replaces the running binary. It does not use the memory database and needs no backend flag.
 
-The request timeout defaults to 15 seconds and can be changed with
-`MACHINE_MEMORY_UPGRADE_TIMEOUT_MS`. `MACHINE_MEMORY_API_URL` overrides the
-GitHub API base, and `MACHINE_MEMORY_BIN_PATH` overrides the binary path used
-for replacement.
+The request timeout defaults to 15 seconds and can be changed with `MACHINE_MEMORY_UPGRADE_TIMEOUT_MS`. `MACHINE_MEMORY_API_URL` overrides the GitHub API base, and `MACHINE_MEMORY_BIN_PATH` overrides the binary path used for replacement.

@@ -1,36 +1,38 @@
 ---
 title: remote provision
-description: Deploy a new Alchemy D1 stack and configure the CLI for it.
+description: Deploy a new Alchemy stack and configure the CLI for it.
 sidebar:
-  order: 4
+  order: 5
 ---
+
+## Prerequisites
+
+`provision` creates the necessary cloud infrastructure for the remote DB.
+
+Currently, it only supports Cloudflare as the remote memory provider.
+
+For the stack to be deployed, you need to have access to a Cloudflare account with permissions to deploy:
+
+- A Worker, that will be the API endpoint that interacts with the database via bindings.
+- A D1 database, where the memories will be stored.
 
 ## Usage
 
 ```sh
-machine-memory remote provision \
-  [--stack-name <name>] \
-  [--database-name <name>] \
-  [--api-name <name>]
+machine-memory remote provision
 ```
 
-This command deploys the Alchemy D1 stack, creates the Worker API, generates
-or reuses a Worker token, and saves the resulting URL and credentials in the
-operating system keychain. The deployed Worker URL is normalized to the
-`/query` endpoint used by the CLI.
+This command deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/d1), creates the Worker API, generates or reuses a Worker token, and saves the resulting URL and credentials in the operating system keychain. The deployed Worker URL is normalized to the `/query` endpoint used by the CLI.
 
 ## Names and defaults
 
-| Option | Environment variable | Default |
-| --- | --- | --- |
-| `--stack-name` | `MACHINE_MEMORY_STACK_NAME` | `machine-memory-remote-db` |
-| `--database-name` | `MACHINE_MEMORY_DB_NAME` | `machine-memory-db` |
-| `--api-name` | `MACHINE_MEMORY_API_NAME` | `machine-memory-api` |
+| Option            | Environment variable        | Default                    |
+| ----------------- | --------------------------- | -------------------------- |
+| `--stack-name`    | `MACHINE_MEMORY_STACK_NAME` | `machine-memory-remote-db` |
+| `--database-name` | `MACHINE_MEMORY_DB_NAME`    | `machine-memory-db`        |
+| `--api-name`      | `MACHINE_MEMORY_API_NAME`   | `machine-memory-api`       |
 
-Flags take precedence over environment variables. Existing names stored with
-remote credentials are used next, followed by the defaults above.
-
-`remote provision` does not take `--remote`; the command itself is what creates
+Flags take precedence over environment variables. Existing names stored with remote credentials are used next, followed by the defaults above.
 
 ```sh
 machine-memory list --remote

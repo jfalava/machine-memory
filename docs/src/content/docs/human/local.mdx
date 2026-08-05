@@ -1,0 +1,42 @@
+---
+title: local
+description: Use a local SQLite database for machine-memory.
+sidebar:
+  order: 3
+---
+
+## Usage
+
+```sh
+machine-memory init --local
+```
+
+The `--local` flag selects a SQLite database on the local filesystem. Use it
+on every database-backed command:
+
+```sh
+machine-memory add "A local project decision" --local
+machine-memory list --local
+```
+
+Only one backend flag is allowed. Do not combine `--local` with `--remote`.
+
+## Database location
+
+By default, the database is `machine-memory.db` in the current repository root. The database and its parent directory are created when the first database-backed command opens it. Set `MACHINE_MEMORY_DB_PATH` to use a different path; a relative path is resolved from the current working directory.
+
+The local backend does not use remote Worker credentials or the operating system keychain. It is useful when memory should remain self-contained in a project or when a remote backend is not available.
+
+This repository uses `--remote`; use `--local` when configuring another project that should store its memory locally.
+
+## Caveats of using a local `.db` file
+
+SQLite databases are binary blobs, so Git can't diff or merge them: concurrent commits from multiple users will produce conflicts that must be resolved by picking one version wholesale, silently discarding the other's data.
+
+Branch-local databases compound this: entries written while working on a throwaway branch live only in that branch's checked-out file, and once the branch is deleted (or the file is overwritten by a checkout/merge), those rows are gone with no recovery path.
+
+### History lesson: Bun `bun.lockb` files.
+
+The core complaint [(GitHub Discussion #409, 2022)](https://github.com/oven-sh/bun/discussions/409): early adopters flagged the binary bun.lockb format as a "HUGE turn off" mainly because it's impossible to diff, though Bun offered a workaround where bun install -y would output as a yarn v1 lockfile for human-readable diffing.
+
+Merge conflicts [(Issue #11863)](https://github.com/oven-sh/bun/issues/11863): the Bun team itself acknowledged that merge conflicts are hard — you can't tell whether to pick `bun.lockb.1` or `bun.lockb.2`, or both, and that PR review tools on GitHub/GitLab couldn't inspect or diff the file natively.

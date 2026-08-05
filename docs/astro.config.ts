@@ -22,7 +22,21 @@ const nimbusConfig = defineNimbusConfig({
       },
       {
         label: "Human commands",
-        items: [{ autogenerate: { directory: "human" } }],
+        items: [
+          { label: "init", link: "/human/init" },
+          { label: "local", link: "/human/local" },
+          {
+            label: "Remote",
+            items: [
+              { label: "setup", link: "/human/remote-setup" },
+              {
+                label: "provision",
+                link: "/human/remote-provision",
+              },
+            ],
+          },
+          { label: "upgrade", link: "/human/upgrade" },
+        ],
         landing: "/human",
       },
       {
