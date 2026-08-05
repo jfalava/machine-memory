@@ -17,6 +17,10 @@ const nimbusConfig = defineNimbusConfig({
   sidebar: {
     items: [
       {
+        label: "Installation",
+        link: "/installation",
+      },
+      {
         label: "Human commands",
         items: [{ autogenerate: { directory: "human" } }],
         landing: "/human",

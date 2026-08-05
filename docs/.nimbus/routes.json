@@ -8,6 +8,7 @@
     "/human/remote-provision",
     "/human/remote-setup",
     "/human/update-agents-md",
+    "/installation",
     "/machine",
     "/machine/add",
     "/machine/coverage",
