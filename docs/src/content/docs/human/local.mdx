@@ -23,11 +23,11 @@ Only one backend flag is allowed. Do not combine `--local` with `--remote`.
 
 ## Database location
 
-By default, the database is `machine-memory.db` in the current repository root. The database and its parent directory are created when the first database-backed command opens it. Set `MACHINE_MEMORY_DB_PATH` to use a different path; a relative path is resolved from the current working directory.
+By default, the database binary that will be generated and used will be called `machine-memory.db` and will be saved in the current repository root.  
+
+The database and its parent directory are created when the first database-backed command opens it. Set `MACHINE_MEMORY_DB_PATH` to use a different path; a relative path is resolved from the current working directory.
 
 The local backend does not use remote Worker credentials or the operating system keychain. It is useful when memory should remain self-contained in a project or when a remote backend is not available.
-
-This repository uses `--remote`; use `--local` when configuring another project that should store its memory locally.
 
 ## Caveats of using a local `.db` file
 
@@ -35,7 +35,7 @@ SQLite databases are binary blobs, so Git can't diff or merge them: concurrent c
 
 Branch-local databases compound this: entries written while working on a throwaway branch live only in that branch's checked-out file, and once the branch is deleted (or the file is overwritten by a checkout/merge), those rows are gone with no recovery path.
 
-### History lesson: Bun `bun.lockb` files.
+### History lesson: `bun.lockb` files.
 
 The core complaint [(GitHub Discussion #409, 2022)](https://github.com/oven-sh/bun/discussions/409): early adopters flagged the binary bun.lockb format as a "HUGE turn off" mainly because it's impossible to diff, though Bun offered a workaround where bun install -y would output as a yarn v1 lockfile for human-readable diffing.
 
