@@ -15,6 +15,8 @@ For the stack to be deployed, you need to have access to a Cloudflare account wi
 
 - A Worker, that will be the API endpoint that interacts with the database via bindings.
 - A D1 database, where the memories will be stored.
+- A Vectorize index, where the memory embeddings will be stored for semantic search.
+- A Workers AI binding, used to generate embeddings for memories and queries.
 
 ## Usage
 
@@ -23,6 +25,15 @@ machine-memory remote provision
 ```
 
 This command deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare), creates the Worker API, generates or reuses a Worker token, and saves the resulting URL and credentials in the operating system keychain.
+
+After provisioning, backfill existing memories into Vectorize:
+
+```sh
+machine-memory reindex --remote
+```
+
+Future adds, updates, imports, deprecations, and deletes synchronize their
+Vectorize records automatically. D1 remains the source of truth.
 
 ## Names and defaults
 

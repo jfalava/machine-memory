@@ -27,6 +27,7 @@
     "/machine/list",
     "/machine/migrate",
     "/machine/query",
+    "/machine/reindex",
     "/machine/stats",
     "/machine/suggest",
     "/machine/sweep",
