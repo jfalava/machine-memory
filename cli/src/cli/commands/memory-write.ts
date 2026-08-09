@@ -31,6 +31,7 @@ import {
   UPDATE_USAGE,
 } from "../features/memory/usage";
 import { repositoryForCurrentDirectory } from "../../repository";
+import { syncMemoryVector } from "../../effect/vector-sync";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 
 const UPSERT_MIN_SIMILARITY = 0.62;
@@ -233,16 +234,22 @@ function maybeHandleAddUpsert(
     if (matched && isStrongUpsertMatch(matched, content, metadata)) {
       const matchedId = Number(matched.id);
       yield* updateFromAddPayload(database, matchedId, content, metadata);
+      const updated = yield* getMemoryById(database, matchedId);
+      if (updated) {
+        yield* syncMemoryVector(database, updated);
+      }
       yield* Effect.sync(() => printUpsertResult("updated", matchedId));
       return true;
     }
     const createdResult = yield* addInsert(database, content, metadata);
-    yield* Effect.sync(() =>
-      printUpsertResult(
-        "created",
-        Number((createdResult as { lastInsertRowid: unknown }).lastInsertRowid),
-      ),
+    const createdId = Number(
+      (createdResult as { lastInsertRowid: unknown }).lastInsertRowid,
     );
+    const created = yield* getMemoryById(database, createdId);
+    if (created) {
+      yield* syncMemoryVector(database, created);
+    }
+    yield* Effect.sync(() => printUpsertResult("created", createdId));
     return true;
   });
 }
@@ -380,6 +387,9 @@ export function handleAddCommand(commandCtx: CommandContext) {
     );
     const created = yield* getMemoryById(database, insertId);
     const createdId = Number(created?.id ?? insertId);
+    if (created) {
+      yield* syncMemoryVector(database, created);
+    }
     const statusCascade =
       metadata.memoryType === "status"
         ? yield* findStatusCascadeCandidates(database, metadata.tags, createdId)
@@ -566,6 +576,9 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       sets,
       params,
     );
+    for (const row of rows) {
+      yield* syncMemoryVector(database, row);
+    }
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
         printJson(rows[0] ?? { error: "Not found" });
@@ -642,6 +655,9 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
       sets,
       params,
     );
+    for (const row of rows) {
+      yield* syncMemoryVector(database, row);
+    }
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
         printJson(rows[0] ?? { error: "Not found" });

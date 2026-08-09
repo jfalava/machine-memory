@@ -2,12 +2,15 @@ import { Effect } from "effect";
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import {
+  HYBRID_SCORE_WEIGHTS,
   SCORE_COMPONENT_WEIGHTS,
   applySqlFilters,
   buildFtsQueryFromTerms,
+  combineHybridResults,
   deriveNeighborhoodFromFiles,
   extractPathTermsFromFiles,
   extractTerms,
+  getMemoryById,
   mergeSuggestionResults,
   minimalResultSummary,
   normalizeSqliteRow,
@@ -21,6 +24,7 @@ import {
   sortByScoreThenRecency,
   uniqueLowerPreserveOrder,
 } from "../shared";
+import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 
 const SWEEP_USAGE =
@@ -56,24 +60,40 @@ function resultIds(results: Record<string, unknown>[]): unknown[] {
   return results.map((entry) => entry.id);
 }
 
+function minimalScoredResultSummary(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const summary = minimalResultSummary(row);
+  for (const component of ["fts_score", "semantic_score", "hybrid_score"]) {
+    if (typeof row[component] === "number") {
+      summary[component] = row[component];
+    }
+  }
+  return summary;
+}
+
 function printScoredResults(
   outputMode: CommandContext["outputMode"],
   results: Record<string, unknown>[],
   options: {
     explainScore: boolean;
+    semantic?: boolean;
+    scoreWeights?: Record<string, unknown>;
     wrapResults?: boolean;
   },
 ) {
+  const showScoreWeights =
+    options.explainScore && options.scoreWeights !== undefined;
   if (outputMode.jsonMin || outputMode.quiet) {
     const payload: Record<string, unknown> = {
       count: results.length,
       ids: resultIds(results),
     };
     if (outputMode.jsonMin) {
-      payload.results = results.map(minimalResultSummary);
+      payload.results = results.map(minimalScoredResultSummary);
     }
-    if (options.explainScore) {
-      payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+    if (showScoreWeights) {
+      payload.score_weights = options.scoreWeights;
     }
     printJson(payload);
     return;
@@ -85,9 +105,7 @@ function printScoredResults(
   if (options.wrapResults) {
     printJson({
       results,
-      ...(options.explainScore
-        ? { score_weights: SCORE_COMPONENT_WEIGHTS }
-        : {}),
+      ...(showScoreWeights ? { score_weights: options.scoreWeights } : {}),
     });
     return;
   }
@@ -149,6 +167,109 @@ function fetchQueryResults(
     );
 }
 
+function fetchSemanticCandidates(
+  commandCtx: CommandContext,
+  term: string,
+  topK: number,
+): Effect.Effect<QueryResults, MemoryDatabaseError> {
+  const database = requireDatabase(commandCtx);
+  const vectorize = database.vectorize;
+  if (!vectorize) {
+    usageError("Semantic search requires the remote backend: query --remote.");
+  }
+
+  const filters = parseCommonFilters(commandCtx.args);
+  const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
+  const status =
+    filters.status ?? (filters.includeDeprecated ? undefined : "active");
+
+  return vectorize
+    .search({
+      repository: repositoryForCurrentDirectory(),
+      query: term,
+      top_k: topK,
+      ...(status ? { status } : {}),
+      ...(filters.memoryType ? { memory_type: filters.memoryType } : {}),
+      ...(filters.certainty ? { certainty: filters.certainty } : {}),
+    })
+    .pipe(
+      Effect.flatMap((searchResult) =>
+        Effect.gen(function* () {
+          const results: Record<string, unknown>[] = [];
+          for (const match of searchResult.matches) {
+            const id = Number(match.id);
+            if (!Number.isInteger(id)) {
+              continue;
+            }
+            const row = yield* getMemoryById(database, id);
+            if (!row) {
+              continue;
+            }
+            if (
+              filters.tag &&
+              !(typeof row.tags === "string" ? row.tags : "")
+                .toLowerCase()
+                .includes(filters.tag.toLowerCase())
+            ) {
+              continue;
+            }
+            results.push({
+              ...row,
+              score: match.score,
+              semantic_score: match.score,
+            });
+          }
+          return { results, queryTokens, filters };
+        }),
+      ),
+    );
+}
+
+function fetchSemanticResults(
+  commandCtx: CommandContext,
+  term: string,
+  options: FetchResultsOptions,
+): Effect.Effect<QueryResults, MemoryDatabaseError> {
+  const limit = options.limit ?? 8;
+  const topK = Math.min(50, Math.max(limit * 3, limit));
+  return fetchSemanticCandidates(commandCtx, term, topK).pipe(
+    Effect.map((result) => ({
+      ...result,
+      results: result.results.slice(0, limit),
+    })),
+  );
+}
+
+function fetchHybridResults(
+  commandCtx: CommandContext,
+  term: string,
+  options: FetchResultsOptions,
+): Effect.Effect<QueryResults, MemoryDatabaseError> {
+  const limit = options.limit ?? 8;
+  const semanticTopK = Math.min(50, Math.max(limit * 4, 12));
+  return Effect.all(
+    [
+      fetchQueryResults(commandCtx, term, {
+        explainScore: options.explainScore,
+        limit: 100,
+      }),
+      fetchSemanticCandidates(commandCtx, term, semanticTopK),
+    ],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(([fts, semantic]) => ({
+      results: combineHybridResults(
+        fts.results,
+        semantic.results,
+        limit,
+        options.explainScore,
+      ),
+      queryTokens: fts.queryTokens,
+      filters: fts.filters,
+    })),
+  );
+}
+
 export function handleQueryCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args, outputMode } = commandCtx;
@@ -157,10 +278,23 @@ export function handleQueryCommand(commandCtx: CommandContext) {
       usageError("Usage: query <search_term>");
     }
     const explainScore = explainScoreEnabled(args);
-    const { results, queryTokens, filters } = yield* fetchQueryResults(
+    const semantic = hasFlag(args, "--semantic");
+    const hybrid = hasFlag(args, "--hybrid");
+    if (semantic && hybrid) {
+      usageError("Use either --semantic or --hybrid, not both.");
+    }
+    const fetchResults = hybrid
+      ? fetchHybridResults
+      : semantic
+        ? fetchSemanticResults
+        : fetchQueryResults;
+    const { results, queryTokens, filters } = yield* fetchResults(
       commandCtx,
       term,
-      { explainScore, limit: parseResultLimit(args) },
+      {
+        explainScore,
+        limit: parseResultLimit(args),
+      },
     );
     yield* Effect.sync(() => {
       if (results.length === 0) {
@@ -169,6 +303,12 @@ export function handleQueryCommand(commandCtx: CommandContext) {
       }
       printScoredResults(outputMode, results, {
         explainScore,
+        semantic,
+        scoreWeights: hybrid
+          ? HYBRID_SCORE_WEIGHTS
+          : semantic
+            ? undefined
+            : SCORE_COMPONENT_WEIGHTS,
         wrapResults: explainScore,
       });
     });

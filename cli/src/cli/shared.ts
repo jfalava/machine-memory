@@ -385,6 +385,12 @@ export const SCORE_COMPONENT_WEIGHTS = {
   ftsRank: { multiplier: -10, minPoints: 0, maxPoints: 30 },
 } as const;
 
+export const HYBRID_SCORE_WEIGHTS = {
+  fts: 0.55,
+  semantic: 0.45,
+  scale: 100,
+} as const;
+
 export type ScoreBreakdown = {
   recency: number;
   certainty: number;
@@ -510,6 +516,90 @@ export function shapeRowsWithScore(
     delete rest.fts_rank;
     return rest;
   });
+}
+
+function normalizeHybridComponent(value: number, values: number[]): number {
+  const finiteValues = values.filter((candidate) => Number.isFinite(candidate));
+  if (finiteValues.length === 0 || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  const max = Math.max(...finiteValues);
+  const min = Math.min(...finiteValues);
+  if (max <= 0) {
+    return 0;
+  }
+  if (max === min) {
+    return 1;
+  }
+  return Math.max(0, Math.min(1, (value - min) / (max - min)));
+}
+
+export function combineHybridResults(
+  ftsResults: Record<string, unknown>[],
+  semanticResults: Record<string, unknown>[],
+  limit: number,
+  explainScore = false,
+): Record<string, unknown>[] {
+  const ftsById = new Map(
+    ftsResults.map((row) => [String(row.id), row] as const),
+  );
+  const semanticById = new Map(
+    semanticResults.map((row) => [String(row.id), row] as const),
+  );
+  const ids = [...new Set([...ftsById.keys(), ...semanticById.keys()])];
+  const ftsValues = ids.map((id) => Number(ftsById.get(id)?.score ?? 0));
+  const semanticValues = ids.map((id) =>
+    Number(semanticById.get(id)?.semantic_score ?? 0),
+  );
+
+  const combined = ids.map((id) => {
+    const ftsRow = ftsById.get(id);
+    const semanticRow = semanticById.get(id);
+    const ftsScore = Number(ftsRow?.score ?? 0);
+    const semanticScore = Number(semanticRow?.semantic_score ?? 0);
+    const normalizedFts = normalizeHybridComponent(ftsScore, ftsValues);
+    const normalizedSemantic = normalizeHybridComponent(
+      semanticScore,
+      semanticValues,
+    );
+    const ftsContribution =
+      normalizedFts * HYBRID_SCORE_WEIGHTS.fts * HYBRID_SCORE_WEIGHTS.scale;
+    const semanticContribution =
+      normalizedSemantic *
+      HYBRID_SCORE_WEIGHTS.semantic *
+      HYBRID_SCORE_WEIGHTS.scale;
+    const hybridScore = Number(
+      (ftsContribution + semanticContribution).toFixed(3),
+    );
+    const row: Record<string, unknown> = {
+      ...(ftsRow ?? semanticRow),
+      score: hybridScore,
+      fts_score: Number(ftsScore.toFixed(3)),
+      semantic_score: Number(semanticScore.toFixed(6)),
+      hybrid_score: hybridScore,
+    };
+    delete row.score_breakdown;
+    if (explainScore) {
+      row.score_breakdown = {
+        fts: {
+          raw: Number(ftsScore.toFixed(3)),
+          normalized: Number(normalizedFts.toFixed(6)),
+          weight: HYBRID_SCORE_WEIGHTS.fts,
+          contribution: Number(ftsContribution.toFixed(3)),
+        },
+        semantic: {
+          raw: Number(semanticScore.toFixed(6)),
+          normalized: Number(normalizedSemantic.toFixed(6)),
+          weight: HYBRID_SCORE_WEIGHTS.semantic,
+          contribution: Number(semanticContribution.toFixed(3)),
+        },
+        total: hybridScore,
+      };
+    }
+    return row;
+  });
+
+  return sortByScoreThenRecency(combined).slice(0, limit);
 }
 
 export function sortByScoreThenRecency(

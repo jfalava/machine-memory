@@ -15,6 +15,7 @@ import {
   canonicalizeCertainty,
   detectPotentialConflicts,
   findExactDuplicate,
+  getMemoryById,
   isMemoryStatus,
   isMemoryType,
   normalizeCertaintyValue,
@@ -25,6 +26,7 @@ import {
   sqliteDateToMs,
   stringValue,
 } from "../shared";
+import { syncMemoryVector } from "../../effect/vector-sync";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { resolve } from "node:path";
@@ -426,10 +428,17 @@ export function handleImportCommand(commandCtx: CommandContext) {
       commandCtx.fileSystem,
     );
     const results: Record<string, unknown>[] = [];
+    const database = requireDatabase(commandCtx);
     for (const [index, rawEntry] of parsed.entries()) {
-      results.push(
-        yield* processImportEntry(requireDatabase(commandCtx), index, rawEntry),
-      );
+      const result = yield* processImportEntry(database, index, rawEntry);
+      results.push(result);
+      if (result.status === "success") {
+        const id = Number(result.id);
+        const memory = yield* getMemoryById(database, id);
+        if (memory) {
+          yield* syncMemoryVector(database, memory);
+        }
+      }
     }
     yield* Effect.sync(() => printJson({ results }));
   });

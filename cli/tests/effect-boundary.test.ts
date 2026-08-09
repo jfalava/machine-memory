@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 import { CommandError, MemoryDatabaseError } from "@/effect/errors";
 import { compareFact } from "@/cli/features/memory/compare";
-import { normalizeSqliteRow, parseIdSpec } from "@/cli/shared";
+import {
+  combineHybridResults,
+  normalizeSqliteRow,
+  parseIdSpec,
+} from "@/cli/shared";
 import {
   databaseConfig,
   loadDatabaseConfig,
@@ -47,6 +51,34 @@ describe("Effect application boundaries", () => {
     expect(compareFact("Effect is used", "Effect is not used").conflict).toBe(
       true,
     );
+  });
+
+  it("combines lexical and semantic relevance with an explanation", () => {
+    const results = combineHybridResults(
+      [
+        { id: 1, score: 90 },
+        { id: 2, score: 50 },
+      ],
+      [
+        { id: 2, score: 0.95, semantic_score: 0.95 },
+        { id: 3, score: 0.8, semantic_score: 0.8 },
+      ],
+      3,
+      true,
+    );
+
+    expect(results.map((row) => row.id)).toEqual([2, 1, 3]);
+    expect(results[0]).toMatchObject({
+      fts_score: 50,
+      semantic_score: 0.95,
+      hybrid_score: 75.556,
+      score: 75.556,
+    });
+    expect(results[0]?.score_breakdown).toMatchObject({
+      fts: { weight: 0.55 },
+      semantic: { weight: 0.45 },
+      total: 75.556,
+    });
   });
 
   it("selects the remote backend from explicit configuration", async () => {

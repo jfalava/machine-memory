@@ -14,6 +14,7 @@ import {
 } from "../database-config";
 import { MemoryDatabaseError } from "./errors";
 import { remoteLayer } from "./remote-database";
+import type { MemoryVectorApi } from "./vectorize";
 
 export { MemoryDatabaseError } from "./errors";
 
@@ -30,6 +31,7 @@ export type MemoryDatabaseApi = {
     sql: string,
     params?: SqlQueryBinding[],
   ) => Effect.Effect<unknown[], MemoryDatabaseError>;
+  readonly vectorize?: MemoryVectorApi;
 };
 
 export class MemoryDatabase extends Context.Service<

@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import type { SqlQueryBinding } from "../db";
 import { MemoryDatabase, type MemoryDatabaseApi } from "./database";
 import { MemoryDatabaseError } from "./errors";
+import { remoteVectorApi } from "./vectorize";
 
 type RemoteQueryOperation = "run" | "get" | "all";
 
@@ -10,6 +11,25 @@ type RemoteQueryResponse = {
   readonly result?: unknown;
   readonly error?: unknown;
 };
+
+async function readRemoteResponse(
+  response: Response,
+): Promise<RemoteQueryResponse> {
+  const text = await response.text();
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("response was not a JSON object");
+    }
+    return parsed as RemoteQueryResponse;
+  } catch (cause) {
+    const contentType = response.headers.get("content-type") ?? "unknown";
+    throw new Error(
+      `Remote database returned non-JSON HTTP ${response.status} (${contentType}).`,
+      { cause },
+    );
+  }
+}
 
 function remoteError(
   operation: RemoteQueryOperation,
@@ -43,7 +63,7 @@ function query(
         headers,
         body: JSON.stringify({ operation, sql, params }),
       });
-      const body = (await response.json()) as RemoteQueryResponse;
+      const body = await readRemoteResponse(response);
       if (!response.ok || body.ok !== true) {
         const message =
           typeof body.error === "string"
@@ -74,6 +94,7 @@ function remoteApi(url: string, token: string | undefined): MemoryDatabaseApi {
               ),
         ),
       ),
+    vectorize: remoteVectorApi(url, token),
   };
 }
 
