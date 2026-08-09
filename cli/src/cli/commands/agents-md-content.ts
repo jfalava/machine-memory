@@ -6,8 +6,7 @@ export type AgentsMemoryBackend = "local" | "remote";
 const AGENTS_MD_BACKEND_CONTENT: Record<AgentsMemoryBackend, string[]> = {
   local: [
     "This project uses `machine-memory` with a local SQLite database at `machine-memory.db`.",
-    "On first setup, `machine-memory init` can initialize local memory, connect an existing remote Worker, or provision the Alchemy D1 stack. Remote provisioning accepts `--stack-name`, `--database-name`, and `--api-name` through `machine-memory remote provision`.",
-    "Every database-backed command requires exactly one backend flag: use `--local` for this repository.",
+    "Every database-backed command requires exactly one backend flag. For this one use `--local` for this repository.",
     "Run `machine-memory doctor` during maintenance, not every task. Ensure `machine-memory.db` is writable before memory writes.",
   ],
   remote: [

@@ -2,9 +2,7 @@
 
 ## Project memory
 
-This project uses `machine-memory` with a shared remote Worker-backed database.
-Remote credentials are stored in the OS keychain. To change them, use `machine-memory remote setup`; to provision a new Alchemy D1 stack, use `machine-memory remote provision` with optional `--stack-name`, `--database-name`, and `--api-name`.
-Every database-backed command requires exactly one backend flag. Use `--remote` for this repository and do not pass both flags.
+Every database-backed command requires exactly one backend flag. For this one use `--remote` for this repository and do not pass both flags.
 Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.
 
 ⚠️ MANDATORY: Complete the memory scan BEFORE any code changes. Skipping it causes rework, regressions, and duplicated decisions.
