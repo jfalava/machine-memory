@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
+import type { MemoryDatabaseApi } from "@/effect/database";
 import { CommandError, MemoryDatabaseError } from "@/effect/errors";
+import { handleReindexCommand } from "@/cli/commands/reindex";
+import type { CommandContext } from "@/cli/runtime/context";
 import { compareFact } from "@/cli/features/memory/compare";
 import {
   combineHybridResults,
@@ -51,6 +54,63 @@ describe("Effect application boundaries", () => {
     expect(compareFact("Effect is used", "Effect is not used").conflict).toBe(
       true,
     );
+  });
+
+  it("reports failed reindex upserts before failing, including quiet mode", async () => {
+    const failure = new MemoryDatabaseError({
+      operation: "vectorize/upsert",
+      message: "Vectorize unavailable",
+      cause: undefined,
+    });
+    const database: MemoryDatabaseApi = {
+      run: () => Effect.succeed(undefined),
+      get: () => Effect.succeed(null),
+      all: () =>
+        Effect.succeed([
+          {
+            id: 1,
+            repository: "jfalava/machine-memory",
+            content: "A memory that needs indexing",
+          },
+        ]),
+      vectorize: {
+        upsert: () => Effect.fail(failure),
+        delete: () => Effect.succeed({ id: "1", mutationId: "mutation" }),
+        search: () => Effect.succeed({ count: 0, matches: [] }),
+      },
+    };
+    const context = (outputMode: {
+      jsonMin: boolean;
+      quiet: boolean;
+    }): CommandContext => ({
+      args: ["--remote"],
+      outputMode: {
+        brief: false,
+        jsonMin: outputMode.jsonMin,
+        noConflicts: false,
+        quiet: outputMode.quiet,
+      },
+      database,
+      fileSystem: {} as CommandContext["fileSystem"],
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    try {
+      const jsonExit = await Effect.runPromiseExit(
+        handleReindexCommand(context({ jsonMin: true, quiet: false })),
+      );
+      expect(jsonExit._tag).toBe("Failure");
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('"failed":1'));
+
+      info.mockClear();
+      const quietExit = await Effect.runPromiseExit(
+        handleReindexCommand(context({ jsonMin: false, quiet: true })),
+      );
+      expect(quietExit._tag).toBe("Failure");
+      expect(info).not.toHaveBeenCalled();
+    } finally {
+      info.mockRestore();
+    }
   });
 
   it("combines lexical and semantic relevance with an explanation", () => {
