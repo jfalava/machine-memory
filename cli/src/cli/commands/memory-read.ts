@@ -10,7 +10,6 @@ import {
   deriveNeighborhoodFromFiles,
   extractPathTermsFromFiles,
   extractTerms,
-  getMemoryById,
   mergeSuggestionResults,
   minimalResultSummary,
   normalizeSqliteRow,
@@ -195,13 +194,31 @@ function fetchSemanticCandidates(
     .pipe(
       Effect.flatMap((searchResult) =>
         Effect.gen(function* () {
+          const validIds = searchResult.matches
+            .map((match) => Number(match.id))
+            .filter((id) => Number.isInteger(id));
+          if (validIds.length === 0) {
+            return { results: [], queryTokens, filters };
+          }
+
+          const rows = yield* database.all(
+            `SELECT * FROM memories
+             WHERE repository = ? AND id IN (${validIds.map(() => "?").join(", ")})`,
+            [repositoryForCurrentDirectory(), ...validIds],
+          );
+          const rowsById = new Map(
+            rows.map((row) => {
+              const normalized = normalizeSqliteRow(row);
+              return [Number(normalized.id), normalized] as const;
+            }),
+          );
           const results: Record<string, unknown>[] = [];
           for (const match of searchResult.matches) {
             const id = Number(match.id);
             if (!Number.isInteger(id)) {
               continue;
             }
-            const row = yield* getMemoryById(database, id);
+            const row = rowsById.get(id);
             if (!row) {
               continue;
             }
