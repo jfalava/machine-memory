@@ -13,14 +13,18 @@ type QueryOperation = "run" | "get" | "all";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5" as const;
 const EMBEDDING_DIMENSIONS = 768;
+const MAX_EMBEDDING_TOKENS = 512;
 const MAX_NAMESPACE_BYTES = 64;
 const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 50;
+const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
+const INTERNAL_ERROR = "Internal server error.";
 
 type QueryRequest = {
   readonly operation: QueryOperation;
   readonly sql: string;
   readonly params: ReadonlyArray<unknown>;
+  readonly repository: string;
 };
 
 type MemoryDocument = {
@@ -93,14 +97,36 @@ function validateNamespace(repository: string): string {
   return repository;
 }
 
+function parseRepository(candidate: Record<string, unknown>): string {
+  return validateNamespace(parseRequiredString(candidate, "repository"));
+}
+
+function estimateEmbeddingTokens(text: string): number {
+  const pieces = text.match(/\S+/gu) ?? [];
+  return pieces.reduce(
+    (total, piece) =>
+      total + Math.max(1, Math.ceil(Array.from(piece).length / 4)),
+    0,
+  );
+}
+
+function validateEmbeddingText(text: string, label: string): string {
+  if (estimateEmbeddingTokens(text) > MAX_EMBEDDING_TOKENS) {
+    throw new Error(
+      `${label} must be at most ${MAX_EMBEDDING_TOKENS} tokens for embedding.`,
+    );
+  }
+  return text;
+}
+
 function parseMemoryDocument(value: unknown): MemoryDocument {
   if (!value || typeof value !== "object") {
     throw new Error("The request body must be a JSON object.");
   }
   const candidate = value as Record<string, unknown>;
-  return {
+  const document = {
     id: parseMemoryId(candidate),
-    repository: validateNamespace(parseRequiredString(candidate, "repository")),
+    repository: parseRepository(candidate),
     content: parseRequiredString(candidate, "content"),
     tags: parseOptionalString(candidate, "tags", ""),
     context: parseOptionalString(candidate, "context", ""),
@@ -108,6 +134,8 @@ function parseMemoryDocument(value: unknown): MemoryDocument {
     status: parseOptionalString(candidate, "status", "active"),
     certainty: parseOptionalString(candidate, "certainty", "inferred"),
   };
+  validateEmbeddingText(buildEmbeddingText(document), "Document text");
+  return document;
 }
 
 function parseSemanticSearchRequest(value: unknown): SemanticSearchRequest {
@@ -126,9 +154,13 @@ function parseSemanticSearchRequest(value: unknown): SemanticSearchRequest {
       `top_k must be an integer between 1 and ${MAX_SEARCH_LIMIT}.`,
     );
   }
+  const query = validateEmbeddingText(
+    parseRequiredString(candidate, "query"),
+    "Query",
+  );
   return {
-    repository: validateNamespace(parseRequiredString(candidate, "repository")),
-    query: parseRequiredString(candidate, "query"),
+    repository: parseRepository(candidate),
+    query,
     topK: rawTopK,
     status: parseOptionalString(candidate, "status", "") || undefined,
     memoryType: parseOptionalString(candidate, "memory_type", "") || undefined,
@@ -214,10 +246,12 @@ function parseQueryRequest(value: unknown): QueryRequest {
   ) {
     throw new Error("The request params must be SQLite JSON values.");
   }
+  const repository = parseRepository(candidate);
   return {
     operation,
     sql: candidate.sql,
     params: candidate.params,
+    repository,
   };
 }
 
@@ -376,7 +410,17 @@ export default Cloudflare.Worker<{}>()(
           );
         }
 
-        const body = yield* request.json;
+        const bodyResult = yield* request.json.pipe(
+          Effect.map((body) => ({ ok: true as const, body })),
+          Effect.catchCause(() => Effect.succeed({ ok: false as const })),
+        );
+        if (!bodyResult.ok) {
+          return yield* HttpServerResponse.json(
+            { ok: false, error: INVALID_JSON_BODY_ERROR },
+            { status: 400 },
+          );
+        }
+        const body = bodyResult.body;
         if (request.url === "/query") {
           return yield* handleQuery(body);
         }
@@ -391,9 +435,9 @@ export default Cloudflare.Worker<{}>()(
 
         return yield* handleVectorizeSearch(body);
       }).pipe(
-        Effect.catchCause((cause) =>
+        Effect.catchCause(() =>
           HttpServerResponse.json(
-            { ok: false, error: String(cause) },
+            { ok: false, error: INTERNAL_ERROR },
             { status: 500 },
           ),
         ),

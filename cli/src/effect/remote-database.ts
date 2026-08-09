@@ -3,6 +3,7 @@ import type { SqlQueryBinding } from "../db";
 import { MemoryDatabase, type MemoryDatabaseApi } from "./database";
 import { MemoryDatabaseError } from "./errors";
 import { remoteVectorApi } from "./vectorize";
+import { repositoryForCurrentDirectory } from "../repository";
 
 type RemoteQueryOperation = "run" | "get" | "all";
 
@@ -61,7 +62,12 @@ function query(
       const response = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify({ operation, sql, params }),
+        body: JSON.stringify({
+          operation,
+          sql,
+          params,
+          repository: repositoryForCurrentDirectory(),
+        }),
       });
       const body = await readRemoteResponse(response);
       if (!response.ok || body.ok !== true) {
