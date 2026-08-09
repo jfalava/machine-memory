@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:effect",
+    "@huggingface/tokenizers": "0.1.3",
     "effect": "catalog:effect",
     "picocolors": "1.1.1"
   },

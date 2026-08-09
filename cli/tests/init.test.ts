@@ -15,6 +15,7 @@ describe("init templates", () => {
       'machine-memory query "topic" --local --json-min',
     );
     expect(content).toContain("Ensure `machine-memory.db` is writable");
+    expect(content).toContain("below 512 tokens");
     expect(content).not.toContain("shared remote Worker-backed database");
   });
 
@@ -25,7 +26,8 @@ describe("init templates", () => {
     expect(content).toContain(
       'machine-memory query "topic" --remote --json-min',
     );
-    expect(content).toContain("machine-memory remote setup");
+    expect(content).toContain("below 512 tokens");
+    expect(content).not.toContain("machine-memory remote setup");
     expect(content).not.toContain("Ensure `machine-memory.db` is writable");
   });
 

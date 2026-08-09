@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { MemoryDatabaseError } from "./errors";
+import { validateBgeEmbeddingText } from "./bge-tokenizer";
 
 export type MemoryVectorDocument = {
   readonly id: string;
@@ -49,6 +50,21 @@ export type MemoryVectorSearchRequest = {
   readonly memory_type?: string;
   readonly certainty?: string;
 };
+
+export function memoryVectorEmbeddingText(
+  document: MemoryVectorDocument,
+): string {
+  return [
+    document.content,
+    document.tags ? `Tags: ${document.tags}` : undefined,
+    document.context ? `Context: ${document.context}` : undefined,
+    `Memory type: ${document.memory_type}`,
+    `Status: ${document.status}`,
+    `Certainty: ${document.certainty}`,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join("\n");
+}
 
 type RemoteVectorResponse = {
   readonly ok?: unknown;
@@ -247,6 +263,7 @@ type RequestOptions<T> = {
   readonly path: string;
   readonly body: unknown;
   readonly parse: (value: unknown) => T;
+  readonly beforeRequest?: () => Promise<void>;
 };
 
 function request<T>(
@@ -254,6 +271,7 @@ function request<T>(
 ): Effect.Effect<T, MemoryDatabaseError> {
   return Effect.tryPromise({
     try: async () => {
+      await options.beforeRequest?.();
       const headers: Record<string, string> = {
         "content-type": "application/json",
       };
@@ -292,6 +310,11 @@ export function remoteVectorApi(
         path: "/vectorize/upsert",
         body: document,
         parse: parseMutation,
+        beforeRequest: () =>
+          validateBgeEmbeddingText(
+            memoryVectorEmbeddingText(document),
+            "Memory",
+          ),
       }),
     delete: (id) =>
       request({
