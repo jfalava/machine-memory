@@ -40,6 +40,7 @@ const nimbusConfig = defineNimbusConfig({
             ],
           },
           { label: "upgrade", link: "/human/upgrade" },
+          { label: "reindex", link: "/human/reindex" },
         ],
         landing: "/human",
       },
