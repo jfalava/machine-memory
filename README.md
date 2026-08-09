@@ -13,5 +13,5 @@ Machine Memory gives LLM agents a persistent, project-scoped place to store and 
 This repository is a monorepo:
 
 - `docs/` — The documentation site, built with [Nimbus Docs](https://nimbus-docs.com/).
-- `cli/` — The `machine-memory` command-line interface for managing memories.
+- `cli/` — The `machine-memory` command-line interface for managing memories, built with [Effect](https://www.effect.website/)
 - `remote-db/d1/` — The remote database IaC, built with [Alchemy](https://alchemy.run/cloudflare/).
