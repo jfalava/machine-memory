@@ -5,6 +5,7 @@ import { compareFact } from "@/cli/features/memory/compare";
 import { normalizeSqliteRow, parseIdSpec } from "@/cli/shared";
 import {
   databaseConfig,
+  loadDatabaseConfig,
   normalizeRemoteUrl,
   validateDatabaseBackendFlags,
 } from "@/database-config";
@@ -48,13 +49,36 @@ describe("Effect application boundaries", () => {
     );
   });
 
-  it("selects the remote backend from explicit configuration", () => {
+  it("selects the remote backend from explicit configuration", async () => {
     expect(
       databaseConfig({
         MACHINE_MEMORY_DB_URL: "https://memory.example/query",
         MACHINE_MEMORY_DB_TOKEN: "secret",
       }),
     ).toEqual({
+      kind: "remote",
+      url: "https://memory.example/query",
+      token: "secret",
+    });
+    expect(
+      databaseConfig({
+        MACHINE_MEMORY_DB_URL: "https://memory.example",
+        MACHINE_MEMORY_DB_TOKEN: "secret",
+      }),
+    ).toEqual({
+      kind: "remote",
+      url: "https://memory.example/query",
+      token: "secret",
+    });
+    await expect(
+      loadDatabaseConfig(
+        {
+          MACHINE_MEMORY_DB_URL: "https://memory.example",
+          MACHINE_MEMORY_DB_TOKEN: "secret",
+        },
+        { local: false, remote: true },
+      ),
+    ).resolves.toEqual({
       kind: "remote",
       url: "https://memory.example/query",
       token: "secret",

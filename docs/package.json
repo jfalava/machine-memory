@@ -7,7 +7,7 @@
     "build": "astro build",
     "check": "bun typecheck && bun lint",
     "deploy": "wrangler deploy",
-    "dev": "astro dev",
+    "dev": "astro dev --host",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
     "lint": "bun run lint:oxlint && bun run lint:astro && bun run lint:docs",

@@ -66,7 +66,7 @@ export function databaseConfig(
   if (url) {
     return {
       kind: "remote",
-      url,
+      url: normalizeRemoteUrl(url),
       token: environment["MACHINE_MEMORY_DB_TOKEN"],
     };
   }

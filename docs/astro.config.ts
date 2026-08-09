@@ -33,6 +33,10 @@ const nimbusConfig = defineNimbusConfig({
                 label: "provision",
                 link: "/human/remote-provision",
               },
+              {
+                label: "Keychain Access",
+                link: "/human/remote/keychain-access",
+              },
             ],
           },
           { label: "upgrade", link: "/human/upgrade" },

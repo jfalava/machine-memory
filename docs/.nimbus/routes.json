@@ -9,6 +9,7 @@
     "/human/local",
     "/human/remote-provision",
     "/human/remote-setup",
+    "/human/remote/keychain-access",
     "/human/upgrade",
     "/installation",
     "/machine",
