@@ -60,7 +60,7 @@ export function helpPayload() {
       stats: { usage: `stats${DATABASE_BACKEND_USAGE}` },
       import: { usage: `import <memories.json>${DATABASE_BACKEND_USAGE}` },
       reindex: {
-        usage: `reindex${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `reindex --remote [--brief|--json-min|--quiet]`,
       },
       export: {
         usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>]${DATABASE_BACKEND_USAGE}`,

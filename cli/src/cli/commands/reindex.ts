@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import pc from "picocolors";
 import { printJson, usageError } from "../../cli-utils";
+import { MemoryDatabaseError } from "../../effect/errors";
 import { upsertMemoryVector } from "../../effect/vector-sync";
 import { normalizeSqliteRow } from "../shared";
 import { repositoryForCurrentDirectory } from "../../repository";
@@ -160,5 +161,14 @@ export function handleReindexCommand(commandCtx: CommandContext) {
         printHumanSummary(repository, rows.length, upserted, failures);
       }
     });
+    if (failures.length > 0) {
+      yield* Effect.fail(
+        new MemoryDatabaseError({
+          operation: "vectorize/reindex",
+          message: `Reindex failed for ${failures.length} memory vector${failures.length === 1 ? "" : "s"}.`,
+          cause: failures,
+        }),
+      );
+    }
   });
 }
