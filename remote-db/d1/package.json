@@ -13,10 +13,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "5.20260804.1",
+    "@cloudflare/workers-types": "5.20260809.1",
     "@effect/platform-bun": "catalog:effect",
     "@effect/sql-d1": "catalog:effect",
-    "alchemy": "2.0.0-beta.69",
+    "alchemy": "2.0.0-beta.70",
     "effect": "catalog:effect"
   },
   "devDependencies": {

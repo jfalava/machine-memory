@@ -13,6 +13,7 @@ const AGENTS_MD_BACKEND_CONTENT: Record<AgentsMemoryBackend, string[]> = {
     "This project uses `machine-memory` with a shared remote Worker-backed database.",
     "Every database-backed command requires exactly one backend flag: use `--remote` for this repository.",
     "Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.",
+    "If remote credentials are missing, run `machine-memory remote setup` before database-backed commands.",
   ],
 };
 
