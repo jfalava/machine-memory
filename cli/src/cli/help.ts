@@ -26,7 +26,7 @@ export function helpPayload() {
         usage: ADD_USAGE,
       },
       query: {
-        usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--semantic|--hybrid] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       list: {
         usage: `list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -59,6 +59,9 @@ export function helpPayload() {
       gc: { usage: `gc --dry-run${DATABASE_BACKEND_USAGE}` },
       stats: { usage: `stats${DATABASE_BACKEND_USAGE}` },
       import: { usage: `import <memories.json>${DATABASE_BACKEND_USAGE}` },
+      reindex: {
+        usage: `reindex --remote [--brief|--json-min|--quiet]`,
+      },
       export: {
         usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>]${DATABASE_BACKEND_USAGE}`,
       },

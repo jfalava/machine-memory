@@ -26,7 +26,7 @@ const nimbusConfig = defineNimbusConfig({
           { label: "init", link: "/human/init" },
           { label: "local", link: "/human/local" },
           {
-            label: "Remote",
+            label: "remote",
             items: [
               { label: "setup", link: "/human/remote-setup" },
               {
@@ -40,6 +40,7 @@ const nimbusConfig = defineNimbusConfig({
             ],
           },
           { label: "upgrade", link: "/human/upgrade" },
+          { label: "reindex", link: "/human/reindex" },
         ],
         landing: "/human",
       },

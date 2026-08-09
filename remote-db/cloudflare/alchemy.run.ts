@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import Api from "./src/worker";
 import { Database } from "./src/database";
 import { stackName } from "./src/config";
+import { createVectorMetadataIndexes, VectorIndex } from "./src/vectorize";
 
 export default Alchemy.Stack(
   stackName,
@@ -13,11 +14,17 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const database = yield* Database;
+    const vectorIndex = yield* VectorIndex;
+    const metadataIndexes = createVectorMetadataIndexes(vectorIndex.indexName);
+    yield* metadataIndexes.status;
+    yield* metadataIndexes.memoryType;
+    yield* metadataIndexes.certainty;
     const api = yield* Api;
 
     return {
       url: api.url.as<string>(),
       databaseName: database.databaseName,
+      vectorIndexName: vectorIndex.indexName.as<string>(),
     };
   }),
 );

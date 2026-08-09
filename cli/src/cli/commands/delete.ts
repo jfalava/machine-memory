@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { printJson, usageError } from "../../cli-utils";
+import { deleteMemoryVector } from "../../effect/vector-sync";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { parseIdSpec } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
@@ -18,6 +19,7 @@ export function handleDeleteCommand(commandCtx: CommandContext) {
         "DELETE FROM memories WHERE repository = ? AND id = ?",
         [repositoryForCurrentDirectory(), id],
       );
+      yield* deleteMemoryVector(database, id);
     }
     yield* Effect.sync(() =>
       printJson(

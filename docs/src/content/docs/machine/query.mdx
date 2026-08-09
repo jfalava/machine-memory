@@ -10,14 +10,26 @@ sidebar:
 ```sh
 machine-memory query <search-term> --remote
 machine-memory query "remote backend" --tags area:cli --remote --json-min
+machine-memory query "Cloudflare Worker Vectorize" --semantic --remote
+machine-memory query "Cloudflare Worker Vectorize" --hybrid --explain-score --remote
 ```
 
-`query` tokenizes the search term, searches the repository’s full-text index,
-and ranks matching memories. Active memories are returned by default.
+`query` tokenizes the search term, scopes results to the current repository, and
+returns active memories by default. The default mode uses the D1 full-text
+index.
+
+For remote memories, `--semantic` searches Vectorize using Workers AI
+embeddings. `--hybrid` combines normalized full-text relevance at 55% with
+normalized Vectorize similarity at 45%, producing a `hybrid_score` on a
+0–100 scale. Hybrid results also include `fts_score` and `semantic_score`.
+
+Run [`reindex`](/machine/reindex) once after provisioning the remote stack to
+embed existing memories. New and updated memories synchronize automatically.
 
 ## Filters and output
 
 Use `--tags`, `--type`, and `--certainty` to narrow matches; add
 `--include-deprecated` when historical memories are relevant. `--limit` caps
 the result count and `--explain-score` includes the score components used for
-ranking. `--brief`, `--json-min`, and `--quiet` are useful for agent loops.
+ranking. `--semantic` and `--hybrid` require `--remote` and are mutually
+exclusive. `--brief`, `--json-min`, and `--quiet` are useful for agent loops.

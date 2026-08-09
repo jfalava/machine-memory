@@ -12,3 +12,5 @@ export const databaseName =
   environment.MACHINE_MEMORY_DB_NAME ?? "machine-memory-db";
 export const apiName =
   environment.MACHINE_MEMORY_API_NAME ?? "machine-memory-api";
+export const vectorIndexName =
+  environment.MACHINE_MEMORY_VECTOR_INDEX_NAME ?? "machine-memory-v1";

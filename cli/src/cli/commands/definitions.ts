@@ -6,6 +6,7 @@ import { handleCoverageCommand } from "./coverage";
 import { handleExportCommand } from "./export";
 import { handleGcCommand } from "./gc";
 import { handleImportCommand, handleStatsCommand } from "./maintenance";
+import { handleReindexCommand } from "./reindex";
 import {
   handleListCommand,
   handleQueryCommand,
@@ -89,6 +90,8 @@ const queryCommand = effectCommand(
     "include-deprecated": booleanFlag("include-deprecated"),
     limit: stringFlag("limit"),
     "explain-score": booleanFlag("explain-score"),
+    semantic: booleanFlag("semantic"),
+    hybrid: booleanFlag("hybrid"),
     ...outputConfig(),
   },
   [
@@ -98,6 +101,8 @@ const queryCommand = effectCommand(
     booleanSpec("include-deprecated"),
     stringSpec("limit"),
     booleanSpec("explain-score"),
+    booleanSpec("semantic"),
+    booleanSpec("hybrid"),
     ...outputSpecs,
   ],
   "read",
@@ -278,6 +283,13 @@ const importCommand = effectCommand(
   "write",
   handleImportCommand,
 );
+const reindexCommand = effectCommand(
+  "reindex",
+  outputConfig(),
+  outputSpecs,
+  "write",
+  handleReindexCommand,
+);
 const exportCommand = effectCommand(
   "export",
   {
@@ -338,6 +350,7 @@ export const featureCommands = [
   gcCommand,
   statsCommand,
   importCommand,
+  reindexCommand,
   exportCommand,
   migrateCommand,
   tagMapCommand,

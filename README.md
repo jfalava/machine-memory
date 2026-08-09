@@ -14,4 +14,4 @@ This repository is a monorepo:
 
 - `docs/` — The documentation site, built with [Nimbus Docs](https://nimbus-docs.com/).
 - `cli/` — The `machine-memory` command-line interface for managing memories, built with [Effect](https://www.effect.website/)
-- `remote-db/d1/` — The remote database IaC, built with [Alchemy](https://alchemy.run/cloudflare/).
+- `remote-db/cloudflare/` — The remote Cloudflare IaC, built with [Alchemy](https://alchemy.run/cloudflare/).

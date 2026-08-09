@@ -44,7 +44,7 @@ accept:
 
 | Command                         | Purpose                                                           |
 | ------------------------------- | ----------------------------------------------------------------- |
-| [`query`](/machine/query)       | Full-text search memories by terms and filters.                   |
+| [`query`](/machine/query)       | Search memories with full-text, semantic, or hybrid relevance.    |
 | [`list`](/machine/list)         | List memories using filters and recency order.                    |
 | [`suggest`](/machine/suggest)   | Find memories related to a set of file paths.                     |
 | [`sweep`](/machine/sweep)       | Combine file suggestions, text search, and filtered listing.      |
@@ -63,3 +63,4 @@ accept:
 | [`migrate`](/machine/migrate) | Apply pending database schema migrations.                       |
 | [`gc`](/machine/gc)           | Preview memories whose expiry window has elapsed.               |
 | [`tag-map`](/machine/tag-map) | Manage path-to-tag mappings used during memory writes.          |
+| [`reindex`](/machine/reindex) | Backfill existing remote memories into Vectorize embeddings.    |

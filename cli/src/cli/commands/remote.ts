@@ -359,15 +359,15 @@ function printRemoteSaved(url: string) {
 function remoteStackDirectory(): string {
   const candidates = [
     process.env["MACHINE_MEMORY_REMOTE_DB_DIR"],
-    resolve(process.cwd(), "remote-db", "d1"),
-    resolve(import.meta.dir, "../../../../remote-db/d1"),
+    resolve(process.cwd(), "remote-db", "cloudflare"),
+    resolve(import.meta.dir, "../../../../remote-db/cloudflare"),
   ].filter((candidate): candidate is string => Boolean(candidate));
   const directory = candidates.find((candidate) =>
     existsSync(resolve(candidate, "alchemy.run.ts")),
   );
   if (!directory) {
     throw new Error(
-      "The Alchemy remote stack is unavailable. Set MACHINE_MEMORY_REMOTE_DB_DIR to the remote-db/d1 stack directory.",
+      "The Alchemy remote stack is unavailable. Set MACHINE_MEMORY_REMOTE_DB_DIR to the remote-db/cloudflare stack directory.",
     );
   }
   return directory;
