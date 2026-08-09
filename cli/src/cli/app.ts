@@ -142,6 +142,17 @@ function renderHumanCommandFailure(command: string, error: unknown): void {
   );
 }
 
+function isReindexSummaryFailure(
+  command: string | undefined,
+  error: unknown,
+): boolean {
+  return (
+    command === "reindex" &&
+    error instanceof MemoryDatabaseError &&
+    error.operation === "vectorize/reindex"
+  );
+}
+
 function unknownCommand(args: ReadonlyArray<string>): string | undefined {
   const command = args[0];
   return command && !command.startsWith("-") && !knownCommands.has(command)
@@ -161,6 +172,9 @@ function commandPath(args: ReadonlyArray<string>): string | undefined {
 
 function renderError(error: unknown, command: string | undefined): void {
   if (CliError.isCliError(error) && error._tag === "ShowHelp") {
+    return;
+  }
+  if (isReindexSummaryFailure(command, error)) {
     return;
   }
   if (error instanceof UpgradeError) {
@@ -196,6 +210,8 @@ function renderError(error: unknown, command: string | undefined): void {
 export function runCli(args: ReadonlyArray<string>) {
   const command = unknownCommand(args);
   const commandPathName = commandPath(args);
+  const errorCommand =
+    commandPathName ?? (args[0] === "reindex" ? "reindex" : undefined);
   if (command) {
     return Effect.sync(() => {
       printJson({
@@ -209,7 +225,7 @@ export function runCli(args: ReadonlyArray<string>) {
     Effect.provide(BunServices.layer),
     Effect.catch((error) =>
       Effect.sync(() => {
-        renderError(error, commandPathName);
+        renderError(error, errorCommand);
         if (
           !(
             CliError.isCliError(error) &&

@@ -19,6 +19,11 @@ New and updated memories synchronize automatically, so reindexing is normally a 
 
 The command requires `--remote`; local databases do not have a Vectorize binding.
 
+Reindex requests are paced to avoid bursts. A rate-limited memory is retried up
+to three times with exponential backoff; other failures are reported without
+being retried. Re-running the command is safe because Vectorize operations are
+upserts.
+
 ## Output
 
 1. Use `--json-min` to get a stable machine-readable object:

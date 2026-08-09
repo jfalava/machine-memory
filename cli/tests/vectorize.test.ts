@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
-import { remoteVectorApi } from "@/effect/vectorize";
+import { MemoryDatabaseError } from "@/effect/errors";
+import { remoteVectorApi, vectorizeRateLimitInfo } from "@/effect/vectorize";
 
 const searchRequest = {
   repository: "jfalava/machine-memory",
   query: "Vectorize",
   top_k: 8,
+};
+
+const upsertRequest = {
+  id: "1",
+  repository: "jfalava/machine-memory",
+  content: "A memory to index",
+  tags: "",
+  context: "",
+  memory_type: "convention",
+  status: "active",
+  certainty: "verified",
 };
 
 function stubSearchResponse(result: unknown): void {
@@ -63,6 +75,40 @@ describe("remote Vectorize response parsing", () => {
     ).rejects.toMatchObject({
       operation: "vectorize/search",
       message: expect.stringContaining("invalid search match"),
+    });
+  });
+
+  it("preserves rate-limit status and retry-after metadata", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ ok: false, error: "Too Many Requests" }),
+          {
+            status: 429,
+            headers: {
+              "content-type": "application/json",
+              "retry-after": "2",
+            },
+          },
+        ),
+      ),
+    );
+
+    let error: unknown;
+    try {
+      await Effect.runPromise(
+        remoteVectorApi("https://memory.example/query", undefined).upsert(
+          upsertRequest,
+        ),
+      );
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(MemoryDatabaseError);
+    expect(vectorizeRateLimitInfo(error as MemoryDatabaseError)).toEqual({
+      retryAfterMs: 2000,
     });
   });
 });

@@ -56,6 +56,98 @@ type RemoteVectorResponse = {
   readonly error?: unknown;
 };
 
+type RemoteRequestError = Error & {
+  readonly status?: number;
+  readonly retryAfterMs?: number;
+};
+
+export type VectorizeRateLimitInfo = {
+  readonly retryAfterMs?: number;
+};
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp)
+    ? undefined
+    : Math.max(0, timestamp - Date.now());
+}
+
+function remoteRequestError(
+  response: Response,
+  message: string,
+): RemoteRequestError {
+  const error = new Error(message) as RemoteRequestError;
+  Object.defineProperties(error, {
+    status: { value: response.status, enumerable: false },
+    retryAfterMs: {
+      value: parseRetryAfterMs(response.headers.get("retry-after")),
+      enumerable: false,
+    },
+  });
+  return error;
+}
+
+function errorRecord(value: unknown):
+  | {
+      readonly message?: unknown;
+      readonly status?: unknown;
+      readonly retryAfterMs?: unknown;
+      readonly cause?: unknown;
+    }
+  | undefined {
+  return value && typeof value === "object"
+    ? (value as {
+        readonly message?: unknown;
+        readonly status?: unknown;
+        readonly retryAfterMs?: unknown;
+        readonly cause?: unknown;
+      })
+    : undefined;
+}
+
+export function vectorizeRateLimitInfo(
+  error: MemoryDatabaseError,
+): VectorizeRateLimitInfo | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let rateLimited = false;
+  let retryAfterMs: number | undefined;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const candidate = errorRecord(current);
+    if (!candidate) {
+      break;
+    }
+    const message =
+      typeof candidate.message === "string" ? candidate.message : "";
+    const status = candidate.status;
+    const isRateLimited =
+      status === 429 ||
+      /(?:too many requests|rate[ -]?limit|\b429\b|\b40041\b)/i.test(
+        message,
+      );
+    if (isRateLimited) {
+      rateLimited = true;
+      if (
+        retryAfterMs === undefined &&
+        typeof candidate.retryAfterMs === "number" &&
+        Number.isFinite(candidate.retryAfterMs)
+      ) {
+        retryAfterMs = candidate.retryAfterMs;
+      }
+    }
+    current = candidate.cause;
+  }
+  return rateLimited ? { retryAfterMs } : undefined;
+}
+
 async function readRemoteResponse(
   response: Response,
 ): Promise<RemoteVectorResponse> {
@@ -179,7 +271,7 @@ function request<T>(
           typeof payload.error === "string"
             ? payload.error
             : `Remote vector API returned HTTP ${response.status}.`;
-        throw new Error(message);
+        throw remoteRequestError(response, message);
       }
       return options.parse(payload.result);
     },

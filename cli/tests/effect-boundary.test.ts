@@ -108,7 +108,74 @@ describe("Effect application boundaries", () => {
       );
       expect(quietExit._tag).toBe("Failure");
       expect(info).not.toHaveBeenCalled();
+
+      info.mockClear();
+      const humanExit = await Effect.runPromiseExit(
+        handleReindexCommand(context({ jsonMin: false, quiet: false })),
+      );
+      expect(humanExit._tag).toBe("Failure");
+      const humanOutput = info.mock.calls.flat().join("\n");
+      expect(humanOutput).toContain("Vectorize unavailable");
+      expect(humanOutput).not.toContain("Cause(");
     } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("retries only rate-limited reindex upserts", async () => {
+    let upsertCalls = 0;
+    const rateLimit = new MemoryDatabaseError({
+      operation: "vectorize/upsert",
+      message: "Too Many Requests",
+      cause: undefined,
+    });
+    const database: MemoryDatabaseApi = {
+      run: () => Effect.succeed(undefined),
+      get: () => Effect.succeed(null),
+      all: () =>
+        Effect.succeed([
+          {
+            id: 1,
+            repository: "jfalava/machine-memory",
+            content: "A memory that needs indexing",
+          },
+        ]),
+      vectorize: {
+        upsert: () => {
+          upsertCalls += 1;
+          return upsertCalls === 1
+            ? Effect.fail(rateLimit)
+            : Effect.succeed({ id: "1", mutationId: "mutation" });
+        },
+        delete: () => Effect.succeed({ id: "1", mutationId: "mutation" }),
+        search: () => Effect.succeed({ count: 0, matches: [] }),
+      },
+    };
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    vi.useFakeTimers();
+
+    try {
+      const exitPromise = Effect.runPromiseExit(
+        handleReindexCommand({
+          args: ["--remote", "--json-min"],
+          outputMode: {
+            brief: false,
+            jsonMin: true,
+            noConflicts: false,
+            quiet: false,
+          },
+          database,
+          fileSystem: {} as CommandContext["fileSystem"],
+        }),
+      );
+      await vi.runAllTimersAsync();
+      const exit = await exitPromise;
+
+      expect(exit._tag).toBe("Success");
+      expect(upsertCalls).toBe(2);
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('"failed":0'));
+    } finally {
+      vi.useRealTimers();
       info.mockRestore();
     }
   });

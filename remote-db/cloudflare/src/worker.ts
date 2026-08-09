@@ -19,6 +19,13 @@ const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 50;
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
+const RATE_LIMIT_ERROR = "Too Many Requests";
+
+function isRateLimitedVectorizeCause(cause: unknown): boolean {
+  return /(?:too many requests|rate[ -]?limit|\b429\b|40041)/i.test(
+    String(cause),
+  );
+}
 
 type QueryRequest = {
   readonly operation: QueryOperation;
@@ -298,18 +305,41 @@ export default Cloudflare.Worker<{}>()(
         }
         const document = input.value;
         const values = yield* embed(buildEmbeddingText(document));
-        const mutation = yield* vectorize.upsert([
-          {
-            id: document.id,
-            namespace: document.repository,
-            values,
-            metadata: {
-              status: document.status,
-              memory_type: document.memoryType,
-              certainty: document.certainty,
+        const result = yield* vectorize
+          .upsert([
+            {
+              id: document.id,
+              namespace: document.repository,
+              values,
+              metadata: {
+                status: document.status,
+                memory_type: document.memoryType,
+                certainty: document.certainty,
+              },
             },
-          },
-        ]);
+          ])
+          .pipe(
+            Effect.map((mutation) => ({
+              ok: true as const,
+              mutation,
+            })),
+            Effect.catchCause((cause) =>
+              Effect.succeed({
+                ok: false as const,
+                rateLimited: isRateLimitedVectorizeCause(cause),
+              }),
+            ),
+          );
+        if (!result.ok) {
+          return yield* HttpServerResponse.json(
+            {
+              ok: false,
+              error: result.rateLimited ? RATE_LIMIT_ERROR : INTERNAL_ERROR,
+            },
+            { status: result.rateLimited ? 429 : 500 },
+          );
+        }
+        const mutation = result.mutation;
         return yield* HttpServerResponse.json({
           ok: true,
           result: {

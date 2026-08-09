@@ -1,11 +1,17 @@
-import { Effect } from "effect";
+import { Cause, Effect, Option } from "effect";
 import pc from "picocolors";
 import { printJson, usageError } from "../../cli-utils";
 import { MemoryDatabaseError } from "../../effect/errors";
 import { upsertMemoryVector } from "../../effect/vector-sync";
+import { vectorizeRateLimitInfo } from "../../effect/vectorize";
 import { normalizeSqliteRow } from "../shared";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+
+const REINDEX_REQUEST_INTERVAL_MS = 250;
+const REINDEX_MAX_RATE_LIMIT_RETRIES = 3;
+const REINDEX_RETRY_BASE_DELAY_MS = 1000;
+const REINDEX_MAX_RETRY_DELAY_MS = 60_000;
 
 const PROGRESS_FRAMES = [
   "·  ",
@@ -18,12 +24,136 @@ const PROGRESS_FRAMES = [
   "·· ",
 ];
 
-type ReindexFailure = { id: unknown; error: string };
+type ReindexFailure = {
+  id: unknown;
+  error: string;
+  rateLimited: boolean;
+};
 
 type ReindexProgress = {
   update: (completed: number) => void;
   stop: () => void;
 };
+
+type ReindexAttempt =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly error: MemoryDatabaseError;
+      readonly rateLimited: boolean;
+      readonly retryAfterMs?: number;
+    };
+
+function createReindexThrottle() {
+  let nextRequestAt = 0;
+  return () =>
+    Effect.gen(function* () {
+      const delay = Math.max(0, nextRequestAt - Date.now());
+      if (delay > 0) {
+        yield* Effect.sleep(delay);
+      }
+      nextRequestAt = Date.now() + REINDEX_REQUEST_INTERVAL_MS;
+    });
+}
+
+function retryDelayMs(retryNumber: number, retryAfterMs: number | undefined) {
+  const exponentialDelay = Math.min(
+    REINDEX_MAX_RETRY_DELAY_MS,
+    REINDEX_RETRY_BASE_DELAY_MS * 2 ** (retryNumber - 1),
+  );
+  return Math.min(
+    REINDEX_MAX_RETRY_DELAY_MS,
+    Math.max(exponentialDelay, retryAfterMs ?? 0),
+  );
+}
+
+function reindexError(
+  cause: Cause.Cause<MemoryDatabaseError>,
+): MemoryDatabaseError {
+  const error = Cause.findErrorOption(cause);
+  if (Option.isSome(error) && error.value instanceof MemoryDatabaseError) {
+    return error.value;
+  }
+  return new MemoryDatabaseError({
+    operation: "vectorize/upsert",
+    message: "Vectorize upsert failed.",
+    cause,
+  });
+}
+
+function upsertMemoryWithRetry(
+  database: NonNullable<CommandContext["database"]>,
+  row: Record<string, unknown>,
+  throttle: () => Effect.Effect<void>,
+): Effect.Effect<ReindexAttempt> {
+  return Effect.gen(function* () {
+    let retryNumber = 0;
+    while (true) {
+      yield* throttle();
+      const result = yield* upsertMemoryVector(database, row).pipe(
+        Effect.map((): ReindexAttempt => ({ ok: true })),
+        Effect.catchCause((cause) => {
+          const error = reindexError(cause);
+          const rateLimit = vectorizeRateLimitInfo(error);
+          return Effect.succeed<ReindexAttempt>({
+            ok: false,
+            error,
+            rateLimited: rateLimit !== undefined,
+            retryAfterMs: rateLimit?.retryAfterMs,
+          });
+        }),
+      );
+      if (result.ok) {
+        return result;
+      }
+
+      if (
+        !result.rateLimited ||
+        retryNumber >= REINDEX_MAX_RATE_LIMIT_RETRIES
+      ) {
+        return result;
+      }
+
+      retryNumber += 1;
+      yield* Effect.sleep(retryDelayMs(retryNumber, result.retryAfterMs));
+    }
+  });
+}
+
+function compactFailureError(failure: ReindexFailure): string {
+  if (failure.rateLimited) {
+    return "Too Many Requests";
+  }
+  const message = failure.error.replace(/\s+/g, " ").trim();
+  return message.length > 160 ? `${message.slice(0, 157)}…` : message;
+}
+
+function groupedFailures(failures: ReindexFailure[]) {
+  const groups = new Map<string, string[]>();
+  for (const failure of failures) {
+    const error = compactFailureError(failure);
+    const ids = groups.get(error) ?? [];
+    ids.push(String(failure.id));
+    groups.set(error, ids);
+  }
+  return groups;
+}
+
+function printFailureDetails(failures: ReindexFailure[]): void {
+  console.info(pc.dim("Failure details"));
+  for (const [error, ids] of groupedFailures(failures)) {
+    console.info(
+      `  ${pc.red("×")} ${pc.bold(`${ids.length} ${ids.length === 1 ? "memory" : "memories"}`)} ${pc.dim("·")} ${error}`,
+    );
+    console.info(`    ${pc.dim("IDs")}  ${ids.join(", ")}`);
+  }
+  if (failures.some((failure) => failure.rateLimited)) {
+    console.info();
+    console.info(
+      `${pc.dim("Next")}       Run reindex again to retry the remaining failures.`,
+    );
+  }
+}
 
 function createReindexProgress(
   repository: string,
@@ -82,12 +212,10 @@ function printHumanSummary(
 
   console.info(pc.yellow(pc.bold("! Reindex completed with failures")));
   console.info(`${pc.dim("Repository")}  ${pc.cyan(repository)}`);
-  console.info(
-    `${pc.dim("Processed")}   ${upserted}/${total} memories (${failures.length} failed)`,
-  );
-  for (const failure of failures) {
-    console.info(`  ${pc.dim("•")} ${String(failure.id)}: ${failure.error}`);
-  }
+  console.info(`${pc.dim("Processed")}   ${upserted}/${total} memories`);
+  console.info(`${pc.dim("Failed")}      ${failures.length} memories`);
+  console.info();
+  printFailureDetails(failures);
   console.info();
 }
 
@@ -114,6 +242,7 @@ export function handleReindexCommand(commandCtx: CommandContext) {
     const failures: ReindexFailure[] = [];
     let upserted = 0;
     let completed = 0;
+    const throttle = createReindexThrottle();
     const humanOutput =
       !commandCtx.outputMode.jsonMin && !commandCtx.outputMode.quiet;
     if (humanOutput) {
@@ -127,19 +256,15 @@ export function handleReindexCommand(commandCtx: CommandContext) {
 
     yield* Effect.gen(function* () {
       for (const row of rows.map((entry) => normalizeSqliteRow(entry))) {
-        const result = yield* upsertMemoryVector(database, row).pipe(
-          Effect.map(() => ({ ok: true as const })),
-          Effect.catchCause((cause) =>
-            Effect.succeed({
-              ok: false as const,
-              error: String(cause),
-            }),
-          ),
-        );
+        const result = yield* upsertMemoryWithRetry(database, row, throttle);
         if (result.ok) {
           upserted += 1;
         } else {
-          failures.push({ id: row.id, error: result.error });
+          failures.push({
+            id: row.id,
+            error: result.error.message,
+            rateLimited: result.rateLimited,
+          });
         }
         completed += 1;
         progress.update(completed);
@@ -153,7 +278,7 @@ export function handleReindexCommand(commandCtx: CommandContext) {
           total: rows.length,
           upserted,
           failed: failures.length,
-          failures,
+          failures: failures.map(({ id, error }) => ({ id, error })),
         });
         return;
       }
