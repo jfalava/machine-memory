@@ -8,8 +8,8 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory export --remote > memories.json
-machine-memory export --type decision --since 2026-01-01 --remote
+machine-memory export (--local|--remote) > memories.json
+machine-memory export --type decision --since 2026-01-01 (--local|--remote)
 ```
 
 `export` writes a JSON array ordered by most recently updated. Active memories

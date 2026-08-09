@@ -8,8 +8,8 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory deprecate <id|id,id,...> --remote
-machine-memory deprecate --match "old topic" --superseded-by <id> --remote
+machine-memory deprecate <id|id,id,...> (--local|--remote)
+machine-memory deprecate --match "old topic" --superseded-by <id> (--local|--remote)
 ```
 
 Without `--superseded-by`, targeted memories receive the `deprecated` status.

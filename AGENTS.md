@@ -4,6 +4,7 @@
 
 Every database-backed command requires exactly one backend flag. For this one use `--remote` for this repository and do not pass both flags.
 Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.
+Memory size: keep every memory below 512 tokens, including its content, tags, context, and metadata, so the embedding service can accept it.
 
 ⚠️ MANDATORY: Complete the memory scan BEFORE any code changes. Skipping it causes rework, regressions, and duplicated decisions.
 

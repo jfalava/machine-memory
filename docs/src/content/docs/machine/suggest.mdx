@@ -8,8 +8,8 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory suggest --files "src/a.ts,src/b.ts" --remote --json-min
-machine-memory suggest --files-json '["src/a.ts","src/b.ts"]' --remote
+machine-memory suggest --files "src/a.ts,src/b.ts" (--local|--remote) --json-min
+machine-memory suggest --files-json '["src/a.ts","src/b.ts"]' (--local|--remote)
 ```
 
 Provide exactly one of `--files` or `--files-json`. `suggest` derives path

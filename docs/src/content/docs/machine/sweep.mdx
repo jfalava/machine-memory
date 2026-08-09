@@ -8,8 +8,8 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory sweep --files "src/a.ts,src/b.ts" --remote --json-min
-machine-memory sweep --files "src/a.ts" --query "backend" --remote
+machine-memory sweep --files "src/a.ts,src/b.ts" (--local|--remote) --json-min
+machine-memory sweep --files "src/a.ts" --query "backend" (--local|--remote)
 ```
 
 `sweep` requires exactly one of `--files` or `--files-json`. It runs the

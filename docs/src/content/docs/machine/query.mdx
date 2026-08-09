@@ -8,8 +8,8 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory query <search-term> --remote
-machine-memory query "remote backend" --tags area:cli --remote --json-min
+machine-memory query <search-term> (--local|--remote)
+machine-memory query "remote backend" --tags area:cli (--local|--remote) --json-min
 machine-memory query "Cloudflare Worker Vectorize" --semantic --remote
 machine-memory query "Cloudflare Worker Vectorize" --hybrid --explain-score --remote
 ```

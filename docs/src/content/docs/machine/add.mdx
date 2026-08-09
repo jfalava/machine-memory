@@ -8,8 +8,8 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory add <content> --remote
-machine-memory add --from-file <path> --remote
+machine-memory add <content> (--local|--remote)
+machine-memory add --from-file <path> (--local|--remote)
 ```
 
 `add` creates an active memory for the current repository. It can store tags,
@@ -22,7 +22,7 @@ instead of creating a second memory:
 
 ```sh
 machine-memory add "The API uses remote D1" \
-  --upsert-match "remote D1 API" --type decision --remote
+  --upsert-match "remote D1 API" --type decision (--local|--remote)
 ```
 
 ## Options

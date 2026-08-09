@@ -8,9 +8,9 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory update <id> <content> --remote
-machine-memory update <id,id,...> --from-file <path> --remote
-machine-memory update --match "unique topic" <content> --remote
+machine-memory update <id> <content> (--local|--remote)
+machine-memory update <id,id,...> --from-file <path> (--local|--remote)
+machine-memory update --match "unique topic" <content> (--local|--remote)
 ```
 
 Provide either one or more IDs or `--match <query>`, then provide inline
