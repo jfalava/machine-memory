@@ -120,29 +120,27 @@ function parseSearchResult(value: unknown): MemoryVectorSearchResult {
   if (!Array.isArray(result.matches)) {
     throw new Error("Remote vector API returned an invalid search result.");
   }
-  const matches = result.matches.flatMap((match): MemoryVectorMatch[] => {
-    try {
-      const candidate = asRecord(match);
-      if (
-        typeof candidate.id !== "string" ||
-        typeof candidate.score !== "number"
-      ) {
-        return [];
-      }
-      const metadata = candidate.metadata;
-      return [
-        {
-          id: candidate.id,
-          score: candidate.score,
-          metadata:
-            metadata && typeof metadata === "object" && !Array.isArray(metadata)
-              ? (metadata as Record<string, unknown>)
-              : {},
-        },
-      ];
-    } catch {
-      return [];
+  const matches = result.matches.map((match, index): MemoryVectorMatch => {
+    const candidate = asRecord(match);
+    if (
+      typeof candidate.id !== "string" ||
+      candidate.id.trim().length === 0 ||
+      typeof candidate.score !== "number" ||
+      !Number.isFinite(candidate.score)
+    ) {
+      throw new Error(
+        `Remote vector API returned an invalid search match at index ${index}.`,
+      );
     }
+    const metadata = candidate.metadata;
+    return {
+      id: candidate.id,
+      score: candidate.score,
+      metadata:
+        metadata && typeof metadata === "object" && !Array.isArray(metadata)
+          ? (metadata as Record<string, unknown>)
+          : {},
+    };
   });
   return {
     count: typeof result.count === "number" ? result.count : matches.length,
