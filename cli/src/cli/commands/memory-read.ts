@@ -28,6 +28,7 @@ import { requireDatabase, type CommandContext } from "../runtime/context";
 
 const SWEEP_USAGE =
   'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
+const MAX_SEMANTIC_LIMIT = 50;
 
 type FetchResultsOptions = {
   explainScore: boolean;
@@ -169,13 +170,29 @@ function fetchQueryResults(
 function fetchSemanticCandidates(
   commandCtx: CommandContext,
   term: string,
-  topK: number,
+  options: {
+    limit: number;
+    topKMultiplier: number;
+    minimumTopK?: number;
+  },
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const database = requireDatabase(commandCtx);
   const vectorize = database.vectorize;
   if (!vectorize) {
     usageError("Semantic search requires the remote backend: query --remote.");
   }
+  if (options.limit > MAX_SEMANTIC_LIMIT) {
+    usageError(
+      `--limit must be an integer between 1 and ${MAX_SEMANTIC_LIMIT} for semantic and hybrid search.`,
+    );
+  }
+  const topK = Math.min(
+    MAX_SEMANTIC_LIMIT,
+    Math.max(
+      options.limit * options.topKMultiplier,
+      options.minimumTopK ?? options.limit,
+    ),
+  );
 
   const filters = parseCommonFilters(commandCtx.args);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
@@ -248,8 +265,10 @@ function fetchSemanticResults(
   options: FetchResultsOptions,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const limit = options.limit ?? 8;
-  const topK = Math.min(50, Math.max(limit * 3, limit));
-  return fetchSemanticCandidates(commandCtx, term, topK).pipe(
+  return fetchSemanticCandidates(commandCtx, term, {
+    limit,
+    topKMultiplier: 3,
+  }).pipe(
     Effect.map((result) => ({
       ...result,
       results: result.results.slice(0, limit),
@@ -263,14 +282,17 @@ function fetchHybridResults(
   options: FetchResultsOptions,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const limit = options.limit ?? 8;
-  const semanticTopK = Math.min(50, Math.max(limit * 4, 12));
   return Effect.all(
     [
       fetchQueryResults(commandCtx, term, {
         explainScore: options.explainScore,
         limit: 100,
       }),
-      fetchSemanticCandidates(commandCtx, term, semanticTopK),
+      fetchSemanticCandidates(commandCtx, term, {
+        limit,
+        topKMultiplier: 4,
+        minimumTopK: 12,
+      }),
     ],
     { concurrency: "unbounded" },
   ).pipe(
