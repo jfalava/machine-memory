@@ -317,7 +317,13 @@ function extractZipEntry(
   return binary;
 }
 
-/** Extract the normalized executable from the single-file release ZIP. */
+/**
+ * Extract the executable from a single-file release ZIP.
+ *
+ * The expected name is preferred for the current release layout. Older or
+ * differently packaged releases may rename the binary inside the archive, so
+ * a ZIP with exactly one non-directory entry is also accepted.
+ */
 export function extractZipBinary(
   archive: Uint8Array,
   expectedName: string,
@@ -329,6 +335,7 @@ export function extractZipBinary(
   );
   const directory = findZipDirectory(archive, view);
   let offset = directory.offset;
+  const files: ZipEntry[] = [];
   for (
     let entry = 0;
     entry < directory.entryCount && offset < directory.end;
@@ -338,9 +345,23 @@ export function extractZipBinary(
     if (zipEntry.name === expectedName) {
       return extractZipEntry(archive, view, zipEntry);
     }
+    if (!zipEntry.name.endsWith("/")) {
+      files.push(zipEntry);
+    }
     offset = zipEntry.nextOffset;
   }
-  throw new Error(`Downloaded release does not contain ${expectedName}.`);
+
+  if (files.length === 1) {
+    const [file] = files;
+    if (file) {
+      return extractZipEntry(archive, view, file);
+    }
+  }
+
+  const available = files.map((file) => file.name).join(", ");
+  throw new Error(
+    `Downloaded release does not contain ${expectedName}; available files: ${available || "none"}.`,
+  );
 }
 
 function downloadToTemp(
