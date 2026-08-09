@@ -298,6 +298,43 @@ describe("CLI rewrite integration", () => {
   });
 });
 
+describe("human command errors", () => {
+  it("renders all human command argument errors as terminal text", async () => {
+    const cases = [
+      [
+        ["upgrade", "--bad"],
+        "Usage: machine-memory upgrade",
+        "✗ Upgrade failed",
+      ],
+      [
+        ["init", "--bad"],
+        "Usage: machine-memory init (--local|--remote)",
+        "✗ init failed",
+      ],
+      [
+        ["remote", "setup", "--bad"],
+        "Usage: machine-memory remote setup [--url <worker-url>] [--token <worker-token>]",
+        "✗ remote setup failed",
+      ],
+      [
+        ["remote", "provision", "--bad"],
+        "Usage: machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
+        "✗ remote provision failed",
+      ],
+    ] as const;
+
+    for (const [args, usage, heading] of cases) {
+      const result = await execBun(["run", cliEntrypoint, ...args], {});
+
+      expect(result.code).toBe(1);
+      expect(result.stdout).toContain(usage);
+      expect(result.stdout).not.toContain('"error"');
+      expect(result.stderr).toContain(heading);
+      expect(result.stderr).not.toContain('{"error"');
+    }
+  });
+});
+
 describe("release platform selection", () => {
   it("selects the published asset for each supported target", () => {
     expect(assetNameForPlatform("darwin", "arm64")).toBe(
@@ -320,7 +357,7 @@ describe("release platform selection", () => {
   });
 
   it("extracts the expected executable from a stored ZIP archive", () => {
-    const name = new TextEncoder().encode("machine-memory");
+    const name = new TextEncoder().encode("machine-memory-linux-x64");
     const contents = new TextEncoder().encode("binary");
     const local = new Uint8Array(30 + name.length + contents.length);
     const localView = new DataView(local.buffer);
@@ -356,5 +393,8 @@ describe("release platform selection", () => {
     archive.set(end, local.length + central.length);
 
     expect(extractZipBinary(archive, "machine-memory")).toEqual(contents);
+    expect(extractZipBinary(archive, "machine-memory-linux-x64")).toEqual(
+      contents,
+    );
   });
 });
