@@ -1,0 +1,36 @@
+---
+title: reindex
+description: Backfill existing remote memories into Vectorize embeddings.
+sidebar:
+  order: 18
+---
+
+## Usage
+
+```sh
+machine-memory reindex --remote
+machine-memory reindex --remote --json-min
+machine-memory reindex --remote --quiet
+```
+
+`reindex` reads all memories for the current repository from D1, generates embeddings through the remote Worker, and upserts them into Vectorize. Run it after remote provisioning, after migrating to a new embedding index, or when vectors need to be repaired. It is scoped to the current Git repository.
+
+New and updated memories synchronize automatically, so reindexing is normally a backfill or recovery operation rather than part of every write.
+
+The command requires `--remote`; local databases do not have a Vectorize binding.
+
+## Output
+
+1. Use `--json-min` to get a stable machine-readable object:
+
+```json
+{
+  "repository": "owner/repository",
+  "total": 24,
+  "upserted": 24,
+  "failed": 0,
+  "failures": []
+}
+```
+
+2. Use `--quiet` when no success output is desired. Non-TTY output does not emit terminal control sequences.
