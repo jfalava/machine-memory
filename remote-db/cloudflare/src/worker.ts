@@ -7,13 +7,13 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import { Database } from "./database";
 import { apiName } from "./config";
+import { validateEmbeddingText } from "./embedding";
 import { VectorIndex } from "./vectorize";
 
 type QueryOperation = "run" | "get" | "all";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5" as const;
 const EMBEDDING_DIMENSIONS = 768;
-const MAX_EMBEDDING_TOKENS = 512;
 const MAX_NAMESPACE_BYTES = 64;
 const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 50;
@@ -99,24 +99,6 @@ function validateNamespace(repository: string): string {
 
 function parseRepository(candidate: Record<string, unknown>): string {
   return validateNamespace(parseRequiredString(candidate, "repository"));
-}
-
-function estimateEmbeddingTokens(text: string): number {
-  const pieces = text.match(/\S+/gu) ?? [];
-  return pieces.reduce(
-    (total, piece) =>
-      total + Math.max(1, Math.ceil(Array.from(piece).length / 4)),
-    0,
-  );
-}
-
-function validateEmbeddingText(text: string, label: string): string {
-  if (estimateEmbeddingTokens(text) > MAX_EMBEDDING_TOKENS) {
-    throw new Error(
-      `${label} must be at most ${MAX_EMBEDDING_TOKENS} tokens for embedding.`,
-    );
-  }
-  return text;
 }
 
 function parseMemoryDocument(value: unknown): MemoryDocument {
