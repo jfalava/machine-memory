@@ -1,8 +1,8 @@
 <!-- machine-memory:start -->
-
 ## Project memory
 
-Every database-backed command requires exactly one backend flag. For this one use `--remote` for this repository and do not pass both flags.
+This project uses `machine-memory` with a shared remote Worker-backed database.
+Every database-backed command requires exactly one backend flag: use `--remote` for this repository.
 Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.
 Memory size: keep every memory below 512 tokens, including its content, tags, context, and metadata, so the embedding service can accept it.
 
@@ -38,8 +38,4 @@ If results look relevant, fetch full records before editing: `machine-memory get
 - [ ] I will document significant findings and decisions after completing the task
 
 Project preference: replace obsolete systems when practical; preserve backwards compatibility only when it is explicitly required.
-
-### Notes
-
-`ERR_SECRETS_PLATFORM_ERROR` might be due to some timing issue. If you get it, try again.
 <!-- machine-memory:end -->
