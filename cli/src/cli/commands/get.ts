@@ -1,7 +1,8 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli-utils";
+import { usageError } from "../../cli-utils";
 import { getMemoryById, parseIdSpec } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 export function handleGetCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -23,10 +24,10 @@ export function handleGetCommand(commandCtx: CommandContext) {
     );
     yield* Effect.sync(() => {
       if (ids.length === 1) {
-        printJson(rows[0] ?? { error: "Not found" });
+        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
         return;
       }
-      printJson({
+      printCommandOutput(commandCtx, {
         results: rows,
         ...(missingIds.length > 0 ? { missing_ids: missingIds } : {}),
       });

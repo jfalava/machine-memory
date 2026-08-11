@@ -23,15 +23,22 @@ const nimbusConfig = defineNimbusConfig({
       {
         label: "Human commands",
         items: [
+          { label: "--pretty", link: "/human/pretty" },
           { label: "init", link: "/human/init" },
-          { label: "local", link: "/human/local" },
+          {
+            label: "local",
+            items: [
+              { label: "Overview", link: "/human/local" },
+              { label: "Export", link: "/human/local/export" },
+            ],
+          },
           {
             label: "remote",
             items: [
-              { label: "setup", link: "/human/remote-setup" },
+              { label: "setup", link: "/human/remote/setup" },
               {
                 label: "provision",
-                link: "/human/remote-provision",
+                link: "/human/remote/provision",
               },
               {
                 label: "Keychain Access",

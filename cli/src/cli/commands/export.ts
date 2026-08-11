@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import { printJson } from "../../cli-utils";
 import {
   applySqlFilters,
   normalizeSqliteRow,
@@ -8,6 +7,7 @@ import {
   sqliteDateForComparison,
 } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 export function handleExportCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -28,7 +28,10 @@ export function handleExportCommand(commandCtx: CommandContext) {
       params,
     );
     yield* Effect.sync(() =>
-      printJson(rows.map((row) => normalizeSqliteRow(row))),
+      printCommandOutput(
+        commandCtx,
+        rows.map((row) => normalizeSqliteRow(row)),
+      ),
     );
   });
 }

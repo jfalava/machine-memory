@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile as execFileCallback } from "node:child_process";
+import { createServer } from "node:http";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,6 +13,12 @@ import {
 type RunResult = {
   code: number;
   json: Record<string, unknown>;
+  stderr: string;
+};
+
+type TextRunResult = {
+  code: number;
+  stdout: string;
   stderr: string;
 };
 
@@ -121,6 +128,22 @@ async function runCli(
   };
 }
 
+async function runCliText(
+  cwd: string,
+  dbPath: string,
+  ...args: string[]
+): Promise<TextRunResult> {
+  const result = await execBun(["run", cliEntrypoint, ...args], {
+    cwd,
+    env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath },
+  });
+  return {
+    code: isKnownBunCanaryExit(result) ? 0 : result.code,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
 async function createLegacyDatabase(dbPath: string): Promise<void> {
   const result = await execBun(
     [
@@ -226,6 +249,54 @@ describe("CLI rewrite integration", () => {
     expect((deprecated.json as { status: string }).status).toBe("deprecated");
   });
 
+  it("renders pretty output globally while preserving explicit JSON modes", async () => {
+    const { cwd, dbPath } = await createProject();
+    const help = await runCliText(cwd, dbPath, "--pretty", "help");
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain("Commands");
+    expect(help.stdout).toContain("Global options");
+    expect(help.stdout).not.toContain("COMMAND");
+
+    const added = await runCliText(
+      cwd,
+      dbPath,
+      "add",
+      "Pretty output keeps humans comfortable",
+      "--local",
+      "--pretty",
+    );
+    expect(added.code).toBe(0);
+    expect(added.stdout).toContain("Add");
+    expect(added.stdout).toContain("Pretty output keeps humans comfortable");
+    expect(added.stdout.trimStart()).not.toMatch(/^\{/);
+
+    const queried = await runCliText(
+      cwd,
+      dbPath,
+      "--pretty",
+      "query",
+      "comfortable",
+      "--local",
+    );
+    expect(queried.code).toBe(0);
+    expect(queried.stdout).toContain("Search results");
+    expect(queried.stdout).toContain("Pretty output keeps humans");
+    expect(queried.stdout).toContain("comfortable");
+    expect(queried.stdout.trimStart()).not.toMatch(/^\{/);
+
+    const machine = await runCliText(
+      cwd,
+      dbPath,
+      "query",
+      "comfortable",
+      "--local",
+      "--pretty",
+      "--json-min",
+    );
+    expect(machine.code).toBe(0);
+    expect(JSON.parse(machine.stdout.trim()).ids).toEqual([1]);
+  });
+
   it("isolates records from other repositories in a shared database", async () => {
     const { cwd, dbPath } = await createProject();
     const local = await runCli(
@@ -295,6 +366,100 @@ describe("CLI rewrite integration", () => {
     expect(fetched.json.certainty).toBe("verified");
     expect(fetched.json.memory_type).toBe("convention");
     expect(fetched.json.repository).toBe("jfalava/machine-memory");
+  });
+
+  it("exports a selected local database through the raw TypeScript CLI", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "A selected SQLite file can be exported remotely",
+      "--type",
+      "decision",
+      "--certainty",
+      "verified",
+      "--local",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+
+    const requests: { path: string; body: Record<string, unknown> }[] = [];
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on("data", (chunk: Buffer) => chunks.push(chunk));
+      request.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<
+          string,
+          unknown
+        >;
+        requests.push({ path: request.url ?? "", body });
+        response.setHeader("content-type", "application/json");
+        if (request.url === "/migrate") {
+          const rows = body.rows as { source_id: number }[];
+          response.end(
+            JSON.stringify({
+              ok: true,
+              result: {
+                processed: rows.length,
+                inserted: rows.length,
+                duplicates: 0,
+                items: rows.map((row) => ({
+                  source_id: row.source_id,
+                  target_id: row.source_id + 100,
+                  status: "inserted",
+                })),
+              },
+            }),
+          );
+          return;
+        }
+        if (request.url === "/migrate/links") {
+          response.end(JSON.stringify({ ok: true, result: { updated: 0 } }));
+          return;
+        }
+        response.statusCode = 404;
+        response.end(JSON.stringify({ ok: false, error: "not found" }));
+      });
+    });
+    await new Promise<void>((resolveServer, rejectServer) => {
+      server.once("error", rejectServer);
+      server.listen(0, "127.0.0.1", () => resolveServer());
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("The migration test server did not expose a port.");
+    }
+
+    try {
+      const result = await execBun(
+        ["run", cliEntrypoint, "local", "export", dbPath, "--remote"],
+        {
+          cwd,
+          env: {
+            ...process.env,
+            MACHINE_MEMORY_DB_PATH: dbPath,
+            MACHINE_MEMORY_DB_URL: `http://127.0.0.1:${address.port}/query`,
+            MACHINE_MEMORY_DB_TOKEN: "test-token",
+          },
+        },
+      );
+
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("Local export completed");
+      expect(result.stdout).toContain("Inserted");
+      expect(requests.map((request) => request.path)).toEqual(["/migrate"]);
+      expect(requests[0]?.body.repository).toBe("jfalava/machine-memory");
+      expect(
+        (requests[0]?.body.rows as Record<string, unknown>[])[0]?.content,
+      ).toBe("A selected SQLite file can be exported remotely");
+    } finally {
+      await new Promise<void>((resolveServer, rejectServer) =>
+        server.close((error) =>
+          error ? rejectServer(error) : resolveServer(),
+        ),
+      );
+    }
   });
 });
 

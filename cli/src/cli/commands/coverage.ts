@@ -1,9 +1,10 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
-import { getFlagValue, printJson } from "../../cli-utils";
+import { getFlagValue } from "../../cli-utils";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 export function handleCoverageCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -35,7 +36,7 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
       return parts.length > 0 && !parts.some((part) => tagSet.has(part));
     });
     yield* Effect.sync(() =>
-      printJson({
+      printCommandOutput(commandCtx, {
         root,
         uncovered_paths: uncoveredPaths,
         tag_distribution: tagDistribution,

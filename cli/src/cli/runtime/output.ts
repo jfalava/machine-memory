@@ -1,20 +1,50 @@
-import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";
+import { Flag, GlobalFlag } from "effect/unstable/cli";
+import { printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
+import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";
+import { renderPretty } from "./pretty";
+
+export const prettyOutput = GlobalFlag.setting("pretty")({
+  flag: Flag.boolean("pretty").pipe(
+    Flag.withDescription("Render human-readable output for machine commands"),
+  ),
+});
 
 export type OutputMode = {
   brief: boolean;
   jsonMin: boolean;
   noConflicts: boolean;
+  pretty: boolean;
   quiet: boolean;
 };
 
-export function parseOutputMode(args: string[]): OutputMode {
+export function parseOutputMode(args: string[], pretty = false): OutputMode {
   return {
     brief: args.includes("--brief"),
     jsonMin: args.includes("--json-min"),
     noConflicts: args.includes("--no-conflicts"),
+    pretty,
     quiet: args.includes("--quiet"),
   };
+}
+
+export function prettyOutputEnabled(mode: OutputMode): boolean {
+  return mode.pretty && !mode.brief && !mode.jsonMin && !mode.quiet;
+}
+
+export function outputModeForPretty(pretty: boolean): OutputMode {
+  return parseOutputMode([], pretty);
+}
+
+export function printCommandOutput(
+  context: { command: string; outputMode: OutputMode },
+  data: unknown,
+) {
+  if (prettyOutputEnabled(context.outputMode)) {
+    console.info(renderPretty(context.command, data));
+    return;
+  }
+  printJson(data);
 }
 
 export function hasMinimalOutput(mode: OutputMode): boolean {

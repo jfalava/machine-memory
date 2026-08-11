@@ -26,8 +26,8 @@ import { handleVerifyCommand } from "./verify";
 import { handleDeleteCommand } from "./delete";
 import { handleGetCommand } from "./get";
 import { remoteCommand } from "./remote";
+import { localCommand } from "./local";
 import { VERSION } from "../../constants";
-import { printJson } from "../../cli-utils";
 import {
   upgrade,
   type UpgradeProgress,
@@ -44,6 +44,11 @@ import {
   stringFlag,
   stringSpec,
 } from "../runtime/command";
+import {
+  outputModeForPretty,
+  prettyOutput,
+  printCommandOutput,
+} from "../runtime/output";
 
 const addCommand = effectCommand(
   "add",
@@ -355,6 +360,7 @@ export const featureCommands = [
   migrateCommand,
   tagMapCommand,
   initCommand,
+  localCommand,
   remoteCommand,
 ] as const;
 
@@ -411,10 +417,26 @@ function startUpgradeOutput(): UpgradeOptions {
 
 export function builtinCommands() {
   const helpCommand = Command.make("help", {}, () =>
-    Effect.sync(() => printJson(helpPayload())),
+    Effect.gen(function* () {
+      const pretty = yield* prettyOutput;
+      yield* Effect.sync(() =>
+        printCommandOutput(
+          { command: "help", outputMode: outputModeForPretty(pretty) },
+          helpPayload(),
+        ),
+      );
+    }),
   );
   const versionCommand = Command.make("version", {}, () =>
-    Effect.sync(() => printJson({ version: VERSION })),
+    Effect.gen(function* () {
+      const pretty = yield* prettyOutput;
+      yield* Effect.sync(() =>
+        printCommandOutput(
+          { command: "version", outputMode: outputModeForPretty(pretty) },
+          { version: VERSION },
+        ),
+      );
+    }),
   );
   const upgradeCommand = Command.make("upgrade", {}, () =>
     Effect.sync(startUpgradeOutput).pipe(

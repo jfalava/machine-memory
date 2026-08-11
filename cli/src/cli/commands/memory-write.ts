@@ -33,6 +33,7 @@ import {
 import { repositoryForCurrentDirectory } from "../../repository";
 import { syncMemoryVector } from "../../effect/vector-sync";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 const UPSERT_MIN_SIMILARITY = 0.62;
 const UPSERT_MIN_SCORE = 32;
@@ -215,8 +216,12 @@ function updateFromAddPayload(
   );
 }
 
-function printUpsertResult(mode: "created" | "updated", id: number) {
-  printJson({ mode, id });
+function printUpsertResult(
+  outputMode: CommandContext["outputMode"],
+  mode: "created" | "updated",
+  id: number,
+) {
+  printCommandOutput({ command: "add", outputMode }, { mode, id });
 }
 
 function maybeHandleAddUpsert(
@@ -224,6 +229,7 @@ function maybeHandleAddUpsert(
   args: string[],
   content: string,
   metadata: AddMetadata,
+  outputMode: CommandContext["outputMode"],
 ): Effect.Effect<boolean, MemoryDatabaseError> {
   const upsertQuery = parseAddUpsertQuery(args);
   if (upsertQuery === undefined) {
@@ -238,7 +244,9 @@ function maybeHandleAddUpsert(
       if (updated) {
         yield* syncMemoryVector(database, updated);
       }
-      yield* Effect.sync(() => printUpsertResult("updated", matchedId));
+      yield* Effect.sync(() =>
+        printUpsertResult(outputMode, "updated", matchedId),
+      );
       return true;
     }
     const createdResult = yield* addInsert(database, content, metadata);
@@ -249,7 +257,9 @@ function maybeHandleAddUpsert(
     if (created) {
       yield* syncMemoryVector(database, created);
     }
-    yield* Effect.sync(() => printUpsertResult("created", createdId));
+    yield* Effect.sync(() =>
+      printUpsertResult(outputMode, "created", createdId),
+    );
     return true;
   });
 }
@@ -363,7 +373,7 @@ function printAddResult(params: {
       suggested_command: `machine-memory deprecate ${staleIds.join(",")} --superseded-by ${createdId}`,
     };
   }
-  printJson(payload);
+  printCommandOutput({ command: "add", outputMode }, payload);
 }
 
 export function handleAddCommand(commandCtx: CommandContext) {
@@ -372,7 +382,9 @@ export function handleAddCommand(commandCtx: CommandContext) {
     const database = requireDatabase(commandCtx);
     const content = yield* resolveAddContent(args, commandCtx.fileSystem);
     const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
-    if (yield* maybeHandleAddUpsert(database, args, content, metadata)) {
+    if (
+      yield* maybeHandleAddUpsert(database, args, content, metadata, outputMode)
+    ) {
       return;
     }
     const conflictState = yield* detectAddConflicts(
@@ -581,10 +593,14 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
     }
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
-        printJson(rows[0] ?? { error: "Not found" });
+        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
         return;
       }
-      printJson({ updated: rows, not_found: missingIds, count: rows.length });
+      printCommandOutput(commandCtx, {
+        updated: rows,
+        not_found: missingIds,
+        count: rows.length,
+      });
     });
   });
 }
@@ -660,10 +676,10 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     }
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
-        printJson(rows[0] ?? { error: "Not found" });
+        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
         return;
       }
-      printJson({
+      printCommandOutput(commandCtx, {
         deprecated: rows,
         not_found: missingIds,
         count: rows.length,

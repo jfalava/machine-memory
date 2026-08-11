@@ -1,0 +1,42 @@
+---
+title: --pretty
+description: Render machine-command results as readable terminal output.
+sidebar:
+  order: 1
+---
+
+## Usage
+
+Add `--pretty` to any machine command when you are running it directly in a
+terminal and want output designed for people instead of JSON designed for
+agents and scripts.
+
+```sh
+machine-memory list --remote --pretty
+machine-memory query "backend" --remote --pretty
+```
+
+The flag is global, so it can also appear before the command:
+
+```sh
+machine-memory --pretty list --remote
+```
+
+Commands such as `list`, `query`, `get`, `suggest`, `sweep`, and `export` use
+readable tables and labeled fields. Long values wrap to fit the terminal.
+
+## Output precedence
+
+`--pretty` only changes the output of machine commands. Human-oriented
+commands, such as `init`, `upgrade`, and `remote setup`, keep their normal
+terminal output.
+
+If you provide an explicit output mode, it takes precedence over `--pretty`:
+
+```sh
+machine-memory list --remote --pretty --json-min
+machine-memory query "backend" --remote --pretty --quiet
+```
+
+Use those modes when another program or agent needs stable machine-readable
+output.

@@ -25,6 +25,7 @@ import {
 } from "../shared";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 const SWEEP_USAGE =
   'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
@@ -73,7 +74,7 @@ function minimalScoredResultSummary(
 }
 
 function printScoredResults(
-  outputMode: CommandContext["outputMode"],
+  commandCtx: Pick<CommandContext, "command" | "outputMode">,
   results: Record<string, unknown>[],
   options: {
     explainScore: boolean;
@@ -82,6 +83,7 @@ function printScoredResults(
     wrapResults?: boolean;
   },
 ) {
+  const { outputMode } = commandCtx;
   const showScoreWeights =
     options.explainScore && options.scoreWeights !== undefined;
   if (outputMode.jsonMin || outputMode.quiet) {
@@ -103,26 +105,30 @@ function printScoredResults(
     return;
   }
   if (options.wrapResults) {
-    printJson({
+    printCommandOutput(commandCtx, {
       results,
       ...(showScoreWeights ? { score_weights: options.scoreWeights } : {}),
     });
     return;
   }
-  printJson(results);
+  printCommandOutput(commandCtx, results);
 }
 
 function printEmptyQueryResults(
+  commandCtx: Pick<CommandContext, "command" | "outputMode">,
   term: string,
   filters: ReturnType<typeof parseCommonFilters>,
   queryTokens: string[],
-  outputMode: CommandContext["outputMode"],
 ) {
+  const { outputMode } = commandCtx;
   if (outputMode.brief) {
     printBriefLines([]);
     return;
   }
-  printJson(queryEmptyResultPayload(term, filters, queryTokens));
+  printCommandOutput(
+    commandCtx,
+    queryEmptyResultPayload(term, filters, queryTokens),
+  );
 }
 
 function fetchQueryResults(
@@ -311,7 +317,7 @@ function fetchHybridResults(
 
 export function handleQueryCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
+    const { args } = commandCtx;
     const term = args[0];
     if (!term) {
       usageError("Usage: query <search_term>");
@@ -337,10 +343,10 @@ export function handleQueryCommand(commandCtx: CommandContext) {
     );
     yield* Effect.sync(() => {
       if (results.length === 0) {
-        printEmptyQueryResults(term, filters, queryTokens, outputMode);
+        printEmptyQueryResults(commandCtx, term, filters, queryTokens);
         return;
       }
-      printScoredResults(outputMode, results, {
+      printScoredResults(commandCtx, results, {
         explainScore,
         semantic,
         scoreWeights: hybrid
@@ -386,7 +392,7 @@ export function handleListCommand(commandCtx: CommandContext) {
         printBriefLines(normalized);
         return;
       }
-      printJson(normalized);
+      printCommandOutput(commandCtx, normalized);
     });
   });
 }
@@ -492,7 +498,7 @@ function printSuggestResults(
     return;
   }
 
-  printJson({
+  printCommandOutput(commandCtx, {
     files: snapshot.files,
     normalized_files: snapshot.files,
     normalized_path_terms: snapshot.normalizedPathTerms,
@@ -678,7 +684,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         printBriefLines(results);
         return;
       }
-      printJson({
+      printCommandOutput(commandCtx, {
         files: snapshot.files,
         normalized_files: snapshot.files,
         normalized_path_terms: snapshot.normalizedPathTerms,

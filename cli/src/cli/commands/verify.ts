@@ -1,8 +1,9 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli-utils";
+import { usageError } from "../../cli-utils";
 import { getMemoryById, stringValue } from "../shared";
 import { compareFact } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 function parseFactArgs(args: string[], usage: string) {
   const idRaw = args[0];
@@ -26,11 +27,12 @@ export function handleVerifyCommand(commandCtx: CommandContext) {
     const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
     yield* Effect.sync(() => {
       if (!memory) {
-        printJson({ error: "Not found" });
+        printCommandOutput(commandCtx, { error: "Not found" });
         return;
       }
       const result = compareFact(stringValue(memory.content), fact);
-      printJson(
+      printCommandOutput(
+        commandCtx,
         result.conflict
           ? {
               id,

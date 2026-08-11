@@ -4,7 +4,7 @@ import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
 import type { DatabaseBackendFlags } from "../../database-config";
 import type { DbAccessMode } from "../../db";
 import type { CommandContext } from "./context";
-import { parseOutputMode } from "./output";
+import { parseOutputMode, prettyOutput } from "./output";
 
 export type FlagSpec = {
   readonly name: string;
@@ -76,14 +76,22 @@ function argvFromInput(
   return args;
 }
 
-function commandContext(
-  input: Record<string, unknown>,
-  specs: readonly FlagSpec[],
-  database: CommandContext["database"],
-  fileSystem: CommandContext["fileSystem"],
-): CommandContext {
-  const args = argvFromInput(input, specs);
-  return { args, outputMode: parseOutputMode(args), database, fileSystem };
+function commandContext(options: {
+  command: string;
+  input: Record<string, unknown>;
+  specs: readonly FlagSpec[];
+  database: CommandContext["database"];
+  fileSystem: CommandContext["fileSystem"];
+  pretty: boolean;
+}): CommandContext {
+  const args = argvFromInput(options.input, options.specs);
+  return {
+    args,
+    command: options.command,
+    outputMode: parseOutputMode(args, options.pretty),
+    database: options.database,
+    fileSystem: options.fileSystem,
+  };
 }
 
 export function effectCommand<
@@ -108,8 +116,16 @@ export function effectCommand<
     const resources = Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const database = mode ? yield* MemoryDatabase : undefined;
+      const pretty = yield* prettyOutput;
       yield* handler(
-        commandContext(inputRecord, commandSpecs, database, fileSystem),
+        commandContext({
+          command: name,
+          input: inputRecord,
+          specs: commandSpecs,
+          database,
+          fileSystem,
+          pretty,
+        }),
       );
     });
     return (

@@ -23,11 +23,16 @@ Only one backend flag is allowed. Do not combine `--local` with `--remote`.
 
 ## Database location
 
-By default, the database binary that will be generated and used will be called `machine-memory.db` and will be saved in the current repository root.
+By default, the database binary that will be generated and used will be called
+`machine-memory.db` and will be saved in the current repository root.
 
 The database and its parent directory are created when the first database-backed command opens it. Set `MACHINE_MEMORY_DB_PATH` to use a different path; a relative path is resolved from the current working directory.
 
 The local backend does not use remote Worker credentials or the operating system keychain. It is useful when memory should remain self-contained in a project or when a remote backend is not available.
+
+## Exporting to remote D1
+
+Use [`local export`](/human/local/export) to copy this repository's local memories into the configured remote D1 database.
 
 ## Caveats of using a local `.db` file
 
@@ -37,6 +42,8 @@ Branch-local databases compound this: entries written while working on a throwaw
 
 ### History lesson: `bun.lockb` files.
 
+Bun exclusively used, until [v1.1.39](https://bun.com/blog/bun-lock-text-lockfile), a binary lockfile for speed purposes. A text-based lockfile became the default in v1.2.
+
 The core complaint [(GitHub Discussion #409, 2022)](https://github.com/oven-sh/bun/discussions/409): early adopters flagged the binary bun.lockb format as a "HUGE turn off" mainly because it's impossible to diff, though Bun offered a workaround where bun install -y would output as a yarn v1 lockfile for human-readable diffing.
 
-Merge conflicts [(Issue #11863)](https://github.com/oven-sh/bun/issues/11863): the Bun team itself acknowledged that merge conflicts are hard — you can't tell whether to pick `bun.lockb.1` or `bun.lockb.2`, or both, and that PR review tools on GitHub/GitLab couldn't inspect or diff the file natively.
+Merge conflicts [(Issue #11863)](https://github.com/oven-sh/bun/issues/11863): the Bun team itself acknowledged that merge conflicts are hard — you can't tell whether to pick `bun.lockb.1` or `bun.lockb.2`, or both.

@@ -24,16 +24,11 @@ For the stack to be deployed, you need to have access to a Cloudflare account wi
 machine-memory remote provision
 ```
 
-This command deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare), creates the Worker API, generates or reuses a Worker token, and saves the resulting URL and credentials in the operating system keychain.
+This command deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare): a complete IaC solution that creates the necessary services for this tool to have a remote backend.
 
-After provisioning, backfill existing memories into Vectorize:
-
-```sh
-machine-memory reindex --remote
-```
-
-Future adds, updates, imports, deprecations, and deletes synchronize their
-Vectorize records automatically. D1 remains the source of truth.
+1. Creates the Worker API
+2. Generates or reuses a Worker token
+3. Saves the resulting URL and credentials in the operating system keychain
 
 ## Names and defaults
 

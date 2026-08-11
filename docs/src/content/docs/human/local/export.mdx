@@ -1,0 +1,32 @@
+---
+title: local export
+description: Export a local SQLite database into remote D1.
+sidebar:
+  order: 4
+---
+
+## Usage
+
+```sh
+machine-memory local export [local-db-path] --remote
+```
+
+The command reads the selected SQLite database without modifying it, selects
+memories belonging to the current Git repository, and exports them into the
+configured remote D1 database. If the path is omitted, the configured local
+database path is used, falling back to `machine-memory.db` in the current
+directory.
+
+The destination requires remote credentials from [`remote setup`](/human/remote/setup) or [`remote provision`](/human/remote/provision). Re-running the command is safe: exact active duplicates are skipped and existing remote records are not deleted or overwritten.
+
+## After export
+
+The export writes D1 records but does not backfill Vectorize embeddings. Run
+the existing reindex command afterward:
+
+```sh
+machine-memory reindex --remote
+```
+
+The command preserves memory metadata and repairs `superseded_by` links when
+the corresponding source records are available.

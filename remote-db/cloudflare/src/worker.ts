@@ -17,6 +17,8 @@ const EMBEDDING_DIMENSIONS = 768;
 const MAX_NAMESPACE_BYTES = 64;
 const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 50;
+const MAX_MIGRATION_ROWS = 50;
+const MAX_MIGRATION_LINKS = 100;
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
 const RATE_LIMIT_ERROR = "Too Many Requests";
@@ -52,6 +54,39 @@ type SemanticSearchRequest = {
   readonly status: string | undefined;
   readonly memoryType: string | undefined;
   readonly certainty: string | undefined;
+};
+
+type MigrationRow = {
+  readonly sourceId: number;
+  readonly content: string;
+  readonly tags: string;
+  readonly context: string;
+  readonly memoryType: string;
+  readonly status: string;
+  readonly supersededBySourceId: number | null;
+  readonly sourceAgent: string;
+  readonly lastUpdatedBy: string;
+  readonly updateCount: number;
+  readonly certainty: string;
+  readonly refs: string;
+  readonly expiresAfterDays: number | null;
+  readonly createdAt: string | null;
+  readonly updatedAt: string | null;
+};
+
+type MigrationRequest = {
+  readonly repository: string;
+  readonly rows: MigrationRow[];
+};
+
+type MigrationLink = {
+  readonly targetId: number;
+  readonly supersededByTargetId: number;
+};
+
+type MigrationLinksRequest = {
+  readonly repository: string;
+  readonly links: MigrationLink[];
 };
 
 type ParseResult<A> =
@@ -162,6 +197,176 @@ function parseVectorDeleteRequest(value: unknown): string {
     throw new Error("The request body must be a JSON object.");
   }
   return parseMemoryId(value as Record<string, unknown>);
+}
+
+function parseNullableInteger(
+  candidate: Record<string, unknown>,
+  field: string,
+): number | null {
+  const value = candidate[field];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error(`${field} must be a safe integer or null.`);
+  }
+  return value;
+}
+
+function parseMigrationInteger(
+  candidate: Record<string, unknown>,
+  field: string,
+): number {
+  const value = candidate[field];
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw new Error(`${field} must be a safe integer.`);
+  }
+  return value;
+}
+
+function parseMigrationText(
+  candidate: Record<string, unknown>,
+  field: string,
+  fallback = "",
+): string {
+  const value = candidate[field];
+  if (value === undefined || value === null) {
+    return fallback;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string.`);
+  }
+  return value;
+}
+
+function validateMigrationEnums(
+  memoryType: string,
+  status: string,
+  certainty: string,
+): void {
+  if (
+    ![
+      "decision",
+      "convention",
+      "gotcha",
+      "preference",
+      "constraint",
+      "reference",
+      "status",
+    ].includes(memoryType)
+  ) {
+    throw new Error(`Invalid memory_type '${memoryType}'.`);
+  }
+  if (!["active", "deprecated", "superseded_by"].includes(status)) {
+    throw new Error(`Invalid status '${status}'.`);
+  }
+  if (!["verified", "inferred", "speculative"].includes(certainty)) {
+    throw new Error(`Invalid certainty '${certainty}'.`);
+  }
+}
+
+function parseMigrationRow(value: unknown): MigrationRow {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Each migration row must be an object.");
+  }
+  const candidate = value as Record<string, unknown>;
+  const sourceId = parseMigrationInteger(candidate, "source_id");
+  if (sourceId < 1) {
+    throw new Error("source_id must be greater than zero.");
+  }
+  const content = parseMigrationText(candidate, "content");
+  if (!content) {
+    throw new Error("content must be a non-empty string.");
+  }
+  const memoryType = parseMigrationText(candidate, "memory_type", "convention");
+  const status = parseMigrationText(candidate, "status", "active");
+  const certainty = parseMigrationText(candidate, "certainty", "inferred");
+  validateMigrationEnums(memoryType, status, certainty);
+  const updateCount = parseMigrationInteger(candidate, "update_count");
+  if (updateCount < 0) {
+    throw new Error("update_count must not be negative.");
+  }
+  return {
+    sourceId,
+    content,
+    tags: parseMigrationText(candidate, "tags"),
+    context: parseMigrationText(candidate, "context"),
+    memoryType,
+    status,
+    supersededBySourceId: parseNullableInteger(
+      candidate,
+      "superseded_by_source_id",
+    ),
+    sourceAgent: parseMigrationText(candidate, "source_agent"),
+    lastUpdatedBy: parseMigrationText(candidate, "last_updated_by"),
+    updateCount,
+    certainty,
+    refs: parseMigrationText(candidate, "refs", "[]"),
+    expiresAfterDays: parseNullableInteger(candidate, "expires_after_days"),
+    createdAt: parseMigrationText(candidate, "created_at") || null,
+    updatedAt: parseMigrationText(candidate, "updated_at") || null,
+  };
+}
+
+function parseMigrationRequest(value: unknown): MigrationRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("The migration request body must be an object.");
+  }
+  const candidate = value as Record<string, unknown>;
+  const repository = parseRepository(candidate);
+  if (
+    !Array.isArray(candidate.rows) ||
+    candidate.rows.length > MAX_MIGRATION_ROWS
+  ) {
+    throw new Error(
+      `rows must be an array with at most ${MAX_MIGRATION_ROWS} entries.`,
+    );
+  }
+  const rows = candidate.rows.map(parseMigrationRow);
+  const sourceIds = new Set<number>();
+  for (const row of rows) {
+    if (sourceIds.has(row.sourceId)) {
+      throw new Error(`Duplicate source_id ${row.sourceId}.`);
+    }
+    sourceIds.add(row.sourceId);
+  }
+  return { repository, rows };
+}
+
+function parseMigrationLinksRequest(value: unknown): MigrationLinksRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("The migration links request body must be an object.");
+  }
+  const candidate = value as Record<string, unknown>;
+  const repository = parseRepository(candidate);
+  if (
+    !Array.isArray(candidate.links) ||
+    candidate.links.length > MAX_MIGRATION_LINKS
+  ) {
+    throw new Error(
+      `links must be an array with at most ${MAX_MIGRATION_LINKS} entries.`,
+    );
+  }
+  const links = candidate.links.map((linkValue) => {
+    if (
+      !linkValue ||
+      typeof linkValue !== "object" ||
+      Array.isArray(linkValue)
+    ) {
+      throw new Error("Each migration link must be an object.");
+    }
+    const link = linkValue as Record<string, unknown>;
+    const targetId = parseMigrationInteger(link, "target_id");
+    const supersededByTargetId = parseMigrationInteger(
+      link,
+      "superseded_by_target_id",
+    );
+    if (targetId < 1 || supersededByTargetId < 1) {
+      throw new Error("Migration link IDs must be greater than zero.");
+    }
+    return { targetId, supersededByTargetId };
+  });
+  return { repository, links };
 }
 
 function safeParse<A>(parse: () => A): ParseResult<A> {
@@ -294,6 +499,124 @@ export default Cloudflare.Worker<{}>()(
         return yield* HttpServerResponse.json({ ok: true, result });
       });
 
+    const handleMigration = (body: unknown) =>
+      Effect.gen(function* () {
+        const input = safeParse(() => parseMigrationRequest(body));
+        if (!input.ok) {
+          return yield* HttpServerResponse.json(
+            { ok: false, error: input.error },
+            { status: 400 },
+          );
+        }
+
+        const items: {
+          source_id: number;
+          target_id: number;
+          status: "inserted" | "duplicate";
+        }[] = [];
+        let inserted = 0;
+        let duplicates = 0;
+
+        for (const row of input.value.rows) {
+          const existing = yield* sql.unsafe<{ id: number }>(
+            `SELECT id FROM memories
+             WHERE repository = ?
+               AND status = 'active'
+               AND content = ?
+               AND tags = ?
+               AND context = ?
+             LIMIT 1`,
+            [input.value.repository, row.content, row.tags, row.context],
+          );
+          const duplicate = existing[0];
+          if (duplicate) {
+            duplicates += 1;
+            items.push({
+              source_id: row.sourceId,
+              target_id: Number(duplicate.id),
+              status: "duplicate",
+            });
+            continue;
+          }
+
+          const result = yield* d1
+            .prepare(
+              `INSERT INTO memories (
+                 repository, content, tags, context, memory_type, status,
+                 superseded_by, source_agent, last_updated_by, update_count,
+                 certainty, refs, expires_after_days, created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .bind(
+              input.value.repository,
+              row.content,
+              row.tags,
+              row.context,
+              row.memoryType,
+              row.status,
+              row.sourceAgent,
+              row.lastUpdatedBy,
+              row.updateCount,
+              row.certainty,
+              row.refs,
+              row.expiresAfterDays,
+              row.createdAt,
+              row.updatedAt,
+            )
+            .run();
+          const targetId = Number(result.meta.last_row_id);
+          inserted += 1;
+          items.push({
+            source_id: row.sourceId,
+            target_id: targetId,
+            status: "inserted",
+          });
+        }
+
+        return yield* HttpServerResponse.json({
+          ok: true,
+          result: {
+            processed: input.value.rows.length,
+            inserted,
+            duplicates,
+            items,
+          },
+        });
+      });
+
+    const handleMigrationLinks = (body: unknown) =>
+      Effect.gen(function* () {
+        const input = safeParse(() => parseMigrationLinksRequest(body));
+        if (!input.ok) {
+          return yield* HttpServerResponse.json(
+            { ok: false, error: input.error },
+            { status: 400 },
+          );
+        }
+
+        let updated = 0;
+        for (const link of input.value.links) {
+          const result = yield* d1
+            .prepare(
+              `UPDATE memories
+               SET superseded_by = ?
+               WHERE repository = ? AND id = ?`,
+            )
+            .bind(
+              link.supersededByTargetId,
+              input.value.repository,
+              link.targetId,
+            )
+            .run();
+          updated += result.meta.changes;
+        }
+
+        return yield* HttpServerResponse.json({
+          ok: true,
+          result: { updated },
+        });
+      });
+
     const handleVectorizeUpsert = (body: unknown) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseMemoryDocument(body));
@@ -401,6 +724,8 @@ export default Cloudflare.Worker<{}>()(
           request.method !== "POST" ||
           ![
             "/query",
+            "/migrate",
+            "/migrate/links",
             "/vectorize/upsert",
             "/vectorize/search",
             "/vectorize/delete",
@@ -435,6 +760,14 @@ export default Cloudflare.Worker<{}>()(
         const body = bodyResult.body;
         if (request.url === "/query") {
           return yield* handleQuery(body);
+        }
+
+        if (request.url === "/migrate") {
+          return yield* handleMigration(body);
+        }
+
+        if (request.url === "/migrate/links") {
+          return yield* handleMigrationLinks(body);
         }
 
         if (request.url === "/vectorize/upsert") {

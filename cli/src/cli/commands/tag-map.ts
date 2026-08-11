@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli-utils";
+import { usageError } from "../../cli-utils";
 import {
   deletePathTagMapEntry,
   loadPathTagMap,
@@ -9,6 +9,7 @@ import {
 } from "../../path-tags";
 import { parseTags } from "../shared";
 import type { CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 type TagMapEffect = Effect.Effect<void, unknown, never>;
 
@@ -16,7 +17,7 @@ function listTagMap(context: CommandContext): TagMapEffect {
   return Effect.gen(function* () {
     const map = yield* loadPathTagMap(context.fileSystem);
     yield* Effect.sync(() =>
-      printJson({
+      printCommandOutput(context, {
         file: pathTagMapFilePath(),
         mappings: Object.entries(map).map(([path_prefix, tags]) => ({
           path_prefix,
@@ -42,7 +43,7 @@ function setTagMap(
     }
     yield* upsertPathTagMapEntry(context.fileSystem, pathPrefix, tags);
     yield* Effect.sync(() =>
-      printJson({
+      printCommandOutput(context, {
         status: "ok",
         path_prefix: pathPrefix,
         tags,
@@ -64,7 +65,7 @@ function deleteTagMap(
     const existed = Object.hasOwn(current, pathPrefix);
     yield* deletePathTagMapEntry(context.fileSystem, pathPrefix);
     yield* Effect.sync(() =>
-      printJson({
+      printCommandOutput(context, {
         status: existed ? "deleted" : "not_found",
         path_prefix: pathPrefix,
         file: pathTagMapFilePath(),
@@ -82,7 +83,9 @@ function suggestTagMap(
       usageError("Usage: tag-map suggest <path>");
     }
     const tags = yield* suggestTagsForPath(context.fileSystem, filePath);
-    yield* Effect.sync(() => printJson({ path: filePath, tags }));
+    yield* Effect.sync(() =>
+      printCommandOutput(context, { path: filePath, tags }),
+    );
   });
 }
 

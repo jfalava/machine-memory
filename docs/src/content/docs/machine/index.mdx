@@ -26,6 +26,17 @@ accept:
 | `--json-min` | Compact JSON with stable identifiers and minimal summaries.       |
 | `--quiet`    | The smallest machine-oriented response available for the command. |
 
+All machine commands also accept the global `--pretty` flag. It renders a
+human-readable result instead of JSON. Existing explicit output flags take
+precedence, so `--json-min`, `--brief`, and `--quiet` remain safe for scripts.
+
+Both placements are supported:
+
+```sh
+machine-memory --pretty query "backend" --remote
+machine-memory query "backend" --remote --pretty
+```
+
 ## Commands
 
 ### CLI and memory lifecycle

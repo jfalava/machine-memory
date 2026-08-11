@@ -5,6 +5,7 @@ import type { MemoryDatabaseError } from "../../effect/database";
 import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
 import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 type MemorySnapshot = {
   id: number;
@@ -838,7 +839,11 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
         printDoctorBrief(suggestedCommands);
         return;
       }
-      printJson({ summary, findings, suggested_commands: suggestedCommands });
+      printCommandOutput(commandCtx, {
+        summary,
+        findings,
+        suggested_commands: suggestedCommands,
+      });
     });
   });
 }

@@ -5,14 +5,17 @@ sidebar:
   order: 0
 ---
 
-These commands change local configuration, provision infrastructure, or update the instructions that agents read from `AGENTS.md`. They are intentionally interactive or operational rather than database-query primitives.
+These commands change local configuration, provision infrastructure, or update the instructions that agents read from `AGENTS.md`.
 
 ## Commands
 
 | Command                                            | Purpose                                                                       |
 | -------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`--pretty`](/human/pretty)                        | Render machine-command results as readable terminal output instead of JSON.   |
 | [`init`](/human/init)                              | Create or replace the managed memory block in `AGENTS.md`.                    |
-| [`remote setup`](/human/remote-setup)              | Save credentials for an existing authenticated Worker.                        |
-| [`remote provision`](/human/remote-provision)      | Deploy a new Alchemy D1 stack and save its credentials.                       |
+| [`local`](/human/local)                            | Use a repository-local SQLite database.                                       |
+| [`local export`](/human/local/export)              | Export local memories into remote D1.                                         |
+| [`remote setup`](/human/remote/setup)              | Save credentials for an existing authenticated Worker.                        |
+| [`remote provision`](/human/remote/provision)      | Deploy a new Alchemy D1 stack and save its credentials.                       |
 | [`keychain access`](/human/remote/keychain-access) | Configure remote credentials for sandboxed environments.                      |
 | [`upgrade`](/human/upgrade)                        | Download and replace the installed CLI binary from the latest GitHub release. |

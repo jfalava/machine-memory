@@ -20,6 +20,10 @@ export function helpPayload() {
       "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a local SQLite database so future agent sessions can recall them.",
     database:
       "Every database-backed command requires exactly one of --local or --remote. Remote credentials come from MACHINE_MEMORY_DB_URL/MACHINE_MEMORY_DB_TOKEN or the OS keychain.",
+    global_options: {
+      pretty:
+        "Render human-readable output for machine commands; existing human commands keep their normal output.",
+    },
     commands: {
       help: "Show this help message",
       add: {
@@ -83,6 +87,13 @@ export function helpPayload() {
             "remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
           description:
             "Deploy the Alchemy D1 stack and store its Worker credentials",
+        },
+      },
+      local: {
+        export: {
+          usage: "local export [local-db-path] --remote",
+          description:
+            "Read a local SQLite database and export its repository memories into the remote D1 database",
         },
       },
     },

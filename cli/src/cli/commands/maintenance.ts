@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli-utils";
+import { usageError } from "../../cli-utils";
 import type {
   MemoryDatabaseApi,
   MemoryDatabaseError,
@@ -30,6 +30,7 @@ import { syncMemoryVector } from "../../effect/vector-sync";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { resolve } from "node:path";
+import { printCommandOutput } from "../runtime/output";
 
 type ImportNormalized = {
   content: string;
@@ -408,7 +409,7 @@ export function handleStatsCommand(commandCtx: CommandContext) {
       ingestMemoryStats(accumulator, memory);
     }
     yield* Effect.sync(() =>
-      printJson({
+      printCommandOutput(commandCtx, {
         total_memories: memories.length,
         breakdown_by_memory_type: accumulator.byType,
         breakdown_by_certainty: accumulator.byCertainty,
@@ -440,6 +441,6 @@ export function handleImportCommand(commandCtx: CommandContext) {
         }
       }
     }
-    yield* Effect.sync(() => printJson({ results }));
+    yield* Effect.sync(() => printCommandOutput(commandCtx, { results }));
   });
 }

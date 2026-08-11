@@ -7,7 +7,7 @@ sidebar:
 
 ## Prerequisites
 
-This tool requires the userspace to have access to the OS keychain.
+This tool uses [Bun Secrets](https://bun.com/docs/runtime/secrets) to safely store items in your keychain and requires the userspace to have access to it.
 
 While this is guaranteed on Windows and macOS machines, Linux users must have a compatible `libsecret` keychain available on the shell session.
 
@@ -23,17 +23,17 @@ The generated block tells future agents how to scan memory, which backend to use
 
 ## Backend selection
 
-Exactly one flag is required:
+`machine-memory` uses one of two backends to store the memories: a [local](/human/local) one or a [remote](/human/remote) one.
 
-```sh
-machine-memory init --remote
-```
+Exactly one flag is required:
 
 ```sh
 machine-memory init --local
 ```
 
-If no remote credentials or local database exist during a first run, the command can offer to run [`remote setup`](/human/remote-setup) or [`remote provision`](/human/remote-provision) first. It can also create a local database or skip setup interactively.
+```sh
+machine-memory init --remote
+```
 
 ## When to run it
 

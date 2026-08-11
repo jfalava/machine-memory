@@ -1,9 +1,10 @@
 import { Effect } from "effect";
-import { printJson, usageError } from "../../cli-utils";
+import { usageError } from "../../cli-utils";
 import { deleteMemoryVector } from "../../effect/vector-sync";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { parseIdSpec } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 
 export function handleDeleteCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -22,7 +23,8 @@ export function handleDeleteCommand(commandCtx: CommandContext) {
       yield* deleteMemoryVector(database, id);
     }
     yield* Effect.sync(() =>
-      printJson(
+      printCommandOutput(
+        commandCtx,
         ids.length === 1
           ? { deleted: ids[0] }
           : { deleted: ids, count: ids.length },

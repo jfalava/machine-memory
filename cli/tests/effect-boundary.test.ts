@@ -84,10 +84,12 @@ describe("Effect application boundaries", () => {
       quiet: boolean;
     }): CommandContext => ({
       args: ["--remote"],
+      command: "reindex",
       outputMode: {
         brief: false,
         jsonMin: outputMode.jsonMin,
         noConflicts: false,
+        pretty: false,
         quiet: outputMode.quiet,
       },
       database,
@@ -162,8 +164,10 @@ describe("Effect application boundaries", () => {
             brief: false,
             jsonMin: true,
             noConflicts: false,
+            pretty: false,
             quiet: false,
           },
+          command: "reindex",
           database,
           fileSystem: {} as CommandContext["fileSystem"],
         }),

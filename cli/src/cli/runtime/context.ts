@@ -5,6 +5,7 @@ import type { OutputMode } from "./output";
 
 export type CommandContext = {
   args: string[];
+  command: string;
   outputMode: OutputMode;
   database: MemoryDatabaseApi | undefined;
   fileSystem: FileSystem;
