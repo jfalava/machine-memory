@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-export class CommandError extends Schema.TaggedErrorClass<CommandError>()(
+export class CommandError extends Schema.TaggedError<CommandError>()(
   "CommandError",
   {
     message: Schema.String,
@@ -9,7 +9,7 @@ export class CommandError extends Schema.TaggedErrorClass<CommandError>()(
   },
 ) {}
 
-export class MemoryDatabaseError extends Schema.TaggedErrorClass<MemoryDatabaseError>()(
+export class MemoryDatabaseError extends Schema.TaggedError<MemoryDatabaseError>()(
   "MemoryDatabaseError",
   {
     operation: Schema.String,
