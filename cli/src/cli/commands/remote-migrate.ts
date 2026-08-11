@@ -1,5 +1,6 @@
 import pc from "picocolors";
 import { Effect } from "effect";
+import { resolve } from "node:path";
 import {
   loadDatabaseConfig,
   validateDatabaseBackendFlags,
@@ -16,6 +17,7 @@ import {
 } from "../../remote-migration";
 import { repositoryForCurrentDirectory } from "../../repository";
 import type { CommandContext } from "../runtime/context";
+import { replaceMemoryBlock } from "./agents-md-content";
 
 const ROW_BATCH_SIZE = 50;
 const LINK_BATCH_SIZE = 100;
@@ -42,6 +44,26 @@ function chunks<A>(values: A[], size: number): A[][] {
 
 function emptyBatchResult(): RemoteMigrationBatchResult {
   return { processed: 0, inserted: 0, duplicates: 0, items: [] };
+}
+
+function updateAgentsMdForRemote(context: CommandContext) {
+  const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
+  return Effect.gen(function* () {
+    const agentsMdExists = yield* context.fileSystem.exists(agentsMdPath);
+    const existingContent = agentsMdExists
+      ? new TextDecoder().decode(
+          yield* context.fileSystem.readFile(agentsMdPath),
+        )
+      : "";
+    yield* context.fileSystem.writeFile(
+      agentsMdPath,
+      new TextEncoder().encode(replaceMemoryBlock(existingContent, "remote")),
+    );
+  }).pipe(
+    Effect.mapError((cause) =>
+      migrationCommandError("Could not update AGENTS.md for --remote.", cause),
+    ),
+  );
 }
 
 export function handleLocalExport(context: CommandContext) {
@@ -155,6 +177,8 @@ export function handleLocalExport(context: CommandContext) {
       );
     }
 
+    yield* updateAgentsMdForRemote(context);
+
     yield* Effect.sync(() => {
       console.info();
       console.info(pc.green(pc.bold("✓ Local export completed")));
@@ -168,6 +192,7 @@ export function handleLocalExport(context: CommandContext) {
       console.info(
         `${pc.dim("Links")}      ${links.length} superseded_by links updated`,
       );
+      console.info(`${pc.dim("Agents")}     AGENTS.md updated for --remote`);
       console.info();
       console.info(`${pc.dim("Next")}       machine-memory reindex --remote`);
       console.info();

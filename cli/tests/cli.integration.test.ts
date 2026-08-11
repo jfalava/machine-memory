@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFile as execFileCallback } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -370,6 +370,10 @@ describe("CLI rewrite integration", () => {
 
   it("exports a selected local database through the raw TypeScript CLI", async () => {
     const { cwd, dbPath } = await createProject();
+    await writeFile(
+      join(cwd, "AGENTS.md"),
+      "# Project instructions\n\n<!-- machine-memory:start -->\nlocal instructions\n<!-- machine-memory:end -->\n",
+    );
     const added = await runCli(
       cwd,
       dbPath,
@@ -453,6 +457,14 @@ describe("CLI rewrite integration", () => {
       expect(
         (requests[0]?.body.rows as Record<string, unknown>[])[0]?.content,
       ).toBe("A selected SQLite file can be exported remotely");
+      const agentsMd = await readFile(join(cwd, "AGENTS.md"), "utf8");
+      expect(agentsMd).toContain("# Project instructions");
+      expect(agentsMd).toContain(
+        "Every database-backed command requires exactly one backend flag: use `--remote` for this repository.",
+      );
+      expect(agentsMd).not.toContain(
+        "For this one use `--local` for this repository.",
+      );
     } finally {
       await new Promise<void>((resolveServer, rejectServer) =>
         server.close((error) =>
