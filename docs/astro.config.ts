@@ -35,6 +35,7 @@ const nimbusConfig = defineNimbusConfig({
           {
             label: "remote",
             items: [
+                          { label: "Overview", link: "/human/remote" },
               { label: "setup", link: "/human/remote/setup" },
               {
                 label: "provision",

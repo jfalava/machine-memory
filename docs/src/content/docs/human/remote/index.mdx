@@ -1,13 +1,25 @@
 ---
 title: remote
-description: Configure and provision the remote D1 backend.
+description: Why and how to use a shared remote D1 backend.
 sidebar:
   order: 3
 ---
 
-Remote commands manage the authenticated Cloudflare D1 Worker backend.
+The remote backend stores memories in a shared database behind an authenticated Worker. It is the best choice when memory should follow the project instead of a particular checkout or computer.
 
-| Command                                       | Purpose                                  |
-| --------------------------------------------- | ---------------------------------------- |
-| [`remote setup`](/human/remote/setup)         | Save credentials for an existing Worker. |
-| [`remote provision`](/human/remote/provision) | Deploy a new D1-backed Worker stack.     |
+## Why use a remote database?
+
+- **Share context across agents and machines.** Multiple working copies and agent sessions can read and write the same project memory.
+- **Keep memory available across branches.** Memories are not trapped in a local SQLite file that can be lost, overwritten, or become difficult to merge.
+- **Preserve project boundaries.** The remote database is shared, but records are filtered by the current Git repository, so different projects remain isolated.
+- **Enable semantic search.** The remote stack includes Vectorize and Workers AI, allowing [`query`](/machine/query) to search by meaning as well as exact text.
+- **Centralize infrastructure.** D1, the Worker API, Vectorize, and their credentials are managed as one deployable stack.
+
+## Get started
+
+Choose one path:
+
+| Guide                                         | Use it when                                             |
+| --------------------------------------------- | ------------------------------------------------------- |
+| [`remote setup`](/human/remote/setup)         | A Worker already exists and you have its URL and token. |
+| [`remote provision`](/human/remote/provision) | You want to deploy a new Cloudflare-backed stack.       |
