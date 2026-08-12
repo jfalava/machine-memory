@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This file is published as a static asset at:
+#   https://machine-memory.jfa.dev/install
+# Keep the release asset names in sync with .github/workflows/release.yml.
+
+repo="jfalava/machine-memory"
+
+die() {
+  printf 'machine-memory: %s\n' "$1" >&2
+  exit 1
+}
+
+if [[ -n "${MACHINE_MEMORY_INSTALL_DIR:-}" ]]; then
+  install_dir="${MACHINE_MEMORY_INSTALL_DIR}"
+elif [[ -n "${HOME:-}" ]]; then
+  install_dir="${HOME}/.local/bin"
+else
+  die 'HOME is not set; set MACHINE_MEMORY_INSTALL_DIR to choose an install directory.'
+fi
+
+os="$(uname -s)"
+arch="$(uname -m)"
+
+case "${os}:${arch}" in
+  Darwin:arm64)
+    asset="machine-memory-darwin-arm64.zip"
+    binary="machine-memory"
+    ;;
+  Linux:x86_64|Linux:amd64)
+    asset="machine-memory-linux-x64.zip"
+    binary="machine-memory"
+    ;;
+  Linux:aarch64|Linux:arm64)
+    asset="machine-memory-linux-arm64.zip"
+    binary="machine-memory"
+    ;;
+  *)
+    die "unsupported platform: ${os}/${arch} (available: macOS arm64, Linux x64, Linux arm64)"
+    ;;
+esac
+
+command -v curl >/dev/null 2>&1 || die 'curl is required.'
+command -v unzip >/dev/null 2>&1 || die 'unzip is required.'
+
+download_url="https://github.com/${repo}/releases/latest/download/${asset}"
+temporary_directory="$(mktemp -d 2>/dev/null || mktemp -d -t machine-memory-install)"
+cleanup() {
+  rm -rf "${temporary_directory}"
+}
+trap cleanup EXIT
+
+archive="${temporary_directory}/${asset}"
+extracted="${temporary_directory}/extracted"
+temporary_binary="${install_dir}/.${binary}.$$"
+
+mkdir -p "${extracted}"
+printf 'Downloading machine-memory for %s/%s...\n' "${os}" "${arch}"
+curl --fail --location --retry 3 --silent --show-error \
+  --output "${archive}" "${download_url}"
+unzip -q "${archive}" -d "${extracted}"
+
+source_binary="${extracted}/${binary}"
+[[ -f "${source_binary}" ]] || die "release archive did not contain ${binary}"
+
+mkdir -p "${install_dir}"
+cp "${source_binary}" "${temporary_binary}"
+chmod 0755 "${temporary_binary}"
+mv -f "${temporary_binary}" "${install_dir}/${binary}"
+
+printf 'Installed machine-memory at %s/%s\n' "${install_dir}" "${binary}"
+case ":${PATH:-}:" in
+  *":${install_dir}:"*) ;;
+  *) printf 'Add %s to PATH if it is not already there.\n' "${install_dir}" ;;
+esac
