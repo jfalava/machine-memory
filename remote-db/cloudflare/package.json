@@ -15,8 +15,9 @@
   "dependencies": {
     "@cloudflare/workers-types": "5.20260809.1",
     "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
     "@effect/sql-d1": "catalog:effect",
-    "alchemy": "2.0.0-beta.70",
+    "alchemy": "2.0.0-beta.72",
     "effect": "catalog:effect"
   },
   "devDependencies": {
