@@ -1,6 +1,7 @@
 import { Effect, FileSystem } from "effect";
 import { dirname, resolve } from "node:path";
 import { CommandError } from "./effect/errors";
+import { jsonObject, jsonStringArray, parseJson } from "./json";
 
 type PathTagMap = Record<string, string[]>;
 
@@ -41,7 +42,7 @@ export function loadPathTagMap(
     }
     const bytes = yield* fileSystem.readFile(filePath);
     const parsed = yield* Effect.try({
-      try: () => JSON.parse(new TextDecoder().decode(bytes)) as unknown,
+      try: () => parseJson(new TextDecoder().decode(bytes)),
       catch: (cause) =>
         new CommandError({
           message: `Failed to parse path tag map: ${String(cause)}`,
@@ -49,20 +50,18 @@ export function loadPathTagMap(
           cause,
         }),
     });
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const parsedObject = jsonObject(parsed);
+    if (parsedObject === undefined) {
       return {};
     }
     const next: PathTagMap = {};
-    for (const [rawPrefix, value] of Object.entries(
-      parsed as Record<string, unknown>,
-    )) {
+    for (const [rawPrefix, value] of Object.entries(parsedObject)) {
       const prefix = normalizePath(rawPrefix);
-      if (!prefix || !Array.isArray(value)) {
+      const parsedTags = jsonStringArray(value);
+      if (!prefix || parsedTags === undefined) {
         continue;
       }
-      const tags = normalizeTags(
-        value.filter((item): item is string => typeof item === "string"),
-      );
+      const tags = normalizeTags(parsedTags);
       if (tags.length > 0) {
         next[prefix] = tags;
       }

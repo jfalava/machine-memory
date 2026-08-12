@@ -2,20 +2,17 @@ import { Effect } from "effect";
 import type { MemoryDatabaseApi } from "./database";
 import { MemoryDatabaseError } from "./errors";
 import type { MemoryVectorDocument } from "./vectorize";
+import { jsonNumber, jsonString, type JsonObject } from "../json";
 
-function stringField(
-  row: Record<string, unknown>,
-  field: string,
-  fallback = "",
-): string {
-  return typeof row[field] === "string" ? row[field] : fallback;
+function stringField(row: JsonObject, field: string, fallback = ""): string {
+  return jsonString(row[field]) ?? fallback;
 }
 
-export function memoryVectorDocument(
-  row: Record<string, unknown>,
-): MemoryVectorDocument {
+export function memoryVectorDocument(row: JsonObject): MemoryVectorDocument {
   const id = row.id;
-  if (typeof id !== "string" && typeof id !== "number") {
+  const stringId = jsonString(id);
+  const numberId = jsonNumber(id);
+  if (stringId === undefined && numberId === undefined) {
     throw new Error("Memory rows require an id before vector synchronization.");
   }
   const repository = stringField(row, "repository");
@@ -26,7 +23,7 @@ export function memoryVectorDocument(
     );
   }
   return {
-    id: String(id),
+    id: stringId ?? String(numberId),
     repository,
     content,
     tags: stringField(row, "tags"),
@@ -39,7 +36,7 @@ export function memoryVectorDocument(
 
 export function upsertMemoryVector(
   database: MemoryDatabaseApi,
-  row: Record<string, unknown>,
+  row: JsonObject,
 ): Effect.Effect<void, MemoryDatabaseError> {
   const vectorize = database.vectorize;
   if (!vectorize) {
@@ -64,13 +61,13 @@ export function upsertMemoryVector(
 
 export function syncMemoryVector(
   database: MemoryDatabaseApi,
-  row: Record<string, unknown>,
+  row: JsonObject,
 ): Effect.Effect<void, never> {
   return upsertMemoryVector(database, row).pipe(
     Effect.tapError((error) =>
       Effect.sync(() =>
         console.error(
-          `Warning: memory ${String(row.id)} was saved but vector synchronization failed: ${error.message}`,
+          `Warning: memory ${jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "unknown"} was saved but vector synchronization failed: ${error.message}`,
         ),
       ),
     ),

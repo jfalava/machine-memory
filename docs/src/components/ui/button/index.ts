@@ -8,6 +8,6 @@ export {
   buttonIconSize,
   type ButtonVariant,
   type ButtonSize,
-  type ButtonShape,
+  type ButtonForm,
   type ButtonVariantsOptions,
 } from "./variants";

@@ -1,4 +1,12 @@
 import { Effect } from "effect";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  parseJson,
+  type JsonObject,
+  type JsonValue,
+} from "../json";
 import { MemoryDatabaseError } from "./errors";
 import { validateBgeEmbeddingText } from "./bge-tokenizer";
 
@@ -22,7 +30,7 @@ export type MemoryVectorMutation = {
 export type MemoryVectorMatch = {
   readonly id: string;
   readonly score: number;
-  readonly metadata: Record<string, unknown>;
+  readonly metadata: JsonObject;
 };
 
 export type MemoryVectorSearchResult = {
@@ -66,10 +74,11 @@ export function memoryVectorEmbeddingText(
     .join("\n");
 }
 
-type RemoteVectorResponse = {
-  readonly ok?: unknown;
-  readonly result?: unknown;
-  readonly error?: unknown;
+type RemoteVectorResponse = JsonObject;
+
+type RequestHeaders = {
+  "content-type": string;
+  authorization?: string;
 };
 
 type RemoteRequestError = Error & {
@@ -110,29 +119,15 @@ function remoteRequestError(
   return error;
 }
 
-function errorRecord(value: unknown):
-  | {
-      readonly message?: unknown;
-      readonly status?: unknown;
-      readonly retryAfterMs?: unknown;
-      readonly cause?: unknown;
-    }
-  | undefined {
-  return value && typeof value === "object"
-    ? (value as {
-        readonly message?: unknown;
-        readonly status?: unknown;
-        readonly retryAfterMs?: unknown;
-        readonly cause?: unknown;
-      })
-    : undefined;
+function errorRecord(value: Error): RemoteRequestError {
+  return value;
 }
 
 export function vectorizeRateLimitInfo(
   error: MemoryDatabaseError,
 ): VectorizeRateLimitInfo | undefined {
-  const seen = new Set<unknown>();
-  let current: unknown = error;
+  const seen = new Set<Error>();
+  let current: Error | undefined = error;
   let rateLimited = false;
   let retryAfterMs: number | undefined;
   while (current && !seen.has(current)) {
@@ -141,25 +136,22 @@ export function vectorizeRateLimitInfo(
     if (!candidate) {
       break;
     }
-    const message =
-      typeof candidate.message === "string" ? candidate.message : "";
+    const message = candidate.message;
     const status = candidate.status;
     const isRateLimited =
       status === 429 ||
-      /(?:too many requests|rate[ -]?limit|\b429\b|\b40041\b)/i.test(
-        message,
-      );
+      /(?:too many requests|rate[ -]?limit|\b429\b|\b40041\b)/i.test(message);
     if (isRateLimited) {
       rateLimited = true;
       if (
         retryAfterMs === undefined &&
-        typeof candidate.retryAfterMs === "number" &&
+        candidate.retryAfterMs !== undefined &&
         Number.isFinite(candidate.retryAfterMs)
       ) {
         retryAfterMs = candidate.retryAfterMs;
       }
     }
-    current = candidate.cause;
+    current = candidate.cause instanceof Error ? candidate.cause : undefined;
   }
   return rateLimited ? { retryAfterMs } : undefined;
 }
@@ -169,11 +161,11 @@ async function readRemoteResponse(
 ): Promise<RemoteVectorResponse> {
   const text = await response.text();
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const parsed = jsonObject(parseJson(text));
+    if (parsed === undefined) {
       throw new Error("response was not a JSON object");
     }
-    return parsed as RemoteVectorResponse;
+    return parsed;
   } catch (cause) {
     const contentType = response.headers.get("content-type") ?? "unknown";
     throw new Error(
@@ -203,55 +195,51 @@ function vectorUrl(queryUrl: string, path: string): string {
   return parsed.toString();
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function asRecord(value: JsonValue): JsonObject {
+  const object = jsonObject(value);
+  if (object === undefined) {
     throw new Error("Remote vector API returned an invalid response.");
   }
-  return value as Record<string, unknown>;
+  return object;
 }
 
-function parseMutation(value: unknown): MemoryVectorMutation {
+function parseMutation(value: JsonValue): MemoryVectorMutation {
   const result = asRecord(value);
-  if (typeof result.id !== "string" || typeof result.mutationId !== "string") {
+  const id = jsonString(result.id);
+  const mutationId = jsonString(result.mutationId);
+  if (id === undefined || mutationId === undefined) {
     throw new Error("Remote vector API returned an invalid mutation.");
   }
   return {
-    id: result.id,
-    namespace:
-      typeof result.namespace === "string" ? result.namespace : undefined,
-    mutationId: result.mutationId,
+    id,
+    namespace: jsonString(result.namespace),
+    mutationId,
   };
 }
 
-function parseSearchResult(value: unknown): MemoryVectorSearchResult {
+function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
   const result = asRecord(value);
   if (!Array.isArray(result.matches)) {
     throw new Error("Remote vector API returned an invalid search result.");
   }
   const matches = result.matches.map((match, index): MemoryVectorMatch => {
     const candidate = asRecord(match);
-    if (
-      typeof candidate.id !== "string" ||
-      candidate.id.trim().length === 0 ||
-      typeof candidate.score !== "number" ||
-      !Number.isFinite(candidate.score)
-    ) {
+    const id = jsonString(candidate.id);
+    const score = jsonNumber(candidate.score);
+    if (id === undefined || id.trim().length === 0 || score === undefined) {
       throw new Error(
         `Remote vector API returned an invalid search match at index ${index}.`,
       );
     }
     const metadata = candidate.metadata;
     return {
-      id: candidate.id,
-      score: candidate.score,
-      metadata:
-        metadata && typeof metadata === "object" && !Array.isArray(metadata)
-          ? (metadata as Record<string, unknown>)
-          : {},
+      id,
+      score,
+      metadata: jsonObject(metadata) ?? {},
     };
   });
   return {
-    count: typeof result.count === "number" ? result.count : matches.length,
+    count: jsonNumber(result.count) ?? matches.length,
     matches,
   };
 }
@@ -261,8 +249,8 @@ type RequestOptions<T> = {
   readonly token: string | undefined;
   readonly operation: string;
   readonly path: string;
-  readonly body: unknown;
-  readonly parse: (value: unknown) => T;
+  readonly body: JsonValue;
+  readonly parse: (value: JsonValue) => T;
   readonly beforeRequest?: () => Promise<void>;
 };
 
@@ -272,9 +260,7 @@ function request<T>(
   return Effect.tryPromise({
     try: async () => {
       await options.beforeRequest?.();
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-      };
+      const headers: RequestHeaders = { "content-type": "application/json" };
       if (options.token) {
         headers.authorization = `Bearer ${options.token}`;
       }
@@ -286,9 +272,8 @@ function request<T>(
       const payload = await readRemoteResponse(response);
       if (!response.ok || payload.ok !== true) {
         const message =
-          typeof payload.error === "string"
-            ? payload.error
-            : `Remote vector API returned HTTP ${response.status}.`;
+          jsonString(payload.error) ??
+          `Remote vector API returned HTTP ${response.status}.`;
         throw remoteRequestError(response, message);
       }
       return options.parse(payload.result);

@@ -1,5 +1,14 @@
 import { Effect } from "effect";
 import { printJson } from "../../cli-utils";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  jsonStringArray,
+  parseJson,
+  type JsonObject,
+  type JsonValue,
+} from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
@@ -13,7 +22,7 @@ type MemorySnapshot = {
   tagsRaw: string;
   memoContext: string;
   memoryType: string;
-  refsRaw: unknown;
+  refsRaw: JsonValue;
   expiresAfterDays: number | null;
   termSet: Set<string>;
 };
@@ -54,7 +63,7 @@ type TagFinding = {
 type RefsFinding = {
   kind: "malformed_refs";
   id: number;
-  refs: unknown;
+  refs: JsonValue;
   suggested_refs: string[];
   suggested_command: string;
 };
@@ -93,6 +102,21 @@ type DoctorFindings = {
   type_boundary: TypeBoundaryFinding[];
   tag_hygiene: TagFinding[];
   malformed_refs: RefsFinding[];
+};
+
+type ExactDuplicateResult = {
+  findings: ExactDuplicateFinding[];
+  duplicateKeyById: Map<number, string>;
+};
+
+type TagHygieneResult = {
+  findings: TagFinding[];
+  skipTaxonomy: boolean;
+};
+
+type MalformedRefsDiagnosis = {
+  malformed: boolean;
+  suggested: string[];
 };
 
 const NEAR_DUPLICATE_THRESHOLD = 0.78;
@@ -146,12 +170,14 @@ function refsSuggestedPayload(refs: string[]): string {
   return shellQuote(JSON.stringify(refs));
 }
 
-function maybeInteger(value: unknown): number | null {
-  if (typeof value === "number" && Number.isInteger(value)) {
-    return value;
+function maybeInteger(value: JsonValue | undefined): number | null {
+  const numberValue = jsonNumber(value);
+  if (numberValue !== undefined && Number.isInteger(numberValue)) {
+    return numberValue;
   }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
+  const textValue = jsonString(value);
+  if (textValue !== undefined && textValue.trim() !== "") {
+    const parsed = Number(textValue);
     if (Number.isInteger(parsed)) {
       return parsed;
     }
@@ -172,7 +198,8 @@ function loadActiveMemories(
     )
     .pipe(
       Effect.map((rows) =>
-        (rows as Record<string, unknown>[]).map((row) => {
+        rows.map((rawRow) => {
+          const row = jsonObject(rawRow) ?? {};
           const id = Number(row.id ?? 0);
           const content = stringValue(row.content);
           const tagsRaw = stringValue(row.tags);
@@ -205,10 +232,7 @@ function exactDuplicateMap(
   return groups;
 }
 
-function detectExactDuplicates(rows: MemorySnapshot[]): {
-  findings: ExactDuplicateFinding[];
-  duplicateKeyById: Map<number, string>;
-} {
+function detectExactDuplicates(rows: MemorySnapshot[]): ExactDuplicateResult {
   const findings: ExactDuplicateFinding[] = [];
   const duplicateKeyById = new Map<number, string>();
   for (const [key, group] of exactDuplicateMap(rows)) {
@@ -486,7 +510,7 @@ function basicTagHygieneFindings(
   row: MemorySnapshot,
   normalized: string,
   contentArg: string,
-): { findings: TagFinding[]; skipTaxonomy: boolean } {
+): TagHygieneResult {
   if (normalized.length === 0) {
     return {
       findings: [
@@ -700,39 +724,37 @@ function detectTypeBoundary(rows: MemorySnapshot[]): TypeBoundaryFinding[] {
   return findings;
 }
 
-function parseMalformedRefs(raw: unknown): {
-  malformed: boolean;
-  suggested: string[];
-} {
+function parseMalformedRefs(raw: JsonValue): MalformedRefsDiagnosis {
   if (Array.isArray(raw)) {
-    const valid = raw.filter(
-      (item): item is string => typeof item === "string",
-    );
+    const valid = raw.flatMap((item) => {
+      const value = jsonString(item);
+      return value === undefined ? [] : [value];
+    });
     return { malformed: valid.length !== raw.length, suggested: valid };
   }
-  if (typeof raw !== "string") {
+  const rawText = jsonString(raw);
+  if (rawText === undefined) {
     return { malformed: true, suggested: [] };
   }
-  if (raw.trim() === "") {
+  if (rawText.trim() === "") {
     return { malformed: true, suggested: [] };
   }
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      Array.isArray(parsed) &&
-      parsed.every((item) => typeof item === "string")
-    ) {
-      return { malformed: false, suggested: parsed as string[] };
+    const parsed = parseJson(rawText);
+    const valid = jsonStringArray(parsed);
+    if (valid !== undefined) {
+      return { malformed: false, suggested: valid };
     }
     if (Array.isArray(parsed)) {
-      const normalized = parsed.filter(
-        (item): item is string => typeof item === "string",
-      );
+      const normalized = parsed.flatMap((item) => {
+        const value = jsonString(item);
+        return value === undefined ? [] : [value];
+      });
       return { malformed: true, suggested: normalized };
     }
     return { malformed: true, suggested: [] };
   } catch {
-    const split = raw
+    const split = rawText
       .split(",")
       .map((item) => item.trim())
       .filter(Boolean);
@@ -819,6 +841,32 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
     };
     const suggestedCommands = collectSuggestedCommands(findings);
     const summary = summarizeFindings(rows, findings);
+    const findingsOutput = {
+      exact_duplicates: findings.exact_duplicates.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      near_duplicates: findings.near_duplicates.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      stale_status_overlaps: findings.stale_status_overlaps.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      canonical_thread_overlaps: findings.canonical_thread_overlaps.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      status_expiry: findings.status_expiry.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      type_boundary: findings.type_boundary.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      tag_hygiene: findings.tag_hygiene.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+      malformed_refs: findings.malformed_refs.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
+    } satisfies JsonObject;
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
         printJson({
@@ -841,7 +889,7 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
       }
       printCommandOutput(commandCtx, {
         summary,
-        findings,
+        findings: findingsOutput,
         suggested_commands: suggestedCommands,
       });
     });

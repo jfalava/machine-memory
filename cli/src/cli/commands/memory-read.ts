@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
+import { jsonNumber, type JsonObject } from "../../json";
 import {
   HYBRID_SCORE_WEIGHTS,
   SCORE_COMPONENT_WEIGHTS,
@@ -19,8 +20,9 @@ import {
   printBriefLines,
   queryEmptyResultPayload,
   queryNeighborhoodMatches,
-  shapeRowsWithScore,
+  scoreRowsWithDetails,
   sortByScoreThenRecency,
+  stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
 import { repositoryForCurrentDirectory } from "../../repository";
@@ -37,7 +39,7 @@ type FetchResultsOptions = {
 };
 
 type QueryResults = {
-  results: Record<string, unknown>[];
+  results: JsonObject[];
   queryTokens: string[];
   filters: ReturnType<typeof parseCommonFilters>;
 };
@@ -57,17 +59,16 @@ function explainScoreEnabled(args: string[]): boolean {
   return hasFlag(args, "--explain-score");
 }
 
-function resultIds(results: Record<string, unknown>[]): unknown[] {
+function resultIds(results: JsonObject[]): JsonObject["id"][] {
   return results.map((entry) => entry.id);
 }
 
-function minimalScoredResultSummary(
-  row: Record<string, unknown>,
-): Record<string, unknown> {
+function minimalScoredResultSummary(row: JsonObject): JsonObject {
   const summary = minimalResultSummary(row);
   for (const component of ["fts_score", "semantic_score", "hybrid_score"]) {
-    if (typeof row[component] === "number") {
-      summary[component] = row[component];
+    const score = jsonNumber(row[component]);
+    if (score !== undefined) {
+      summary[component] = score;
     }
   }
   return summary;
@@ -75,11 +76,11 @@ function minimalScoredResultSummary(
 
 function printScoredResults(
   commandCtx: Pick<CommandContext, "command" | "outputMode">,
-  results: Record<string, unknown>[],
+  results: JsonObject[],
   options: {
     explainScore: boolean;
     semantic?: boolean;
-    scoreWeights?: Record<string, unknown>;
+    scoreWeights?: JsonObject;
     wrapResults?: boolean;
   },
 ) {
@@ -87,15 +88,17 @@ function printScoredResults(
   const showScoreWeights =
     options.explainScore && options.scoreWeights !== undefined;
   if (outputMode.jsonMin || outputMode.quiet) {
-    const payload: Record<string, unknown> = {
+    const payload = {
       count: results.length,
       ids: resultIds(results),
-    };
+    } satisfies JsonObject;
     if (outputMode.jsonMin) {
-      payload.results = results.map(minimalScoredResultSummary);
+      Object.assign(payload, {
+        results: results.map(minimalScoredResultSummary),
+      });
     }
     if (showScoreWeights) {
-      payload.score_weights = options.scoreWeights;
+      Object.assign(payload, { score_weights: options.scoreWeights });
     }
     printJson(payload);
     return;
@@ -105,10 +108,11 @@ function printScoredResults(
     return;
   }
   if (options.wrapResults) {
-    printCommandOutput(commandCtx, {
-      results,
-      ...(showScoreWeights ? { score_weights: options.scoreWeights } : {}),
-    });
+    const output = { results } satisfies JsonObject;
+    if (showScoreWeights) {
+      Object.assign(output, { score_weights: options.scoreWeights });
+    }
+    printCommandOutput(commandCtx, output);
     return;
   }
   printCommandOutput(commandCtx, results);
@@ -164,7 +168,7 @@ function fetchQueryResults(
     )
     .pipe(
       Effect.map((rows) => ({
-        results: shapeRowsWithScore(rows, queryTokens, {
+        results: scoreRowsWithDetails(rows, queryTokens, {
           explainScore: options.explainScore,
         }).slice(0, options.limit ?? 8),
         queryTokens,
@@ -205,64 +209,70 @@ function fetchSemanticCandidates(
   const status =
     filters.status ?? (filters.includeDeprecated ? undefined : "active");
 
-  return vectorize
-    .search({
-      repository: repositoryForCurrentDirectory(),
-      query: term,
-      top_k: topK,
-      ...(status ? { status } : {}),
-      ...(filters.memoryType ? { memory_type: filters.memoryType } : {}),
-      ...(filters.certainty ? { certainty: filters.certainty } : {}),
-    })
-    .pipe(
-      Effect.flatMap((searchResult) =>
-        Effect.gen(function* () {
-          const validIds = searchResult.matches
-            .map((match) => Number(match.id))
-            .filter((id) => Number.isInteger(id));
-          if (validIds.length === 0) {
-            return { results: [], queryTokens, filters };
-          }
+  const searchRequest = {
+    repository: repositoryForCurrentDirectory(),
+    query: term,
+    top_k: topK,
+  } satisfies JsonObject;
+  if (status !== undefined) {
+    Object.assign(searchRequest, { status });
+  }
+  if (filters.memoryType !== undefined) {
+    Object.assign(searchRequest, { memory_type: filters.memoryType });
+  }
+  if (filters.certainty !== undefined) {
+    Object.assign(searchRequest, { certainty: filters.certainty });
+  }
 
-          const rows = yield* database.all(
-            `SELECT * FROM memories
+  return vectorize.search(searchRequest).pipe(
+    Effect.flatMap((searchResult) =>
+      Effect.gen(function* () {
+        const validIds = searchResult.matches
+          .map((match) => Number(match.id))
+          .filter((id) => Number.isInteger(id));
+        if (validIds.length === 0) {
+          return { results: [], queryTokens, filters };
+        }
+
+        const rows = yield* database.all(
+          `SELECT * FROM memories
              WHERE repository = ? AND id IN (${validIds.map(() => "?").join(", ")})`,
-            [repositoryForCurrentDirectory(), ...validIds],
-          );
-          const rowsById = new Map(
-            rows.map((row) => {
-              const normalized = normalizeSqliteRow(row);
-              return [Number(normalized.id), normalized] as const;
-            }),
-          );
-          const results: Record<string, unknown>[] = [];
-          for (const match of searchResult.matches) {
-            const id = Number(match.id);
-            if (!Number.isInteger(id)) {
-              continue;
-            }
-            const row = rowsById.get(id);
-            if (!row) {
-              continue;
-            }
-            if (
-              filters.tag &&
-              !(typeof row.tags === "string" ? row.tags : "")
-                .toLowerCase()
-                .includes(filters.tag.toLowerCase())
-            ) {
-              continue;
-            }
-            results.push({
-              ...row,
-              score: match.score,
-              semantic_score: match.score,
-            });
+          [repositoryForCurrentDirectory(), ...validIds],
+        );
+        const rowsById = new Map(
+          rows.map((row) => {
+            const normalized = normalizeSqliteRow(row);
+            return [Number(normalized.id), normalized] as const;
+          }),
+        );
+        const results: JsonObject[] = [];
+        for (const match of searchResult.matches) {
+          const id = Number(match.id);
+          if (!Number.isInteger(id)) {
+            continue;
           }
-          return { results, queryTokens, filters };
-        }),
-      ),
-    );
+          const row = rowsById.get(id);
+          if (!row) {
+            continue;
+          }
+          if (
+            filters.tag &&
+            !stringValue(row.tags)
+              .toLowerCase()
+              .includes(filters.tag.toLowerCase())
+          ) {
+            continue;
+          }
+          results.push({
+            ...row,
+            score: match.score,
+            semantic_score: match.score,
+          });
+        }
+        return { results, queryTokens, filters };
+      }),
+    ),
+  );
 }
 
 function fetchSemanticResults(
@@ -378,12 +388,14 @@ export function handleListCommand(commandCtx: CommandContext) {
       .slice(0, parseResultLimit(args, 100));
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
-        const payload: Record<string, unknown> = {
+        const payload = {
           count: normalized.length,
           ids: resultIds(normalized),
-        };
+        } satisfies JsonObject;
         if (outputMode.jsonMin) {
-          payload.results = normalized.map(minimalResultSummary);
+          Object.assign(payload, {
+            results: normalized.map(minimalResultSummary),
+          });
         }
         printJson(payload);
         return;
@@ -419,7 +431,7 @@ function fetchFtsSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   options: FetchResultsOptions,
-): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   if (snapshot.ftsQuery === undefined) {
     return Effect.succeed([]);
   }
@@ -441,7 +453,7 @@ function fetchFtsSuggestResults(
     )
     .pipe(
       Effect.map((rows) =>
-        shapeRowsWithScore(rows, snapshot.suggestTerms, {
+        scoreRowsWithDetails(rows, snapshot.suggestTerms, {
           explainScore: options.explainScore,
         }).slice(0, options.limit ?? 8),
       ),
@@ -452,7 +464,7 @@ function collectSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   options: FetchResultsOptions,
-): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   return Effect.gen(function* () {
     const neighborhoodResults = yield* queryNeighborhoodMatches(
       requireDatabase(commandCtx),
@@ -475,20 +487,22 @@ function collectSuggestResults(
 function printSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
-  results: Record<string, unknown>[],
+  results: JsonObject[],
   options: FetchResultsOptions,
 ) {
   const { outputMode } = commandCtx;
   if (outputMode.jsonMin || outputMode.quiet) {
-    const payload: Record<string, unknown> = {
+    const payload = {
       count: results.length,
       ids: resultIds(results),
-    };
+    } satisfies JsonObject;
     if (outputMode.jsonMin) {
-      payload.results = results.map(minimalResultSummary);
+      Object.assign(payload, {
+        results: results.map(minimalResultSummary),
+      });
     }
     if (options.explainScore) {
-      payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+      Object.assign(payload, { score_weights: SCORE_COMPONENT_WEIGHTS });
     }
     printJson(payload);
     return;
@@ -498,7 +512,7 @@ function printSuggestResults(
     return;
   }
 
-  printCommandOutput(commandCtx, {
+  const output = {
     files: snapshot.files,
     normalized_files: snapshot.files,
     normalized_path_terms: snapshot.normalizedPathTerms,
@@ -507,9 +521,12 @@ function printSuggestResults(
       tags: snapshot.neighborhood.tagHints,
       paths: snapshot.neighborhood.pathHints,
     },
-    ...(options.explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
     results,
-  });
+  } satisfies JsonObject;
+  if (options.explainScore) {
+    Object.assign(output, { score_weights: SCORE_COMPONENT_WEIGHTS });
+  }
+  printCommandOutput(commandCtx, output);
 }
 
 export function handleSuggestCommand(commandCtx: CommandContext) {
@@ -551,7 +568,7 @@ function fetchListScoredResults(
   options: FetchResultsOptions,
 ): Effect.Effect<
   {
-    results: Record<string, unknown>[];
+    results: JsonObject[];
     filters: ReturnType<typeof parseCommonFilters>;
   },
   MemoryDatabaseError
@@ -575,7 +592,7 @@ function fetchListScoredResults(
     )
     .pipe(
       Effect.map((rows) => ({
-        results: shapeRowsWithScore(rows, scoreTerms, {
+        results: scoreRowsWithDetails(rows, scoreTerms, {
           explainScore: options.explainScore,
         }).slice(0, options.limit ?? 8),
         filters,
@@ -584,13 +601,18 @@ function fetchListScoredResults(
 }
 
 function mergeSweepRows(
-  left: Record<string, unknown>,
-  right: Record<string, unknown>,
+  left: JsonObject,
+  right: JsonObject,
   source: SweepSource,
-): Record<string, unknown> {
-  const currentSources = Array.isArray(left.sources)
-    ? (left.sources as SweepSource[])
-    : [];
+): JsonObject {
+  const currentSources: SweepSource[] = [];
+  if (Array.isArray(left.sources)) {
+    for (const item of left.sources) {
+      if (item === "suggest" || item === "query" || item === "list") {
+        currentSources.push(item);
+      }
+    }
+  }
   const nextSources = currentSources.includes(source)
     ? currentSources
     : [...currentSources, source];
@@ -605,9 +627,9 @@ function mergeSweepRows(
 }
 
 function mergeSweepResults(
-  parts: { source: SweepSource; rows: Record<string, unknown>[] }[],
-): Record<string, unknown>[] {
-  const byId = new Map<number, Record<string, unknown>>();
+  parts: { source: SweepSource; rows: JsonObject[] }[],
+): JsonObject[] {
+  const byId = new Map<number, JsonObject>();
   for (const part of parts) {
     for (const row of part.rows) {
       const id = Number(row.id);
@@ -664,18 +686,20 @@ export function handleSweepCommand(commandCtx: CommandContext) {
     ]).slice(0, limit);
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
-        const payload: Record<string, unknown> = {
+        const payload = {
           count: results.length,
           ids: resultIds(results),
-        };
+        } satisfies JsonObject;
         if (outputMode.jsonMin) {
-          payload.results = results.map((row) => ({
-            ...minimalResultSummary(row),
-            sources: row.sources,
-          }));
+          Object.assign(payload, {
+            results: results.map((row) => ({
+              ...minimalResultSummary(row),
+              sources: row.sources,
+            })),
+          });
         }
         if (explainScore) {
-          payload.score_weights = SCORE_COMPONENT_WEIGHTS;
+          Object.assign(payload, { score_weights: SCORE_COMPONENT_WEIGHTS });
         }
         printJson(payload);
         return;
@@ -684,16 +708,19 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         printBriefLines(results);
         return;
       }
-      printCommandOutput(commandCtx, {
+      const output = {
         files: snapshot.files,
         normalized_files: snapshot.files,
         normalized_path_terms: snapshot.normalizedPathTerms,
         derived_terms: snapshot.suggestTerms,
         query: queryTerm ?? null,
         filters: { tags: listBundle.filters.tag ?? null },
-        ...(explainScore ? { score_weights: SCORE_COMPONENT_WEIGHTS } : {}),
         results,
-      });
+      } satisfies JsonObject;
+      if (explainScore) {
+        Object.assign(output, { score_weights: SCORE_COMPONENT_WEIGHTS });
+      }
+      printCommandOutput(commandCtx, output);
     });
   });
 }

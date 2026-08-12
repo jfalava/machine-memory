@@ -1,6 +1,7 @@
 import { CommandError } from "./effect/errors";
+import type { JsonValue } from "./json";
 
-export function printJson(data: unknown) {
+export function printJson(data: JsonValue) {
   console.info(JSON.stringify(data));
 }
 

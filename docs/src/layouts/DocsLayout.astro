@@ -132,7 +132,7 @@ const hasPagination = Astro.slots.has("pagination");
                 if (state && content.dataset.nbSidebarHash === state.hash) {
                   const groups = content.querySelectorAll("[data-nb-sidebar-group]");
                   for (let i = 0; i < groups.length; i++) {
-                    if (typeof state.open[i] === "boolean") {
+                    if (state.open[i] === true || state.open[i] === false) {
                       setGroupOpen(groups[i], state.open[i]);
                     }
                   }

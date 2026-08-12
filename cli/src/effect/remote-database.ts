@@ -1,5 +1,12 @@
 import { Effect, Layer } from "effect";
 import type { SqlQueryBinding } from "../db";
+import {
+  jsonObject,
+  jsonString,
+  parseJson,
+  type JsonObject,
+  type JsonValue,
+} from "../json";
 import { MemoryDatabase, type MemoryDatabaseApi } from "./database";
 import { MemoryDatabaseError } from "./errors";
 import { remoteVectorApi } from "./vectorize";
@@ -7,10 +14,11 @@ import { repositoryForCurrentDirectory } from "../repository";
 
 type RemoteQueryOperation = "run" | "get" | "all";
 
-type RemoteQueryResponse = {
-  readonly ok?: unknown;
-  readonly result?: unknown;
-  readonly error?: unknown;
+type RemoteQueryResponse = JsonObject;
+
+type RequestHeaders = {
+  "content-type": string;
+  authorization?: string;
 };
 
 async function readRemoteResponse(
@@ -18,11 +26,11 @@ async function readRemoteResponse(
 ): Promise<RemoteQueryResponse> {
   const text = await response.text();
   try {
-    const parsed: unknown = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    const parsed = jsonObject(parseJson(text));
+    if (parsed === undefined) {
       throw new Error("response was not a JSON object");
     }
-    return parsed as RemoteQueryResponse;
+    return parsed;
   } catch (cause) {
     const contentType = response.headers.get("content-type") ?? "unknown";
     throw new Error(
@@ -49,12 +57,10 @@ function query(
   operation: RemoteQueryOperation,
   sql: string,
   params: SqlQueryBinding[],
-): Effect.Effect<unknown, MemoryDatabaseError> {
+): Effect.Effect<JsonValue, MemoryDatabaseError> {
   return Effect.tryPromise({
     try: async () => {
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-      };
+      const headers: RequestHeaders = { "content-type": "application/json" };
       if (token) {
         headers.authorization = `Bearer ${token}`;
       }
@@ -72,9 +78,8 @@ function query(
       const body = await readRemoteResponse(response);
       if (!response.ok || body.ok !== true) {
         const message =
-          typeof body.error === "string"
-            ? body.error
-            : `Remote database returned HTTP ${response.status}.`;
+          jsonString(body.error) ??
+          `Remote database returned HTTP ${response.status}.`;
         throw new Error(message);
       }
       return body.result;

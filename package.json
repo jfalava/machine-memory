@@ -1,6 +1,7 @@
 {
   "name": "@machine-memory/monorepo",
   "version": "0.1.0",
+  "type": "module",
   "workspaces": {
     "packages": [
       "cli",
@@ -34,6 +35,7 @@
     "format": "bunx oxfmt"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
     "vite-tsconfig-paths": "6.1.1"
   }
 }

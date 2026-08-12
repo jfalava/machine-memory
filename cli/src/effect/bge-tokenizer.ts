@@ -1,4 +1,5 @@
 import { Tokenizer } from "@huggingface/tokenizers";
+import { Schema } from "effect";
 
 export const BGE_MAX_EMBEDDING_TOKENS = 512;
 
@@ -16,11 +17,9 @@ async function readJson(url: string, description: string): Promise<object> {
       `Could not load the BGE ${description} (HTTP ${response.status}).`,
     );
   }
-  const value: unknown = await response.json();
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`The BGE ${description} was not a JSON object.`);
-  }
-  return value as object;
+  return Schema.decodeUnknownSync(
+    Schema.Record(Schema.String, Schema.MutableJson),
+  )(await response.json());
 }
 
 async function loadBgeTokenizer(): Promise<Tokenizer> {

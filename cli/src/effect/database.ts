@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import {
   allWithRetry,
   ensureDb,
@@ -15,6 +15,7 @@ import {
 import { MemoryDatabaseError } from "./errors";
 import { remoteLayer } from "./remote-database";
 import type { MemoryVectorApi } from "./vectorize";
+import type { JsonValue } from "../json";
 
 export { MemoryDatabaseError } from "./errors";
 
@@ -22,15 +23,15 @@ export type MemoryDatabaseApi = {
   readonly run: (
     sql: string,
     params?: SqlQueryBinding[],
-  ) => Effect.Effect<unknown, MemoryDatabaseError>;
+  ) => Effect.Effect<JsonValue, MemoryDatabaseError>;
   readonly get: (
     sql: string,
     params?: SqlQueryBinding[],
-  ) => Effect.Effect<unknown, MemoryDatabaseError>;
+  ) => Effect.Effect<JsonValue | undefined, MemoryDatabaseError>;
   readonly all: (
     sql: string,
     params?: SqlQueryBinding[],
-  ) => Effect.Effect<unknown[], MemoryDatabaseError>;
+  ) => Effect.Effect<JsonValue[], MemoryDatabaseError>;
   readonly vectorize?: MemoryVectorApi;
 };
 
@@ -74,14 +75,24 @@ function localLayer(
 
       return MemoryDatabase.of({
         run: (sql, params = []) =>
-          effectful("run", () => runWithRetry(database, sql, params)),
-        get: (sql, params = []) =>
-          effectful("get", () => getWithRetry(database, sql, params)),
-        all: (sql, params = []) =>
-          effectful(
-            "all",
-            () => allWithRetry(database, sql, params) as unknown[],
+          effectful("run", () =>
+            Schema.decodeUnknownSync(Schema.MutableJson)(
+              runWithRetry(database, sql, params),
+            ),
           ),
+        get: (sql, params = []) =>
+          effectful("get", () => {
+            const result = getWithRetry(database, sql, params);
+            return result === undefined
+              ? undefined
+              : Schema.decodeUnknownSync(Schema.MutableJson)(result);
+          }),
+        all: (sql, params = []) =>
+          effectful("all", () => [
+            ...Schema.decodeUnknownSync(Schema.Array(Schema.MutableJson))(
+              allWithRetry(database, sql, params),
+            ),
+          ]),
       });
     }),
   );

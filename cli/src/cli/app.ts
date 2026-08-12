@@ -176,7 +176,7 @@ function renderHumanUpgradeError(error: UpgradeError): void {
   }
 }
 
-function renderHumanCommandFailure(command: string, error: unknown): void {
+function renderHumanCommandFailure(command: string, error: Error): void {
   if (command === "upgrade") {
     renderHumanUpgradeError(
       new UpgradeError({
@@ -198,7 +198,7 @@ function renderHumanCommandFailure(command: string, error: unknown): void {
 
 function isReindexSummaryFailure(
   command: string | undefined,
-  error: unknown,
+  error: Error,
 ): boolean {
   return (
     command === "reindex" &&
@@ -207,7 +207,7 @@ function isReindexSummaryFailure(
   );
 }
 
-function renderMachineError(error: unknown): void {
+function renderMachineError(error: Error): void {
   if (error instanceof MemoryDatabaseError) {
     printJson({
       error: error.message,
@@ -247,7 +247,7 @@ function commandPath(args: ReadonlyArray<string>): string | undefined {
 }
 
 function renderError(
-  error: unknown,
+  error: Error,
   command: string | undefined,
   pretty: boolean,
 ): void {
@@ -306,7 +306,9 @@ export function runCli(args: ReadonlyArray<string>) {
     Effect.provide(BunServices.layer),
     Effect.catch((error) =>
       Effect.sync(() => {
-        renderError(error, errorCommand, pretty);
+        const failure =
+          error instanceof Error ? error : new Error("Unexpected CLI failure.");
+        renderError(failure, errorCommand, pretty);
         if (
           !(
             CliError.isCliError(error) &&

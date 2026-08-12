@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { usageError } from "../../cli-utils";
+import type { JsonObject } from "../../json";
 import { getMemoryById, parseIdSpec } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
@@ -16,9 +17,7 @@ export function handleGetCommand(commandCtx: CommandContext) {
     const fetched = yield* Effect.all(
       ids.map((id) => getMemoryById(database, id)),
     );
-    const rows = fetched.filter(
-      (row): row is Record<string, unknown> => row !== null,
-    );
+    const rows = fetched.filter((row): row is JsonObject => row !== null);
     const missingIds = ids.filter(
       (id) => !rows.some((row) => Number(row.id) === id),
     );
@@ -27,10 +26,11 @@ export function handleGetCommand(commandCtx: CommandContext) {
         printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
         return;
       }
-      printCommandOutput(commandCtx, {
-        results: rows,
-        ...(missingIds.length > 0 ? { missing_ids: missingIds } : {}),
-      });
+      const payload = { results: rows };
+      if (missingIds.length > 0) {
+        Object.assign(payload, { missing_ids: missingIds });
+      }
+      printCommandOutput(commandCtx, payload);
     });
   });
 }

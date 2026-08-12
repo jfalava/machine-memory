@@ -3,6 +3,7 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
 import type { DatabaseBackendFlags } from "../../database-config";
 import type { DbAccessMode } from "../../db";
+import { jsonString, type JsonObject } from "../../json";
 import type { CommandContext } from "./context";
 import { parseOutputMode, prettyOutput } from "./output";
 
@@ -14,6 +15,8 @@ export type FlagSpec = {
 export type CommandHandler = (
   context: CommandContext,
 ) => Effect.Effect<void, unknown, never>;
+
+type CommandInput = JsonObject;
 
 export const positionalArgs = () =>
   Argument.string("arg").pipe(Argument.variadic());
@@ -52,11 +55,14 @@ const databaseBackendSpecs: readonly FlagSpec[] = [
 ];
 
 function argvFromInput(
-  input: Record<string, unknown>,
+  input: CommandInput,
   specs: readonly FlagSpec[],
 ): string[] {
   const args = Array.isArray(input.args)
-    ? input.args.filter((value): value is string => typeof value === "string")
+    ? input.args.flatMap((value) => {
+        const parsed = jsonString(value);
+        return parsed === undefined ? [] : [parsed];
+      })
     : [];
   for (const spec of specs) {
     const value = input[spec.name];
@@ -66,11 +72,8 @@ function argvFromInput(
       }
       continue;
     }
-    if (Option.isSome(value as Option.Option<unknown>)) {
-      args.push(
-        `--${spec.name}`,
-        String((value as Option.Some<unknown>).value),
-      );
+    if (Option.isOption(value) && Option.isSome(value)) {
+      args.push(`--${spec.name}`, String(value.value));
     }
   }
   return args;
@@ -78,7 +81,7 @@ function argvFromInput(
 
 function commandContext(options: {
   command: string;
-  input: Record<string, unknown>;
+  input: CommandInput;
   specs: readonly FlagSpec[];
   database: CommandContext["database"];
   fileSystem: CommandContext["fileSystem"];
@@ -108,7 +111,7 @@ export function effectCommand<
   const commandSpecs = mode ? [...specs, ...databaseBackendSpecs] : specs;
 
   return Command.make(name, commandConfig, (input) => {
-    const inputRecord = input as Record<string, unknown>;
+    const inputRecord = input as CommandInput;
     const backendFlags: DatabaseBackendFlags = {
       local: inputRecord.local === true,
       remote: inputRecord.remote === true,

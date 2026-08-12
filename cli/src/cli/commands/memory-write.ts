@@ -1,5 +1,11 @@
 import { Effect } from "effect";
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
+import {
+  jsonNumber,
+  jsonObject,
+  type JsonObject,
+  type JsonValue,
+} from "../../json";
 import { suggestTagsForPath } from "../../path-tags";
 import type {
   MemoryDatabaseApi,
@@ -146,7 +152,7 @@ function upsertComparableText(content: string, metadata: AddMetadata): string {
 }
 
 function isStrongUpsertMatch(
-  matched: Record<string, unknown>,
+  matched: JsonObject,
   content: string,
   metadata: AddMetadata,
 ): boolean {
@@ -250,9 +256,8 @@ function maybeHandleAddUpsert(
       return true;
     }
     const createdResult = yield* addInsert(database, content, metadata);
-    const createdId = Number(
-      (createdResult as { lastInsertRowid: unknown }).lastInsertRowid,
-    );
+    const createdId =
+      jsonNumber(jsonObject(createdResult)?.lastInsertRowid) ?? 0;
     const created = yield* getMemoryById(database, createdId);
     if (created) {
       yield* syncMemoryVector(database, created);
@@ -272,7 +277,7 @@ function detectAddConflicts(
 ): Effect.Effect<
   {
     includeConflicts: boolean;
-    potentialConflicts: Record<string, unknown>[];
+    potentialConflicts: JsonObject[];
   },
   MemoryDatabaseError
 > {
@@ -297,7 +302,7 @@ function addInsert(
   database: MemoryDatabaseApi,
   content: string,
   metadata: AddMetadata,
-): Effect.Effect<unknown, MemoryDatabaseError> {
+): Effect.Effect<JsonValue, MemoryDatabaseError> {
   return database.run(
     `INSERT INTO memories (
      repository, content, tags, context, memory_type, certainty, status, superseded_by,
@@ -321,12 +326,12 @@ function addInsert(
 function printAddResult(params: {
   outputMode: CommandContext["outputMode"];
   createdId: number;
-  created: Record<string, unknown> | null;
+  created: JsonObject | null;
   content: string;
   metadata: AddMetadata;
   includeConflicts: boolean;
-  potentialConflicts: Record<string, unknown>[];
-  statusCascade: Record<string, unknown>[];
+  potentialConflicts: JsonObject[];
+  statusCascade: JsonObject[];
 }) {
   const {
     outputMode,
@@ -352,26 +357,28 @@ function printAddResult(params: {
     return;
   }
 
-  const payload: Record<string, unknown> = {
+  const payload = {
     ...(created ?? {
       id: createdId,
       content,
       tags: metadata.tags,
       context: metadata.memo,
     }),
-  };
+  } satisfies JsonObject;
   if (metadata.mappedTags.length > 0) {
-    payload.path_tag_suggestions = metadata.mappedTags;
+    Object.assign(payload, { path_tag_suggestions: metadata.mappedTags });
   }
   if (includeConflicts) {
-    payload.potential_conflicts = potentialConflicts;
+    Object.assign(payload, { potential_conflicts: potentialConflicts });
   }
   if (statusCascade.length > 0) {
     const staleIds = statusCascade.map((item) => Number(item.id));
-    payload.status_cascade = {
-      overlapping_ids: staleIds,
-      suggested_command: `machine-memory deprecate ${staleIds.join(",")} --superseded-by ${createdId}`,
-    };
+    Object.assign(payload, {
+      status_cascade: {
+        overlapping_ids: staleIds,
+        suggested_command: `machine-memory deprecate ${staleIds.join(",")} --superseded-by ${createdId}`,
+      },
+    });
   }
   printCommandOutput({ command: "add", outputMode }, payload);
 }
@@ -394,9 +401,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
       metadata,
     );
     const result = yield* addInsert(database, content, metadata);
-    const insertId = Number(
-      (result as { lastInsertRowid: unknown }).lastInsertRowid,
-    );
+    const insertId = jsonNumber(jsonObject(result)?.lastInsertRowid) ?? 0;
     const created = yield* getMemoryById(database, insertId);
     const createdId = Number(created?.id ?? insertId);
     if (created) {
@@ -435,10 +440,11 @@ function resolveUpdateTargets(
     const contentFromArg = positional[0];
     return findMemoryByMatch(database, matchQuery).pipe(
       Effect.map((matched) => {
-        if (!matched || typeof matched.id !== "number") {
+        const matchedId = matched ? jsonNumber(matched.id) : undefined;
+        if (matchedId === undefined) {
           usageError(`No active memory matched --match "${matchQuery}".`);
         }
-        return { targetIds: [Number(matched.id)], contentFromArg };
+        return { targetIds: [matchedId], contentFromArg };
       }),
     );
   }
@@ -543,11 +549,11 @@ function runBatchMemoryUpdate(
   sets: string[],
   params: (string | number | null)[],
 ): Effect.Effect<
-  { rows: Record<string, unknown>[]; missingIds: number[] },
+  { rows: JsonObject[]; missingIds: number[] },
   MemoryDatabaseError
 > {
   return Effect.gen(function* () {
-    const rows: Record<string, unknown>[] = [];
+    const rows: JsonObject[] = [];
     const missingIds: number[] = [];
     for (const targetId of targetIds) {
       yield* database.run(
@@ -618,10 +624,11 @@ function resolveDeprecateTargets(
     }
     return findMemoryByMatch(database, matchQuery).pipe(
       Effect.map((matched) => {
-        if (!matched || typeof matched.id !== "number") {
+        const matchedId = matched ? jsonNumber(matched.id) : undefined;
+        if (matchedId === undefined) {
           usageError(`No active memory matched --match "${matchQuery}".`);
         }
-        return [Number(matched.id)];
+        return [matchedId];
       }),
     );
   }

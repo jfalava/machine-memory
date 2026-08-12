@@ -2,6 +2,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as SQL from "alchemy/SQL/D1";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
@@ -9,6 +10,14 @@ import { Database } from "./database";
 import { apiName } from "./config";
 import { validateEmbeddingText } from "./embedding";
 import { VectorIndex } from "./vectorize";
+import {
+  isJsonArray,
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  type JsonObject,
+  type JsonValue,
+} from "./json";
 
 type QueryOperation = "run" | "get" | "all";
 
@@ -32,7 +41,7 @@ function isRateLimitedVectorizeCause(cause: unknown): boolean {
 type QueryRequest = {
   readonly operation: QueryOperation;
   readonly sql: string;
-  readonly params: ReadonlyArray<unknown>;
+  readonly params: ReadonlyArray<string | number | null>;
   readonly repository: string;
 };
 
@@ -93,19 +102,25 @@ type ParseResult<A> =
   | { readonly ok: true; readonly value: A }
   | { readonly ok: false; readonly error: string };
 
-function parseRequiredString(
-  candidate: Record<string, unknown>,
-  field: string,
-): string {
+function objectValue(value: JsonValue, message: string): JsonObject {
+  const candidate = jsonObject(value);
+  if (candidate === undefined) {
+    throw new Error(message);
+  }
+  return candidate;
+}
+
+function parseRequiredString(candidate: JsonObject, field: string): string {
   const value = candidate[field];
-  if (typeof value !== "string" || value.trim().length === 0) {
+  const parsed = jsonString(value);
+  if (parsed === undefined || parsed.trim().length === 0) {
     throw new Error(`${field} must be a non-empty string.`);
   }
-  return value.trim();
+  return parsed.trim();
 }
 
 function parseOptionalString(
-  candidate: Record<string, unknown>,
+  candidate: JsonObject,
   field: string,
   fallback: string,
 ): string {
@@ -113,21 +128,22 @@ function parseOptionalString(
   if (value === undefined || value === null) {
     return fallback;
   }
-  if (typeof value !== "string") {
+  const parsed = jsonString(value);
+  if (parsed === undefined) {
     throw new Error(`${field} must be a string.`);
   }
-  return value.trim();
+  return parsed.trim();
 }
 
-function parseMemoryId(candidate: Record<string, unknown>): string {
+function parseMemoryId(candidate: JsonObject): string {
   const value = candidate.id;
-  if (
-    (typeof value !== "string" && typeof value !== "number") ||
-    String(value).trim().length === 0
-  ) {
+  const stringId = jsonString(value);
+  const numberId = jsonNumber(value);
+  const normalized = stringId ?? numberId?.toString();
+  if (normalized === undefined || normalized.trim().length === 0) {
     throw new Error("id must be a non-empty string or number.");
   }
-  return String(value).trim();
+  return normalized.trim();
 }
 
 function validateNamespace(repository: string): string {
@@ -139,15 +155,15 @@ function validateNamespace(repository: string): string {
   return repository;
 }
 
-function parseRepository(candidate: Record<string, unknown>): string {
+function parseRepository(candidate: JsonObject): string {
   return validateNamespace(parseRequiredString(candidate, "repository"));
 }
 
-function parseMemoryDocument(value: unknown): MemoryDocument {
-  if (!value || typeof value !== "object") {
-    throw new Error("The request body must be a JSON object.");
-  }
-  const candidate = value as Record<string, unknown>;
+function parseMemoryDocument(value: JsonValue): MemoryDocument {
+  const candidate = objectValue(
+    value,
+    "The request body must be a JSON object.",
+  );
   const document = {
     id: parseMemoryId(candidate),
     repository: parseRepository(candidate),
@@ -162,14 +178,18 @@ function parseMemoryDocument(value: unknown): MemoryDocument {
   return document;
 }
 
-function parseSemanticSearchRequest(value: unknown): SemanticSearchRequest {
-  if (!value || typeof value !== "object") {
-    throw new Error("The request body must be a JSON object.");
-  }
-  const candidate = value as Record<string, unknown>;
-  const rawTopK = candidate.top_k ?? DEFAULT_SEARCH_LIMIT;
+function parseSemanticSearchRequest(value: JsonValue): SemanticSearchRequest {
+  const candidate = objectValue(
+    value,
+    "The request body must be a JSON object.",
+  );
+  const rawTopKValue = candidate.top_k;
+  const rawTopK =
+    rawTopKValue === undefined
+      ? DEFAULT_SEARCH_LIMIT
+      : jsonNumber(rawTopKValue);
   if (
-    typeof rawTopK !== "number" ||
+    rawTopK === undefined ||
     !Number.isInteger(rawTopK) ||
     rawTopK < 1 ||
     rawTopK > MAX_SEARCH_LIMIT
@@ -192,40 +212,38 @@ function parseSemanticSearchRequest(value: unknown): SemanticSearchRequest {
   };
 }
 
-function parseVectorDeleteRequest(value: unknown): string {
-  if (!value || typeof value !== "object") {
-    throw new Error("The request body must be a JSON object.");
-  }
-  return parseMemoryId(value as Record<string, unknown>);
+function parseVectorDeleteRequest(value: JsonValue): string {
+  return parseMemoryId(
+    objectValue(value, "The request body must be a JSON object."),
+  );
 }
 
 function parseNullableInteger(
-  candidate: Record<string, unknown>,
+  candidate: JsonObject,
   field: string,
 ): number | null {
   const value = candidate[field];
   if (value === undefined || value === null) {
     return null;
   }
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+  const parsed = jsonNumber(value);
+  if (parsed === undefined || !Number.isSafeInteger(parsed)) {
     throw new Error(`${field} must be a safe integer or null.`);
   }
-  return value;
+  return parsed;
 }
 
-function parseMigrationInteger(
-  candidate: Record<string, unknown>,
-  field: string,
-): number {
+function parseMigrationInteger(candidate: JsonObject, field: string): number {
   const value = candidate[field];
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+  const parsed = jsonNumber(value);
+  if (parsed === undefined || !Number.isSafeInteger(parsed)) {
     throw new Error(`${field} must be a safe integer.`);
   }
-  return value;
+  return parsed;
 }
 
 function parseMigrationText(
-  candidate: Record<string, unknown>,
+  candidate: JsonObject,
   field: string,
   fallback = "",
 ): string {
@@ -233,10 +251,11 @@ function parseMigrationText(
   if (value === undefined || value === null) {
     return fallback;
   }
-  if (typeof value !== "string") {
+  const parsed = jsonString(value);
+  if (parsed === undefined) {
     throw new Error(`${field} must be a string.`);
   }
-  return value;
+  return parsed;
 }
 
 function validateMigrationEnums(
@@ -265,11 +284,8 @@ function validateMigrationEnums(
   }
 }
 
-function parseMigrationRow(value: unknown): MigrationRow {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Each migration row must be an object.");
-  }
-  const candidate = value as Record<string, unknown>;
+function parseMigrationRow(value: JsonValue): MigrationRow {
+  const candidate = objectValue(value, "Each migration row must be an object.");
   const sourceId = parseMigrationInteger(candidate, "source_id");
   if (sourceId < 1) {
     throw new Error("source_id must be greater than zero.");
@@ -308,21 +324,19 @@ function parseMigrationRow(value: unknown): MigrationRow {
   };
 }
 
-function parseMigrationRequest(value: unknown): MigrationRequest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("The migration request body must be an object.");
-  }
-  const candidate = value as Record<string, unknown>;
+function parseMigrationRequest(value: JsonValue): MigrationRequest {
+  const candidate = objectValue(
+    value,
+    "The migration request body must be an object.",
+  );
   const repository = parseRepository(candidate);
-  if (
-    !Array.isArray(candidate.rows) ||
-    candidate.rows.length > MAX_MIGRATION_ROWS
-  ) {
+  const rawRows = candidate.rows;
+  if (!isJsonArray(rawRows) || rawRows.length > MAX_MIGRATION_ROWS) {
     throw new Error(
       `rows must be an array with at most ${MAX_MIGRATION_ROWS} entries.`,
     );
   }
-  const rows = candidate.rows.map(parseMigrationRow);
+  const rows = rawRows.map(parseMigrationRow);
   const sourceIds = new Set<number>();
   for (const row of rows) {
     if (sourceIds.has(row.sourceId)) {
@@ -333,29 +347,23 @@ function parseMigrationRequest(value: unknown): MigrationRequest {
   return { repository, rows };
 }
 
-function parseMigrationLinksRequest(value: unknown): MigrationLinksRequest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("The migration links request body must be an object.");
-  }
-  const candidate = value as Record<string, unknown>;
+function parseMigrationLinksRequest(value: JsonValue): MigrationLinksRequest {
+  const candidate = objectValue(
+    value,
+    "The migration links request body must be an object.",
+  );
   const repository = parseRepository(candidate);
-  if (
-    !Array.isArray(candidate.links) ||
-    candidate.links.length > MAX_MIGRATION_LINKS
-  ) {
+  const rawLinks = candidate.links;
+  if (!isJsonArray(rawLinks) || rawLinks.length > MAX_MIGRATION_LINKS) {
     throw new Error(
       `links must be an array with at most ${MAX_MIGRATION_LINKS} entries.`,
     );
   }
-  const links = candidate.links.map((linkValue) => {
-    if (
-      !linkValue ||
-      typeof linkValue !== "object" ||
-      Array.isArray(linkValue)
-    ) {
-      throw new Error("Each migration link must be an object.");
-    }
-    const link = linkValue as Record<string, unknown>;
+  const links = rawLinks.map((linkValue) => {
+    const link = objectValue(
+      linkValue,
+      "Each migration link must be an object.",
+    );
     const targetId = parseMigrationInteger(link, "target_id");
     const supersededByTargetId = parseMigrationInteger(
       link,
@@ -393,19 +401,19 @@ function buildEmbeddingText(document: MemoryDocument): string {
     .join("\n");
 }
 
-function parseEmbedding(value: unknown): number[] {
-  if (!value || typeof value !== "object") {
+function parseEmbedding(value: JsonValue): number[] {
+  const data = jsonObject(value)?.data;
+  if (!isJsonArray(data) || data.length !== 1) {
     throw new Error("Workers AI returned an invalid embedding response.");
   }
-  const data = (value as Record<string, unknown>).data;
-  if (!Array.isArray(data) || data.length !== 1 || !Array.isArray(data[0])) {
+  const embedding = data[0];
+  if (embedding === undefined || !isJsonArray(embedding)) {
     throw new Error("Workers AI returned an invalid embedding response.");
   }
-  const embedding = data[0] as unknown[];
-  const numericEmbedding = embedding.filter(
-    (component): component is number =>
-      typeof component === "number" && Number.isFinite(component),
-  );
+  const numericEmbedding = embedding.flatMap((component) => {
+    const number = jsonNumber(component);
+    return number === undefined ? [] : [number];
+  });
   if (
     numericEmbedding.length !== EMBEDDING_DIMENSIONS ||
     numericEmbedding.length !== embedding.length
@@ -417,34 +425,42 @@ function parseEmbedding(value: unknown): number[] {
   return numericEmbedding;
 }
 
-function parseQueryRequest(value: unknown): QueryRequest {
-  if (!value || typeof value !== "object") {
-    throw new Error("The request body must be a JSON object.");
-  }
-  const candidate = value as Record<string, unknown>;
-  const operation = candidate.operation;
+function parseQueryRequest(value: JsonValue): QueryRequest {
+  const candidate = objectValue(
+    value,
+    "The request body must be a JSON object.",
+  );
+  const operation = jsonString(candidate.operation);
   if (operation !== "run" && operation !== "get" && operation !== "all") {
     throw new Error("The request operation must be run, get, or all.");
   }
-  if (typeof candidate.sql !== "string" || candidate.sql.length === 0) {
+  const sql = jsonString(candidate.sql);
+  if (sql === undefined || sql.length === 0) {
     throw new Error("The request must contain a SQL statement.");
   }
-  if (
-    !Array.isArray(candidate.params) ||
-    candidate.params.some(
-      (param) =>
-        param !== null &&
-        typeof param !== "string" &&
-        typeof param !== "number",
-    )
-  ) {
+  const rawParams = candidate.params;
+  if (!isJsonArray(rawParams)) {
     throw new Error("The request params must be SQLite JSON values.");
   }
+  const params = rawParams.map((param) => {
+    if (param === null) {
+      return null;
+    }
+    const string = jsonString(param);
+    if (string !== undefined) {
+      return string;
+    }
+    const number = jsonNumber(param);
+    if (number !== undefined) {
+      return number;
+    }
+    throw new Error("The request params must be SQLite JSON values.");
+  });
   const repository = parseRepository(candidate);
   return {
     operation,
-    sql: candidate.sql,
-    params: candidate.params,
+    sql,
+    params,
     repository,
   };
 }
@@ -464,9 +480,13 @@ export default Cloudflare.Worker<{}>()(
     const embed = (text: string) =>
       ai
         .run(EMBEDDING_MODEL, { text: [text] })
-        .pipe(Effect.map(parseEmbedding));
+        .pipe(
+          Effect.map((output) =>
+            parseEmbedding(Schema.decodeUnknownSync(Schema.Json)(output)),
+          ),
+        );
 
-    const handleQuery = (body: unknown) =>
+    const handleQuery = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseQueryRequest(body));
         if (!input.ok) {
@@ -490,7 +510,7 @@ export default Cloudflare.Worker<{}>()(
           });
         }
 
-        const rows = yield* sql.unsafe<Record<string, unknown>>(
+        const rows = yield* sql.unsafe<JsonObject>(
           input.value.sql,
           input.value.params,
         );
@@ -499,7 +519,7 @@ export default Cloudflare.Worker<{}>()(
         return yield* HttpServerResponse.json({ ok: true, result });
       });
 
-    const handleMigration = (body: unknown) =>
+    const handleMigration = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseMigrationRequest(body));
         if (!input.ok) {
@@ -584,7 +604,7 @@ export default Cloudflare.Worker<{}>()(
         });
       });
 
-    const handleMigrationLinks = (body: unknown) =>
+    const handleMigrationLinks = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseMigrationLinksRequest(body));
         if (!input.ok) {
@@ -617,7 +637,7 @@ export default Cloudflare.Worker<{}>()(
         });
       });
 
-    const handleVectorizeUpsert = (body: unknown) =>
+    const handleVectorizeUpsert = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseMemoryDocument(body));
         if (!input.ok) {
@@ -673,7 +693,7 @@ export default Cloudflare.Worker<{}>()(
         });
       });
 
-    const handleVectorizeSearch = (body: unknown) =>
+    const handleVectorizeSearch = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseSemanticSearchRequest(body));
         if (!input.ok) {
@@ -692,16 +712,19 @@ export default Cloudflare.Worker<{}>()(
             (entry): entry is [string, string] => entry[1] !== undefined,
           ),
         );
-        const matches = yield* vectorize.query(values, {
+        const queryOptions = {
           namespace: input.value.repository,
           topK: input.value.topK,
-          returnMetadata: "all",
-          ...(Object.keys(filter).length > 0 ? { filter } : {}),
-        });
+          returnMetadata: "all" as const,
+        };
+        if (Object.keys(filter).length > 0) {
+          Object.assign(queryOptions, { filter });
+        }
+        const matches = yield* vectorize.query(values, queryOptions);
         return yield* HttpServerResponse.json({ ok: true, result: matches });
       });
 
-    const handleVectorizeDelete = (body: unknown) =>
+    const handleVectorizeDelete = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = safeParse(() => parseVectorDeleteRequest(body));
         if (!input.ok) {
@@ -748,7 +771,10 @@ export default Cloudflare.Worker<{}>()(
         }
 
         const bodyResult = yield* request.json.pipe(
-          Effect.map((body) => ({ ok: true as const, body })),
+          Effect.map((body) => ({
+            ok: true as const,
+            body: Schema.decodeUnknownSync(Schema.Json)(body),
+          })),
           Effect.catchCause(() => Effect.succeed({ ok: false as const })),
         );
         if (!bodyResult.ok) {

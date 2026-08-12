@@ -1,7 +1,13 @@
 import pc from "picocolors";
 import { getBorderCharacters, table as formatTable } from "table";
-
-type JsonObject = Record<string, unknown>;
+import {
+  jsonBoolean,
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  type JsonObject,
+  type JsonValue,
+} from "../../json";
 
 const ANSI_PATTERN = new RegExp(
   `${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`,
@@ -11,8 +17,8 @@ const MAX_CELL_WIDTH = 64;
 const MAX_CONTENT_WIDTH = 96;
 const MAX_TABLE_WIDTH = 160;
 
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isObject(value: JsonValue | undefined): value is JsonObject {
+  return jsonObject(value) !== undefined;
 }
 
 function visibleLength(value: string): number {
@@ -30,20 +36,26 @@ function truncate(value: string, maxLength: number): string {
   return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
 }
 
-function compactScalar(value: unknown): string {
-  switch (typeof value) {
-    case "string":
-    case "number":
-    case "boolean":
-    case "bigint":
-    case "symbol":
-      return String(value);
-    default:
-      return "—";
+function compactScalar(value: JsonValue | undefined): string {
+  const string = jsonString(value);
+  if (string !== undefined) {
+    return string;
   }
+  const number = jsonNumber(value);
+  if (number !== undefined) {
+    return String(number);
+  }
+  const boolean = jsonBoolean(value);
+  if (boolean !== undefined) {
+    return String(boolean);
+  }
+  return "—";
 }
 
-function compact(value: unknown, maxLength = MAX_CELL_WIDTH): string {
+function compact(
+  value: JsonValue | undefined,
+  maxLength = MAX_CELL_WIDTH,
+): string {
   if (value === null || value === undefined) {
     return "—";
   }
@@ -125,20 +137,20 @@ function renderHelpChildren(name: string, value: JsonObject): string[] {
 
 function renderHelpCommand(
   name: string,
-  value: unknown,
+  value: JsonValue,
   indent = "  ",
 ): string[] {
   const lines = [indent + name];
-  if (typeof value === "string") {
-    return lines.concat(renderHelpText(indent + "  ", value));
+  const string = jsonString(value);
+  if (string !== undefined) {
+    return lines.concat(renderHelpText(indent + "  ", string));
   }
   if (!isObject(value)) {
     return lines;
   }
 
-  const usage = typeof value.usage === "string" ? value.usage : undefined;
-  const description =
-    typeof value.description === "string" ? value.description : undefined;
+  const usage = jsonString(value.usage);
+  const description = jsonString(value.description);
   if (usage) {
     lines.push(...renderHelpUsage(indent, usage));
   }
@@ -221,7 +233,7 @@ function renderKeyValues(values: JsonObject): string[] {
   );
 }
 
-function memoryRows(value: unknown): JsonObject[] {
+function memoryRows(value: JsonValue | undefined): JsonObject[] {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -296,7 +308,7 @@ function renderMemoryDetail(row: JsonObject): string[] {
   return lines;
 }
 
-function renderSearch(command: string, value: unknown): string[] {
+function renderSearch(command: string, value: JsonValue): string[] {
   const payload = isObject(value) ? value : undefined;
   const rows = payload ? memoryRows(payload.results) : memoryRows(value);
   const heading =
@@ -402,7 +414,7 @@ function renderStats(value: JsonObject): string[] {
   return lines;
 }
 
-function isMemoryResultArray(value: unknown[]): value is JsonObject[] {
+function isMemoryResultArray(value: JsonValue[]): value is JsonObject[] {
   const rows = memoryRows(value);
   return (
     rows.length === value.length &&
@@ -410,7 +422,7 @@ function isMemoryResultArray(value: unknown[]): value is JsonObject[] {
   );
 }
 
-function renderGenericArray(command: string, value: unknown[]): string[] {
+function renderGenericArray(command: string, value: JsonValue[]): string[] {
   if (isMemoryResultArray(value)) {
     return renderMemoryTable(value, `${titleCase(command)} results`);
   }
@@ -423,7 +435,7 @@ function renderGenericArray(command: string, value: unknown[]): string[] {
   ];
 }
 
-function renderGenericObjectArray(value: unknown[]): string[] {
+function renderGenericObjectArray(value: JsonValue[]): string[] {
   const rows = memoryRows(value);
   if (rows.length === value.length && rows.length > 0) {
     const fields = Object.keys(rows[0] ?? {}).slice(0, 5);
@@ -453,7 +465,7 @@ function renderGenericObject(command: string, value: JsonObject): string[] {
   return lines;
 }
 
-function renderGeneric(command: string, value: unknown): string[] {
+function renderGeneric(command: string, value: JsonValue): string[] {
   if (Array.isArray(value)) {
     return renderGenericArray(command, value);
   }
@@ -488,11 +500,9 @@ function renderHelp(value: JsonObject): string[] {
   const globalOptions = isObject(value.global_options)
     ? value.global_options
     : {};
-  const name = typeof value.name === "string" ? value.name : "machine-memory";
-  const description =
-    typeof value.description === "string" ? value.description : undefined;
-  const database =
-    typeof value.database === "string" ? value.database : undefined;
+  const name = jsonString(value.name) ?? "machine-memory";
+  const description = jsonString(value.description);
+  const database = jsonString(value.database);
   const lines = [pc.bold(name)];
   if (description) {
     lines.push("", ...renderHelpText("  ", description));
@@ -513,7 +523,7 @@ function renderHelp(value: JsonObject): string[] {
   return lines;
 }
 
-function renderGet(value: unknown): string[] {
+function renderGet(value: JsonValue): string[] {
   if (isObject(value) && Array.isArray(value.results)) {
     const lines = renderMemoryTable(memoryRows(value.results), "Memories");
     if (Array.isArray(value.missing_ids) && value.missing_ids.length > 0) {
@@ -526,7 +536,7 @@ function renderGet(value: unknown): string[] {
     : renderGeneric("get", value);
 }
 
-function renderVersion(value: unknown): string[] | undefined {
+function renderVersion(value: JsonValue): string[] | undefined {
   return isObject(value) && Object.hasOwn(value, "version")
     ? [pc.bold("machine-memory"), `  Version  ${compact(value.version)}`]
     : undefined;
@@ -534,35 +544,38 @@ function renderVersion(value: unknown): string[] | undefined {
 
 function renderObjectWith(
   renderer: (value: JsonObject) => string[],
-  value: unknown,
+  value: JsonValue,
 ): string[] | undefined {
   return isObject(value) ? renderer(value) : undefined;
 }
 
-const specializedRenderers: Record<
+const specializedRenderers = new Map<
   string,
-  (value: unknown) => string[] | undefined
-> = {
-  version: renderVersion,
-  help: (value) => renderObjectWith(renderHelp, value),
-  query: (value) => renderSearch("query", value),
-  list: (value) => renderSearch("list", value),
-  suggest: (value) => renderSearch("suggest", value),
-  sweep: (value) => renderSearch("sweep", value),
-  get: renderGet,
-  export: (value) => renderMemoryTable(memoryRows(value), "Exported memories"),
-  doctor: (value) => renderObjectWith(renderDoctor, value),
-  stats: (value) => renderObjectWith(renderStats, value),
-};
+  (value: JsonValue) => string[] | undefined
+>([
+  ["version", renderVersion],
+  ["help", (value) => renderObjectWith(renderHelp, value)],
+  ["query", (value) => renderSearch("query", value)],
+  ["list", (value) => renderSearch("list", value)],
+  ["suggest", (value) => renderSearch("suggest", value)],
+  ["sweep", (value) => renderSearch("sweep", value)],
+  ["get", renderGet],
+  [
+    "export",
+    (value) => renderMemoryTable(memoryRows(value), "Exported memories"),
+  ],
+  ["doctor", (value) => renderObjectWith(renderDoctor, value)],
+  ["stats", (value) => renderObjectWith(renderStats, value)],
+]);
 
 function renderSpecialized(
   command: string,
-  value: unknown,
+  value: JsonValue,
 ): string[] | undefined {
-  return specializedRenderers[command]?.(value);
+  return specializedRenderers.get(command)?.(value);
 }
 
-export function renderPretty(command: string, value: unknown): string {
+export function renderPretty(command: string, value: JsonValue): string {
   return (
     renderSpecialized(command, value) ?? renderGeneric(command, value)
   ).join("\n");

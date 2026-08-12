@@ -3,7 +3,7 @@ const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
 
 export type AgentsMemoryBackend = "local" | "remote";
 
-const AGENTS_MD_BACKEND_CONTENT: Record<AgentsMemoryBackend, string[]> = {
+const AGENTS_MD_BACKEND_CONTENT = {
   local: [
     "This project uses `machine-memory` with a local SQLite database at `machine-memory.db`.",
     "Every database-backed command requires exactly one backend flag. For this one use `--local` for this repository.",
@@ -13,11 +13,11 @@ const AGENTS_MD_BACKEND_CONTENT: Record<AgentsMemoryBackend, string[]> = {
     "This project uses `machine-memory` with a shared remote Worker-backed database.",
     "Every database-backed command requires exactly one backend flag: use `--remote` for this repository.",
     "Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.",
-    "Search policy: use `machine-memory query \"<term>\" --remote` for exact names, paths, commands, and identifiers; use `--semantic --remote` when the same concept may use different wording; use `--hybrid --remote` for broad investigation or when recall matters more than exact matching.",
+    'Search policy: use `machine-memory query "<term>" --remote` for exact names, paths, commands, and identifiers; use `--semantic --remote` when the same concept may use different wording; use `--hybrid --remote` for broad investigation or when recall matters more than exact matching.',
     "When unsure, start with `--hybrid`; add `--explain-score` when ranking needs inspection. D1 records are canonical and Vectorize is only a retrieval index.",
     "After adding or updating a memory, its Vectorize embedding is synchronized automatically. Run `machine-memory reindex --remote` only after provisioning, changing the embedding index or model, or repairing missing vectors.",
   ],
-};
+} satisfies Record<AgentsMemoryBackend, string[]>;
 
 export function agentsMdContent(backend: AgentsMemoryBackend): string {
   const backendFlag = backend === "remote" ? "--remote" : "--local";

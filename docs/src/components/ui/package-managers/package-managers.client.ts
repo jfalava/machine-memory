@@ -25,20 +25,17 @@ function initPackageManager(container: HTMLElement): () => void {
     sync: { key: "ui-pm-tab", storage: "session" },
   });
 
-  const copyHandlers: Array<{
+  type CopyHandler = {
     btn: HTMLButtonElement;
     handler: () => void;
     timer?: number;
-  }> = [];
+  };
+  const copyHandlers: CopyHandler[] = [];
 
   container
     .querySelectorAll<HTMLButtonElement>("[data-nb-pm-copy]")
     .forEach((btn) => {
-      const handlerInfo: {
-        btn: HTMLButtonElement;
-        handler: () => void;
-        timer?: number;
-      } = {
+      const handlerInfo: CopyHandler = {
         btn,
         handler: async () => {
           try {

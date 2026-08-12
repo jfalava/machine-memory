@@ -91,14 +91,14 @@ function suggestTagMap(
 
 export function handleTagMapCommand(context: CommandContext): TagMapEffect {
   const [action, first, second] = context.args;
-  const handlers: Record<string, () => TagMapEffect> = {
-    list: () => listTagMap(context),
-    set: () => setTagMap(context, first, second),
-    delete: () => deleteTagMap(context, first),
-    suggest: () => suggestTagMap(context, first),
-  };
+  const handlers = new Map<string, () => TagMapEffect>([
+    ["list", () => listTagMap(context)],
+    ["set", () => setTagMap(context, first, second)],
+    ["delete", () => deleteTagMap(context, first)],
+    ["suggest", () => suggestTagMap(context, first)],
+  ]);
   return (
-    handlers[action ?? ""]?.() ??
+    handlers.get(action ?? "")?.() ??
     Effect.sync(() =>
       usageError("Usage: tag-map <list|set|delete|suggest> [args]"),
     )

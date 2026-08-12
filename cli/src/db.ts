@@ -1,7 +1,9 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
+import { Schema } from "effect";
 import { dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 import { DB_PATH } from "./constants";
+import { jsonObject, jsonString } from "./json";
 import { repositoryForCurrentDirectory } from "./repository";
 
 const SCHEMA_VERSION = 2;
@@ -68,7 +70,11 @@ function withBusyRetry<T>(operation: () => T): T {
     try {
       return operation();
     } catch (err) {
-      if (!isBusyError(err) || attempts >= BUSY_RETRIES) {
+      if (
+        !(err instanceof Error) ||
+        !isBusyError(err) ||
+        attempts >= BUSY_RETRIES
+      ) {
         throw err;
       }
       attempts += 1;
@@ -78,17 +84,14 @@ function withBusyRetry<T>(operation: () => T): T {
   }
 }
 
-function isBusyError(err: unknown): boolean {
-  if (!err || typeof err !== "object") {
-    return false;
-  }
-  const candidate = err as { code?: unknown; message?: unknown };
-  if (candidate.code === "SQLITE_BUSY" || candidate.code === "SQLITE_LOCKED") {
+function isBusyError(err: Error): boolean {
+  if (
+    ("code" in err && err.code === "SQLITE_BUSY") ||
+    ("code" in err && err.code === "SQLITE_LOCKED")
+  ) {
     return true;
   }
-  const message =
-    typeof candidate.message === "string" ? candidate.message : "";
-  return message.toLowerCase().includes("database is locked");
+  return err.message.toLowerCase().includes("database is locked");
 }
 
 function getUserVersion(database: Database): number {
@@ -109,12 +112,12 @@ function tableExists(database: Database, tableName: string): boolean {
 }
 
 function listMemoryColumns(database: Database): Set<string> {
-  const rows = allWithRetry(database, "PRAGMA table_info(memories)") as {
-    name?: unknown;
-  }[];
+  const rows = Schema.decodeUnknownSync(Schema.Array(Schema.Json))(
+    allWithRetry(database, "PRAGMA table_info(memories)"),
+  );
   return new Set(
     rows
-      .map((row) => (typeof row.name === "string" ? row.name : ""))
+      .map((row) => jsonString(jsonObject(row)?.name) ?? "")
       .filter((columnName) => columnName.length > 0),
   );
 }

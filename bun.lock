@@ -5,12 +5,13 @@
     "": {
       "name": "@machine-memory/monorepo",
       "devDependencies": {
+        "@oxlint/plugins": "1.78.0",
         "vite-tsconfig-paths": "6.1.1",
       },
     },
     "cli": {
       "name": "@machine-memory/cli",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "bin": {
         "machine-memory": "src/app.ts",
       },
@@ -32,7 +33,7 @@
     },
     "docs": {
       "name": "@machine-memory/docs",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "dependencies": {
         "@cloudflare/nimbus-docs": "0.9.0",
         "@fontsource/google-sans-code": "5.3.0",
@@ -62,7 +63,7 @@
     },
     "remote-db/cloudflare": {
       "name": "@machine-memory/remote-db-cloudflare",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "dependencies": {
         "@cloudflare/workers-types": "5.20260809.1",
         "@effect/platform-bun": "catalog:effect",
@@ -645,6 +646,8 @@
     "@oxlint/binding-win32-ia32-msvc": ["@oxlint/binding-win32-ia32-msvc@1.78.0", "", { "os": "win32", "cpu": "ia32" }, "sha512-zcuXFVrEFHIafRfkCQT8w/Xe41o07ozl/vwHq7p94vB29xVzsB0sZGYORU1jhcYKv3Lr0J3HbJ2T4fHH5rWmvA=="],
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.78.0", "", { "os": "win32", "cpu": "x64" }, "sha512-Sb5ocmLSuYeOuXd+CFOToGKp/gjXUEWDnvIGwhnh8aq8wY4TMmEnKnvbogSW7RdMZv77JSARduS7/gv+khYEjA=="],
+
+    "@oxlint/plugins": ["@oxlint/plugins@1.78.0", "", {}, "sha512-Ypt8KeRYw+4jUtlPirfcHWMrn5ms12VrrFPD+Mds477/7tJxG1Kcz2Yrg2nVcTQEUx/GdlhS+BUg1kmxNm04Ug=="],
 
     "@pagefind/darwin-arm64": ["@pagefind/darwin-arm64@1.5.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-MXpI+7HsAdPkvJ0gk9xj9g541BCqBZOBbdwj9g6lB5LCj6kSV6nqDSjzcAJwvOsfu0fjwvC8hQU+ecfhp+MpiQ=="],
 

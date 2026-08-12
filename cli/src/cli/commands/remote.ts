@@ -51,7 +51,7 @@ async function askMasked(label: string): Promise<string> {
 
   // Piped input is not echoed by a terminal. Keep the existing prompt as a
   // fallback for runtimes that do not expose raw terminal input.
-  if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== "function") {
+  if (!stdin.isTTY || !stdout.isTTY || stdin.setRawMode === undefined) {
     return ask(label, undefined);
   }
 
@@ -121,9 +121,9 @@ function decodeMaskedChunk(
   chunk: Uint8Array | string,
   decoder: TextDecoder,
 ): string {
-  return typeof chunk === "string"
-    ? chunk
-    : decoder.decode(chunk, { stream: true });
+  return chunk instanceof Uint8Array
+    ? decoder.decode(chunk, { stream: true })
+    : chunk;
 }
 
 function readMaskedInput(
@@ -173,7 +173,7 @@ function cancelMaskedInput(options: {
   onData: (chunk: Uint8Array | string) => void;
   wasRaw: boolean;
   label: string;
-  reject: (reason?: unknown) => void;
+  reject: (reason?: Error) => void;
 }): void {
   restoreMaskedInput(options.stdin, options.onData, options.wasRaw);
   options.stdout.write("\n");

@@ -3,6 +3,7 @@ import { printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";
 import { renderPretty } from "./pretty";
+import type { JsonObject, JsonValue } from "../../json";
 
 export const prettyOutput = GlobalFlag.setting("pretty")({
   flag: Flag.boolean("pretty").pipe(
@@ -38,7 +39,7 @@ export function outputModeForPretty(pretty: boolean): OutputMode {
 
 export function printCommandOutput(
   context: { command: string; outputMode: OutputMode },
-  data: unknown,
+  data: JsonValue,
 ) {
   if (prettyOutputEnabled(context.outputMode)) {
     console.info(renderPretty(context.command, data));
@@ -51,14 +52,14 @@ export function hasMinimalOutput(mode: OutputMode): boolean {
   return mode.brief || mode.jsonMin || mode.quiet;
 }
 
-function briefTagText(tags: unknown): string {
+function briefTagText(tags: JsonValue | undefined): string {
   const parsed = parseTags(stringValue(tags));
   return parsed.length === 0
     ? "(#none)"
     : `(${parsed.map((tag) => `#${tag}`).join(" ")})`;
 }
 
-function formatBriefMemoryLine(row: Record<string, unknown>): string {
+function formatBriefMemoryLine(row: JsonObject): string {
   const id = Number(row.id ?? 0);
   const certainty = normalizeCertaintyValue(row.certainty);
   const type = stringValue(row.memory_type, "convention");
@@ -66,20 +67,18 @@ function formatBriefMemoryLine(row: Record<string, unknown>): string {
   return `[${id}] <${certainty}> <${type}>: ${content} ${briefTagText(row.tags)}`;
 }
 
-export function printBriefLines(rows: Record<string, unknown>[]) {
+export function printBriefLines(rows: JsonObject[]) {
   console.info(rows.map(formatBriefMemoryLine).join("\n"));
 }
 
-export function minimalResultSummary(
-  row: Record<string, unknown>,
-): Record<string, unknown> {
+export function minimalResultSummary(row: JsonObject): JsonObject {
   return {
     id: Number(row.id ?? 0),
     score: Number(row.score ?? 0),
     memory_type: stringValue(row.memory_type, "convention"),
     certainty: normalizeCertaintyValue(row.certainty),
     tags: parseTags(stringValue(row.tags)),
-  };
+  } satisfies JsonObject;
 }
 
 export function queryEmptyResultPayload(

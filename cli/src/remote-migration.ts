@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { Schema } from "effect";
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { DB_PATH } from "./constants";
@@ -11,6 +12,7 @@ import {
   sqliteDateForComparison,
   stringValue,
 } from "./cli/shared";
+import { jsonNumber, jsonObject, jsonString, type JsonValue } from "./json";
 
 export type RemoteMigrationRow = {
   readonly source_id: number;
@@ -58,15 +60,16 @@ function sourceError(message: string, cause?: unknown): Error {
   return new Error(message, cause === undefined ? undefined : { cause });
 }
 
-function sourceDate(value: unknown): string | null {
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+function sourceDate(value: JsonValue | undefined): string | null {
+  const raw = jsonString(value);
+  if (raw === undefined || Number.isNaN(Date.parse(raw))) {
     return null;
   }
-  return sqliteDateForComparison(value);
+  return sqliteDateForComparison(raw);
 }
 
 function sourceInteger(
-  value: unknown,
+  value: JsonValue | undefined,
   label: string,
   options: { nullable?: boolean } = {},
 ): number | null {
@@ -76,14 +79,14 @@ function sourceInteger(
     }
     throw sourceError(`${label} must be an integer.`);
   }
-  const parsed = Number(value);
+  const parsed = jsonNumber(value) ?? Number(jsonString(value));
   if (!Number.isSafeInteger(parsed)) {
     throw sourceError(`${label} must be a safe integer.`);
   }
   return parsed;
 }
 
-function normalizeSourceRow(row: unknown, index: number): RemoteMigrationRow {
+function normalizeSourceRow(row: JsonValue, index: number): RemoteMigrationRow {
   const normalized = normalizeSqliteRow(row);
   const sourceId = sourceInteger(normalized.id, `Source row ${index + 1} id`);
   if (sourceId === null || sourceId < 1) {
@@ -149,13 +152,11 @@ function normalizeSourceRow(row: unknown, index: number): RemoteMigrationRow {
 }
 
 function tableColumns(database: Database): Set<string> {
-  const rows = database.query("PRAGMA table_info(memories)").all() as {
-    name?: unknown;
-  }[];
+  const rows = Schema.decodeUnknownSync(Schema.Array(Schema.Json))(
+    database.query("PRAGMA table_info(memories)").all(),
+  );
   return new Set(
-    rows
-      .map((row) => (typeof row.name === "string" ? row.name : ""))
-      .filter(Boolean),
+    rows.map((row) => jsonString(jsonObject(row)?.name) ?? "").filter(Boolean),
   );
 }
 
@@ -163,18 +164,19 @@ function readSourceRows(
   database: Database,
   columns: Set<string>,
   repository: string,
-): unknown[] {
+): JsonValue[] {
   const selectedColumns = SOURCE_COLUMNS.filter((column) =>
     columns.has(column),
   );
   const select = selectedColumns.join(", ");
-  return columns.has("repository")
+  const rows = columns.has("repository")
     ? database
         .query(
           `SELECT ${select} FROM memories WHERE repository = ? ORDER BY id ASC`,
         )
         .all(repository)
     : database.query(`SELECT ${select} FROM memories ORDER BY id ASC`).all();
+  return [...Schema.decodeUnknownSync(Schema.Array(Schema.MutableJson))(rows)];
 }
 
 export function resolveMigrationSourcePath(

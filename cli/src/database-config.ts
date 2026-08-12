@@ -1,3 +1,5 @@
+import { jsonObject, jsonString, parseJson, type JsonObject } from "./json";
+
 export type DatabaseConfig =
   | {
       readonly kind: "local";
@@ -132,43 +134,57 @@ export async function loadStoredRemoteCredentials(): Promise<
   return stored ? parseRemoteCredentials(stored) : undefined;
 }
 
+function parseOptionalRemoteCredentials(
+  candidate: JsonObject,
+): Pick<RemoteCredentials, "stackName" | "databaseName" | "apiName"> {
+  const optional: Pick<
+    RemoteCredentials,
+    "stackName" | "databaseName" | "apiName"
+  > = {};
+  const fields = [
+    ["stackName", jsonString(candidate.stackName)],
+    ["databaseName", jsonString(candidate.databaseName)],
+    ["apiName", jsonString(candidate.apiName)],
+  ] as const;
+  for (const [field, value] of fields) {
+    if (value !== undefined) {
+      Object.assign(optional, { [field]: value });
+    }
+  }
+  return optional;
+}
+
 function parseRemoteCredentials(stored: string): RemoteCredentials {
-  let parsed: unknown;
+  let parsed: ReturnType<typeof parseJson>;
   try {
-    parsed = JSON.parse(stored);
+    parsed = parseJson(stored);
   } catch (cause) {
     throw new Error(
       `Stored remote credentials are invalid. Run 'machine-memory remote setup' again. ${String(cause)}`,
     );
   }
-  if (!parsed || typeof parsed !== "object") {
+  const candidate = jsonObject(parsed);
+  if (candidate === undefined) {
     throw new Error(
       "Stored remote credentials are invalid. Run 'machine-memory remote setup' again.",
     );
   }
-  const candidate = parsed as Record<string, unknown>;
+  const url = jsonString(candidate.url);
+  const token = jsonString(candidate.token);
   if (
-    typeof candidate.url !== "string" ||
-    typeof candidate.token !== "string" ||
-    candidate.url.length === 0 ||
-    candidate.token.length === 0
+    url === undefined ||
+    token === undefined ||
+    url.length === 0 ||
+    token.length === 0
   ) {
     throw new Error(
       "Stored remote credentials are invalid. Run 'machine-memory remote setup' again.",
     );
   }
   return {
-    url: candidate.url,
-    token: candidate.token,
-    ...(typeof candidate.stackName === "string"
-      ? { stackName: candidate.stackName }
-      : {}),
-    ...(typeof candidate.databaseName === "string"
-      ? { databaseName: candidate.databaseName }
-      : {}),
-    ...(typeof candidate.apiName === "string"
-      ? { apiName: candidate.apiName }
-      : {}),
+    url,
+    token,
+    ...parseOptionalRemoteCredentials(candidate),
   };
 }
 

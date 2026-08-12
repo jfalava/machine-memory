@@ -1,6 +1,7 @@
 import { Effect, FileSystem, PlatformError } from "effect";
 import { inflateRawSync } from "node:zlib";
 import { REPO, VERSION } from "./constants";
+import { jsonString, type JsonObject } from "./json";
 
 type ReleaseAsset = {
   name: string;
@@ -15,10 +16,8 @@ type Release = {
 export class UpgradeError extends Error {
   readonly _tag = "UpgradeError";
 
-  constructor(readonly payload: Record<string, unknown>) {
-    super(
-      typeof payload.error === "string" ? payload.error : "Upgrade failed.",
-    );
+  constructor(readonly payload: JsonObject) {
+    super(jsonString(payload.error) ?? "Upgrade failed.");
   }
 }
 
@@ -484,7 +483,7 @@ function replaceBinary(
 export function upgrade(
   options: UpgradeOptions = {},
 ): Effect.Effect<
-  Record<string, unknown>,
+  JsonObject,
   UpgradeError | PlatformError.PlatformError,
   FileSystem.FileSystem
 > {

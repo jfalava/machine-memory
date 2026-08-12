@@ -23,6 +23,10 @@ interface SlugProps {
   item: IndexedEntry;
 }
 
+type PageData = {
+  socialImage?: string;
+};
+
 export async function getStaticPaths() {
   const indexed = await getIndexedEntries();
   return indexed
@@ -43,10 +47,10 @@ export async function getStaticPaths() {
 export async function GET({ props }: { props: SlugProps }) {
   const { item } = props;
   const { entry, title, description, version } = item;
-  const data = (entry.data ?? {}) as Record<string, unknown>;
+  const data = entry.data as PageData;
   const rawImage = data.socialImage;
   const socialImage =
-    typeof rawImage === "string" && rawImage.length > 0
+    rawImage !== undefined && rawImage.length > 0
       ? rawImage
       : config.socialImage;
 

@@ -19,6 +19,15 @@ import {
 } from "../constants";
 import type { MemoryDatabaseApi } from "../effect/database";
 import { CommandError, MemoryDatabaseError } from "../effect/errors";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  jsonStringArray,
+  parseJson,
+  type JsonObject,
+  type JsonValue,
+} from "../json";
 import { repositoryForCurrentDirectory } from "../repository";
 
 export function isMemoryType(value: string): value is MemoryType {
@@ -29,17 +38,20 @@ function isCertainty(value: string): value is Certainty {
   return (CERTAINTY_LEVELS as readonly string[]).includes(value);
 }
 
-const LEGACY_CERTAINTY_ALIASES: Record<string, Certainty> = {
-  hard: "verified",
-  soft: "inferred",
-  uncertain: "speculative",
-};
-
 export function canonicalizeCertainty(raw: string): Certainty | undefined {
   if (isCertainty(raw)) {
     return raw;
   }
-  return LEGACY_CERTAINTY_ALIASES[raw];
+  switch (raw) {
+    case "hard":
+      return "verified";
+    case "soft":
+      return "inferred";
+    case "uncertain":
+      return "speculative";
+    default:
+      return undefined;
+  }
 }
 
 function certaintyStorageVariants(certainty: Certainty): string[] {
@@ -56,13 +68,10 @@ function certaintyStorageVariants(certainty: Certainty): string[] {
 }
 
 export function normalizeCertaintyValue(
-  value: unknown,
+  value: JsonValue | undefined,
   fallback: Certainty = "inferred",
 ): Certainty {
-  if (typeof value !== "string") {
-    return fallback;
-  }
-  return canonicalizeCertainty(value) ?? fallback;
+  return canonicalizeCertainty(jsonString(value) ?? "") ?? fallback;
 }
 
 export function isMemoryStatus(value: string): value is MemoryStatus {
@@ -158,14 +167,11 @@ export function parseRefsFlag(args: string[]): string[] | undefined {
 
 function parseRefsValue(raw: string): string[] {
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      !Array.isArray(parsed) ||
-      parsed.some((item) => typeof item !== "string")
-    ) {
+    const parsed = jsonStringArray(parseJson(raw));
+    if (parsed === undefined) {
       throw new Error("Expected JSON string array");
     }
-    return (parsed as string[]).slice();
+    return parsed.slice();
   } catch {
     const fallback = raw
       .split(",")
@@ -273,15 +279,15 @@ export function parseContentFromFileFlag(
   );
 }
 
-export function stringValue(value: unknown, fallback = ""): string {
-  return typeof value === "string" ? value : fallback;
+export function stringValue(
+  value: JsonValue | undefined,
+  fallback = "",
+): string {
+  return jsonString(value) ?? fallback;
 }
 
-export function normalizeSqliteRow(row: unknown): Record<string, unknown> {
-  if (!row || typeof row !== "object") {
-    return {};
-  }
-  const next = { ...(row as Record<string, unknown>) };
+export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
+  const next = jsonObject(row) ?? {};
   next.refs = parseStoredRefs(next.refs);
   next.certainty = normalizeCertaintyValue(next.certainty);
   if (next.update_count !== undefined) {
@@ -299,34 +305,28 @@ export function normalizeSqliteRow(row: unknown): Record<string, unknown> {
   return next;
 }
 
-export function parseStoredRefs(value: unknown): string[] {
-  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
-    return value as string[];
+export function parseStoredRefs(value: JsonValue | undefined): string[] {
+  const array = jsonStringArray(value);
+  if (array !== undefined) {
+    return array;
   }
-  if (typeof value !== "string" || value.trim() === "") {
+  const raw = jsonString(value);
+  if (raw === undefined || raw.trim() === "") {
     return [];
   }
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (
-      Array.isArray(parsed) &&
-      parsed.every((item) => typeof item === "string")
-    ) {
-      return parsed as string[];
-    }
-    return [];
+    return jsonStringArray(parseJson(raw)) ?? [];
   } catch {
     return [];
   }
 }
 
-export function sqliteDateToMs(value: unknown): number | null {
-  if (typeof value !== "string" || value.trim() === "") {
+export function sqliteDateToMs(value: JsonValue | undefined): number | null {
+  const raw = jsonString(value);
+  if (raw === undefined || raw.trim() === "") {
     return null;
   }
-  const normalized = value.includes("T")
-    ? value
-    : `${value.replace(" ", "T")}Z`;
+  const normalized = raw.includes("T") ? raw : `${raw.replace(" ", "T")}Z`;
   const parsed = Date.parse(normalized);
   return Number.isNaN(parsed) ? null : parsed;
 }
@@ -400,11 +400,11 @@ export type ScoreBreakdown = {
   total: number;
 };
 
-type ShapeRowsOptions = {
+type ScoreRowsOptions = {
   explainScore?: boolean;
 };
 
-function certaintyWeight(certainty: unknown): number {
+function certaintyWeight(certainty: JsonValue | undefined): number {
   const normalized = normalizeCertaintyValue(certainty, "speculative");
   if (normalized === "verified") {
     return SCORE_COMPONENT_WEIGHTS.certainty.verified;
@@ -415,7 +415,7 @@ function certaintyWeight(certainty: unknown): number {
   return SCORE_COMPONENT_WEIGHTS.certainty.speculative;
 }
 
-function recencyWeight(updatedAt: unknown): number {
+function recencyWeight(updatedAt: JsonValue | undefined): number {
   const ms = sqliteDateToMs(updatedAt);
   if (ms === null) {
     return 0;
@@ -430,11 +430,15 @@ function recencyWeight(updatedAt: unknown): number {
   );
 }
 
-function tagExactnessWeight(tags: unknown, queryTokens: string[]): number {
-  if (typeof tags !== "string" || queryTokens.length === 0) {
+function tagExactnessWeight(
+  tags: JsonValue | undefined,
+  queryTokens: string[],
+): number {
+  const rawTags = jsonString(tags);
+  if (rawTags === undefined || queryTokens.length === 0) {
     return 0;
   }
-  const tagList = parseTags(tags).map((tag) => tag.toLowerCase());
+  const tagList = parseTags(rawTags).map((tag) => tag.toLowerCase());
   const tokenSet = new Set(queryTokens.map((token) => token.toLowerCase()));
   if (tagList.some((tag) => tokenSet.has(tag))) {
     return SCORE_COMPONENT_WEIGHTS.tagMatch.exact;
@@ -445,8 +449,8 @@ function tagExactnessWeight(tags: unknown, queryTokens: string[]): number {
   return 0;
 }
 
-function updateCountWeight(updateCount: unknown): number {
-  const count = Number(updateCount ?? 0);
+function updateCountWeight(updateCount: JsonValue | undefined): number {
+  const count = jsonNumber(updateCount) ?? 0;
   if (!Number.isFinite(count) || count <= 0) {
     return 0;
   }
@@ -456,8 +460,8 @@ function updateCountWeight(updateCount: unknown): number {
   );
 }
 
-function ftsWeight(ftsRank: unknown): number {
-  const rank = Number(ftsRank);
+function ftsWeight(ftsRank: JsonValue | undefined): number {
+  const rank = jsonNumber(ftsRank) ?? 0;
   if (!Number.isFinite(rank)) {
     return 0;
   }
@@ -472,7 +476,7 @@ function ftsWeight(ftsRank: unknown): number {
 }
 
 function scoreBreakdown(
-  row: Record<string, unknown>,
+  row: JsonObject,
   queryTokens: string[],
 ): ScoreBreakdown {
   const recency = recencyWeight(row.updated_at);
@@ -493,27 +497,28 @@ function scoreBreakdown(
   };
 }
 
-export function shapeRowsWithScore(
-  rows: unknown[],
+export function scoreRowsWithDetails(
+  rows: JsonValue[],
   queryTokens: string[],
-  options: ShapeRowsOptions = {},
-): Record<string, unknown>[] {
+  options: ScoreRowsOptions = {},
+): JsonObject[] {
   const normalized = rows.map((row) => normalizeSqliteRow(row));
   const withScore = normalized.map((row) => {
     const breakdown = scoreBreakdown(row, queryTokens);
-    const scored: Record<string, unknown> = {
-      ...row,
-      score: breakdown.total,
-    };
+    const scored =
+      jsonObject({
+        ...row,
+        score: breakdown.total,
+      }) ?? {};
     if (options.explainScore) {
-      scored.score_breakdown = breakdown;
+      Object.assign(scored, { score_breakdown: breakdown });
     }
     return scored;
   });
   withScore.sort((a, b) => Number(b.score) - Number(a.score));
   return withScore.map((row) => {
-    const rest = { ...(row as Record<string, unknown>) };
-    delete rest.fts_rank;
+    const rest = jsonObject({ ...row }) ?? {};
+    delete rest["fts_rank"];
     return rest;
   });
 }
@@ -535,16 +540,28 @@ function normalizeHybridComponent(value: number, values: number[]): number {
 }
 
 export function combineHybridResults(
-  ftsResults: Record<string, unknown>[],
-  semanticResults: Record<string, unknown>[],
+  ftsResults: JsonObject[],
+  semanticResults: JsonObject[],
   limit: number,
   explainScore = false,
-): Record<string, unknown>[] {
+): JsonObject[] {
   const ftsById = new Map(
-    ftsResults.map((row) => [String(row.id), row] as const),
+    ftsResults.map(
+      (row) =>
+        [
+          jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "",
+          row,
+        ] as const,
+    ),
   );
   const semanticById = new Map(
-    semanticResults.map((row) => [String(row.id), row] as const),
+    semanticResults.map(
+      (row) =>
+        [
+          jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "",
+          row,
+        ] as const,
+    ),
   );
   const ids = [...new Set([...ftsById.keys(), ...semanticById.keys()])];
   const ftsValues = ids.map((id) => Number(ftsById.get(id)?.score ?? 0));
@@ -571,30 +588,33 @@ export function combineHybridResults(
     const hybridScore = Number(
       (ftsContribution + semanticContribution).toFixed(3),
     );
-    const row: Record<string, unknown> = {
-      ...(ftsRow ?? semanticRow),
-      score: hybridScore,
-      fts_score: Number(ftsScore.toFixed(3)),
-      semantic_score: Number(semanticScore.toFixed(6)),
-      hybrid_score: hybridScore,
-    };
-    delete row.score_breakdown;
+    const row =
+      jsonObject({
+        ...(ftsRow ?? semanticRow),
+        score: hybridScore,
+        fts_score: Number(ftsScore.toFixed(3)),
+        semantic_score: Number(semanticScore.toFixed(6)),
+        hybrid_score: hybridScore,
+      }) ?? {};
+    delete row["score_breakdown"];
     if (explainScore) {
-      row.score_breakdown = {
-        fts: {
-          raw: Number(ftsScore.toFixed(3)),
-          normalized: Number(normalizedFts.toFixed(6)),
-          weight: HYBRID_SCORE_WEIGHTS.fts,
-          contribution: Number(ftsContribution.toFixed(3)),
+      Object.assign(row, {
+        score_breakdown: {
+          fts: {
+            raw: Number(ftsScore.toFixed(3)),
+            normalized: Number(normalizedFts.toFixed(6)),
+            weight: HYBRID_SCORE_WEIGHTS.fts,
+            contribution: Number(ftsContribution.toFixed(3)),
+          },
+          semantic: {
+            raw: Number(semanticScore.toFixed(6)),
+            normalized: Number(normalizedSemantic.toFixed(6)),
+            weight: HYBRID_SCORE_WEIGHTS.semantic,
+            contribution: Number(semanticContribution.toFixed(3)),
+          },
+          total: hybridScore,
         },
-        semantic: {
-          raw: Number(semanticScore.toFixed(6)),
-          normalized: Number(normalizedSemantic.toFixed(6)),
-          weight: HYBRID_SCORE_WEIGHTS.semantic,
-          contribution: Number(semanticContribution.toFixed(3)),
-        },
-        total: hybridScore,
-      };
+      });
     }
     return row;
   });
@@ -602,9 +622,7 @@ export function combineHybridResults(
   return sortByScoreThenRecency(combined).slice(0, limit);
 }
 
-export function sortByScoreThenRecency(
-  rows: Record<string, unknown>[],
-): Record<string, unknown>[] {
+export function sortByScoreThenRecency(rows: JsonObject[]): JsonObject[] {
   const indexed = rows.map((row, index) => ({
     index,
     row,
@@ -709,7 +727,7 @@ export function applySqlFilters(
 export function getMemoryById(
   database: MemoryDatabaseApi,
   id: number,
-): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
+): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
   return database
     .get("SELECT * FROM memories WHERE repository = ? AND id = ?", [
       repositoryForCurrentDirectory(),
@@ -721,7 +739,7 @@ export function getMemoryById(
 export function findMemoryByMatch(
   database: MemoryDatabaseApi,
   query: string,
-): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
+): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
   const terms = extractTerms(query);
   const ftsQuery = buildFtsQueryFromTerms(terms);
   if (!ftsQuery) {
@@ -739,14 +757,14 @@ export function findMemoryByMatch(
        LIMIT 5`,
       [ftsQuery, repositoryForCurrentDirectory()],
     )
-    .pipe(Effect.map((rows) => shapeRowsWithScore(rows, terms)[0] ?? null));
+    .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, terms)[0] ?? null));
 }
 
 export function detectPotentialConflicts(
   database: MemoryDatabaseApi,
   payload: { content: string; tags?: string; context?: string },
   options: { excludeId?: number; limit?: number } = {},
-): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const terms = extractTerms(
     [payload.content, payload.tags ?? "", payload.context ?? ""].join(" "),
   );
@@ -779,13 +797,13 @@ export function detectPotentialConflicts(
        LIMIT ${Number(options.limit ?? 5)}`,
       params,
     )
-    .pipe(Effect.map((rows) => shapeRowsWithScore(rows, terms)));
+    .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, terms)));
 }
 
 export function findExactDuplicate(
   database: MemoryDatabaseApi,
   payload: { content: string; tags?: string; context?: string },
-): Effect.Effect<Record<string, unknown> | null, MemoryDatabaseError> {
+): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
   return database
     .get(
       `SELECT * FROM memories
@@ -908,16 +926,11 @@ function parseFileList(raw: string): string[] {
 
 function parseFileListJson(raw: string): string[] {
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      !Array.isArray(parsed) ||
-      parsed.some((item) => typeof item !== "string")
-    ) {
+    const parsed = jsonStringArray(parseJson(raw));
+    if (parsed === undefined) {
       throw new Error("Expected JSON string array");
     }
-    return (parsed as string[])
-      .map((item) => normalizeFilePathInput(item))
-      .filter(Boolean);
+    return parsed.map((item) => normalizeFilePathInput(item)).filter(Boolean);
   } catch {
     usageError(
       'Invalid --files-json value. Provide a JSON array of paths, e.g. --files-json \'["src/a.ts","src/b.ts"]\'.',
@@ -1012,7 +1025,7 @@ export function queryNeighborhoodMatches(
   neighborhood: SuggestNeighborhood,
   filters: CommonFilters,
   limit = 30,
-): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const orClauses: string[] = [];
   const params: (string | number)[] = [];
 
@@ -1047,14 +1060,14 @@ export function queryNeighborhoodMatches(
        LIMIT ${limit}`,
       params,
     )
-    .pipe(Effect.map((rows) => shapeRowsWithScore(rows, neighborhood.terms)));
+    .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, neighborhood.terms)));
 }
 
 export function mergeSuggestionResults(
-  primary: Record<string, unknown>[],
-  secondary: Record<string, unknown>[],
-): Record<string, unknown>[] {
-  const byId = new Map<number, Record<string, unknown>>();
+  primary: JsonObject[],
+  secondary: JsonObject[],
+): JsonObject[] {
+  const byId = new Map<number, JsonObject>();
   for (const row of primary) {
     byId.set(Number(row.id), row);
   }
@@ -1089,7 +1102,7 @@ export function findStatusCascadeCandidates(
   database: MemoryDatabaseApi,
   tags: string,
   excludeId: number,
-): Effect.Effect<Record<string, unknown>[], MemoryDatabaseError> {
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const tagSet = new Set(parseTags(tags).map((tag) => tag.toLowerCase()));
   if (tagSet.size === 0) {
     return Effect.succeed([]);
@@ -1118,11 +1131,15 @@ export function findStatusCascadeCandidates(
     );
 }
 
-export function parseSqliteErrorDetails(err: unknown): {
+type SqliteErrorDetails = {
   kind: "fts_parse" | "sqlite" | "unknown";
   message: string;
   hint?: string;
-} {
+};
+
+export function parseSqliteErrorDetails(
+  err: Error | JsonValue,
+): SqliteErrorDetails {
   if (!(err instanceof Error)) {
     return {
       kind: "unknown",

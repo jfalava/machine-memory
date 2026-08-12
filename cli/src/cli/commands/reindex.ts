@@ -4,6 +4,12 @@ import { printJson, usageError } from "../../cli-utils";
 import { MemoryDatabaseError } from "../../effect/errors";
 import { upsertMemoryVector } from "../../effect/vector-sync";
 import { vectorizeRateLimitInfo } from "../../effect/vectorize";
+import {
+  jsonNumber,
+  jsonString,
+  type JsonObject,
+  type JsonValue,
+} from "../../json";
 import { normalizeSqliteRow } from "../shared";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
@@ -25,7 +31,7 @@ const PROGRESS_FRAMES = [
 ];
 
 type ReindexFailure = {
-  id: unknown;
+  id: JsonValue;
   error: string;
   rateLimited: boolean;
 };
@@ -83,7 +89,7 @@ function reindexError(
 
 function upsertMemoryWithRetry(
   database: NonNullable<CommandContext["database"]>,
-  row: Record<string, unknown>,
+  row: JsonObject,
   throttle: () => Effect.Effect<void>,
 ): Effect.Effect<ReindexAttempt> {
   return Effect.gen(function* () {
@@ -133,7 +139,7 @@ function groupedFailures(failures: ReindexFailure[]) {
   for (const failure of failures) {
     const error = compactFailureError(failure);
     const ids = groups.get(error) ?? [];
-    ids.push(String(failure.id));
+    ids.push(jsonString(failure.id) ?? String(jsonNumber(failure.id) ?? ""));
     groups.set(error, ids);
   }
   return groups;

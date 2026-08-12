@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { jsonNumber, jsonString, type JsonObject } from "../../json";
 import { Command } from "effect/unstable/cli";
 import pc from "picocolors";
 import { handleDoctorCommand } from "./doctor";
@@ -391,7 +392,7 @@ function printUpgradeProgress(progress: UpgradeProgress): void {
   }
 }
 
-function printUpgradeResult(result: Record<string, unknown>): void {
+function printUpgradeResult(result: JsonObject): void {
   if (result.message === "Already up to date") {
     console.info();
     console.info(pc.green(pc.bold("✓ machine-memory is up to date")));
@@ -402,7 +403,7 @@ function printUpgradeResult(result: Record<string, unknown>): void {
   console.info();
   console.info(pc.green(pc.bold("✓ machine-memory upgraded successfully")));
   console.info(
-    `  ${pc.dim("Version")}  ${pc.cyan(`v${String(result.from)}`)} ${pc.dim("→")} ${pc.green(`v${String(result.to)}`)}`,
+    `  ${pc.dim("Version")}  ${pc.cyan(`v${jsonString(result.from) ?? jsonNumber(result.from)?.toString() ?? "?"}`)} ${pc.dim("→")} ${pc.green(`v${jsonString(result.to) ?? jsonNumber(result.to)?.toString() ?? "?"}`)}`,
   );
   console.info();
 }

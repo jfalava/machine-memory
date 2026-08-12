@@ -12,6 +12,16 @@ import {
   type MemoryType,
 } from "../../constants";
 import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  jsonStringArray,
+  isJsonArray,
+  parseJson,
+  type JsonObject,
+  type JsonValue,
+} from "../../json";
+import {
   canonicalizeCertainty,
   detectPotentialConflicts,
   findExactDuplicate,
@@ -52,7 +62,7 @@ type ImportNormalized = {
 type ImportSkip = {
   status: "skip";
   reason: string;
-  extra?: Record<string, unknown>;
+  extra?: JsonObject;
 };
 
 type ImportOk = {
@@ -66,46 +76,36 @@ type StatsAccumulator = {
   byType: Record<string, number>;
   byCertainty: Record<string, number>;
   tagFrequency: Record<string, number>;
-  oldest: Record<string, unknown> | null;
+  oldest: JsonObject | null;
   staleCount: number;
   noTagsCount: number;
   now: number;
 };
 
-function importSkip(
-  reason: string,
-  extra?: Record<string, unknown>,
-): ImportSkip {
+function importSkip(reason: string, extra?: JsonObject): ImportSkip {
   return { status: "skip", reason, extra };
 }
 
-function importObject(rawEntry: unknown): Record<string, unknown> | null {
-  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) {
-    return null;
-  }
-  return rawEntry as Record<string, unknown>;
+function importObject(rawEntry: JsonValue): JsonObject | null {
+  return jsonObject(rawEntry) ?? null;
 }
 
-function parseImportContent(
-  entry: Record<string, unknown>,
-): string | undefined {
-  const content = typeof entry.content === "string" ? entry.content : "";
+function parseImportContent(entry: JsonObject): string | undefined {
+  const content = jsonString(entry.content) ?? "";
   return content || undefined;
 }
 
-function parseImportEnums(entry: Record<string, unknown>):
+function parseImportEnums(entry: JsonObject):
   | {
       memoryTypeRaw: MemoryType;
       certaintyNormalized: Certainty;
       statusRaw: MemoryStatus;
     }
   | ImportSkip {
-  const memoryTypeRaw =
-    typeof entry.memory_type === "string" ? entry.memory_type : "convention";
-  const certaintyRaw =
-    typeof entry.certainty === "string" ? entry.certainty : "inferred";
+  const memoryTypeRaw = jsonString(entry.memory_type) ?? "convention";
+  const certaintyRaw = jsonString(entry.certainty) ?? "inferred";
   const certaintyNormalized = canonicalizeCertainty(certaintyRaw);
-  const statusRaw = typeof entry.status === "string" ? entry.status : "active";
+  const statusRaw = jsonString(entry.status) ?? "active";
 
   if (!isMemoryType(memoryTypeRaw)) {
     return importSkip("invalid_memory_type", { memory_type: memoryTypeRaw });
@@ -124,60 +124,57 @@ function parseImportEnums(entry: Record<string, unknown>):
   };
 }
 
-function parseImportRefs(entry: Record<string, unknown>): string[] {
-  if (Array.isArray(entry.refs)) {
-    return entry.refs.filter(
-      (item): item is string => typeof item === "string",
-    );
+function parseImportRefs(entry: JsonObject): string[] {
+  const refs = jsonStringArray(entry.refs);
+  if (refs !== undefined) {
+    return refs;
   }
-  if (typeof entry.refs === "string") {
-    return parseStoredRefs(entry.refs);
-  }
-  return [];
+  const raw = jsonString(entry.refs);
+  return raw === undefined ? [] : parseStoredRefs(raw);
 }
 
-function parseImportTimestamp(value: unknown): string | undefined {
-  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+function parseImportTimestamp(
+  value: JsonValue | undefined,
+): string | undefined {
+  const raw = jsonString(value);
+  if (raw === undefined || Number.isNaN(Date.parse(raw))) {
     return undefined;
   }
-  return sqliteDateForComparison(value);
+  return sqliteDateForComparison(raw);
 }
 
-function parseImportMetadata(entry: Record<string, unknown>) {
-  const sourceAgent =
-    typeof entry.source_agent === "string" ? entry.source_agent : "";
-  const lastUpdatedBy =
-    typeof entry.last_updated_by === "string"
-      ? entry.last_updated_by
-      : sourceAgent;
+function parseImportMetadata(entry: JsonObject) {
+  const sourceAgent = jsonString(entry.source_agent) ?? "";
+  const lastUpdatedBy = jsonString(entry.last_updated_by) ?? sourceAgent;
+  const parsedUpdateCount = jsonNumber(entry.update_count);
   const updateCount =
-    typeof entry.update_count === "number" &&
-    Number.isInteger(entry.update_count)
-      ? entry.update_count
+    parsedUpdateCount !== undefined && Number.isInteger(parsedUpdateCount)
+      ? parsedUpdateCount
       : 0;
+  const parsedSupersededBy = jsonNumber(entry.superseded_by);
+  const parsedExpiresAfterDays = jsonNumber(entry.expires_after_days);
   return {
-    tags: typeof entry.tags === "string" ? entry.tags : "",
-    memoContext: typeof entry.context === "string" ? entry.context : "",
+    tags: jsonString(entry.tags) ?? "",
+    memoContext: jsonString(entry.context) ?? "",
     supersededBy:
-      typeof entry.superseded_by === "number" &&
-      Number.isInteger(entry.superseded_by)
-        ? entry.superseded_by
+      parsedSupersededBy !== undefined && Number.isInteger(parsedSupersededBy)
+        ? parsedSupersededBy
         : null,
     sourceAgent,
     lastUpdatedBy,
     updateCount,
     refs: parseImportRefs(entry),
     expiresAfterDays:
-      typeof entry.expires_after_days === "number" &&
-      Number.isInteger(entry.expires_after_days)
-        ? entry.expires_after_days
+      parsedExpiresAfterDays !== undefined &&
+      Number.isInteger(parsedExpiresAfterDays)
+        ? parsedExpiresAfterDays
         : null,
     createdAt: parseImportTimestamp(entry.created_at),
     updatedAt: parseImportTimestamp(entry.updated_at),
   };
 }
 
-function normalizeImportEntry(rawEntry: unknown): ImportParseResult {
+function normalizeImportEntry(rawEntry: JsonValue): ImportParseResult {
   const entry = importObject(rawEntry);
   if (!entry) {
     return importSkip("invalid_entry");
@@ -207,7 +204,7 @@ function normalizeImportEntry(rawEntry: unknown): ImportParseResult {
 function runImportInsert(
   database: MemoryDatabaseApi,
   value: ImportNormalized,
-): Effect.Effect<unknown, MemoryDatabaseError> {
+): Effect.Effect<JsonValue, MemoryDatabaseError> {
   if (value.createdAt && value.updatedAt) {
     return database.run(
       `INSERT INTO memories (
@@ -261,7 +258,7 @@ function runImportInsert(
 function parseImportFile(
   path: string | undefined,
   fileSystem: CommandContext["fileSystem"],
-): Effect.Effect<unknown[], unknown> {
+): Effect.Effect<JsonValue[], unknown> {
   if (!path) {
     usageError("Usage: import <memories.json>");
   }
@@ -271,14 +268,14 @@ function parseImportFile(
       usageError(`File not found: ${path}`);
     }
     const raw = yield* fileSystem.readFileString(filePath);
-    const parsed: unknown = yield* Effect.try({
-      try: () => JSON.parse(raw) as unknown,
+    const parsed = yield* Effect.try({
+      try: (): JsonValue => parseJson(raw),
       catch: (cause) => new Error(`Failed to parse JSON: ${String(cause)}`),
     });
-    if (!Array.isArray(parsed)) {
+    if (!isJsonArray(parsed)) {
       usageError("Import file must contain a JSON array.");
     }
-    return parsed as unknown[];
+    return [...parsed];
   });
 }
 
@@ -296,10 +293,7 @@ function createStatsAccumulator(): StatsAccumulator {
   };
 }
 
-function updateOldest(
-  current: Record<string, unknown> | null,
-  candidate: Record<string, unknown>,
-) {
+function updateOldest(current: JsonObject | null, candidate: JsonObject) {
   if (!current) {
     return candidate;
   }
@@ -310,10 +304,7 @@ function updateOldest(
   return candidateAge < currentAge ? candidate : current;
 }
 
-function updateStaleCount(
-  accumulator: StatsAccumulator,
-  memory: Record<string, unknown>,
-) {
+function updateStaleCount(accumulator: StatsAccumulator, memory: JsonObject) {
   const updatedMs = sqliteDateToMs(memory.updated_at);
   if (updatedMs === null) {
     return;
@@ -324,10 +315,7 @@ function updateStaleCount(
   }
 }
 
-function ingestMemoryStats(
-  accumulator: StatsAccumulator,
-  memory: Record<string, unknown>,
-) {
+function ingestMemoryStats(accumulator: StatsAccumulator, memory: JsonObject) {
   const type = stringValue(memory.memory_type, "convention");
   accumulator.byType[type] = (accumulator.byType[type] ?? 0) + 1;
 
@@ -350,8 +338,8 @@ function ingestMemoryStats(
 function processImportEntry(
   database: MemoryDatabaseApi,
   index: number,
-  rawEntry: unknown,
-): Effect.Effect<Record<string, unknown>, MemoryDatabaseError> {
+  rawEntry: JsonValue,
+): Effect.Effect<JsonObject, MemoryDatabaseError> {
   const normalized = normalizeImportEntry(rawEntry);
   if (normalized.status === "skip") {
     return Effect.succeed({
@@ -359,7 +347,7 @@ function processImportEntry(
       status: "skip",
       reason: normalized.reason,
       ...normalized.extra,
-    });
+    } satisfies JsonObject);
   }
 
   const value = normalized.value;
@@ -375,7 +363,7 @@ function processImportEntry(
         status: "skip",
         reason: "exact_duplicate",
         existing_id: duplicate.id,
-      };
+      } satisfies JsonObject;
     }
     const conflicts =
       value.statusRaw === "active"
@@ -386,14 +374,18 @@ function processImportEntry(
           })
         : [];
     if (conflicts.length > 0) {
-      return { index, status: "conflict", potential_conflicts: conflicts };
+      return {
+        index,
+        status: "conflict",
+        potential_conflicts: conflicts,
+      } satisfies JsonObject;
     }
     const insert = yield* runImportInsert(database, value);
     return {
       index,
       status: "success",
-      id: (insert as { lastInsertRowid: unknown }).lastInsertRowid,
-    };
+      id: jsonObject(insert)?.lastInsertRowid ?? null,
+    } satisfies JsonObject;
   });
 }
 
@@ -428,7 +420,7 @@ export function handleImportCommand(commandCtx: CommandContext) {
       commandCtx.args[0],
       commandCtx.fileSystem,
     );
-    const results: Record<string, unknown>[] = [];
+    const results: JsonObject[] = [];
     const database = requireDatabase(commandCtx);
     for (const [index, rawEntry] of parsed.entries()) {
       const result = yield* processImportEntry(database, index, rawEntry);

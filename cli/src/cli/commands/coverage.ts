@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { resolve } from "node:path";
 import { getFlagValue } from "../../cli-utils";
+import { jsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
@@ -21,8 +22,8 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
     );
     const tagDistribution: Record<string, number> = {};
     const tagSet = new Set<string>();
-    for (const row of rows as { tags?: unknown }[]) {
-      for (const tag of parseTags(stringValue(row.tags))) {
+    for (const row of rows) {
+      for (const tag of parseTags(stringValue(jsonObject(row)?.tags))) {
         tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
         tagSet.add(tag.toLowerCase());
       }

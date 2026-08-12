@@ -1,4 +1,12 @@
 import { Effect } from "effect";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  parseJson,
+  type JsonObject,
+  type JsonValue,
+} from "../json";
 import type {
   RemoteMigrationLink,
   RemoteMigrationRow,
@@ -18,10 +26,11 @@ export type RemoteMigrationBatchResult = {
   readonly items: RemoteMigrationItem[];
 };
 
-type RemoteMigrationResponse = {
-  readonly ok?: unknown;
-  readonly result?: unknown;
-  readonly error?: unknown;
+type RemoteMigrationResponse = JsonObject;
+
+type RequestHeaders = {
+  "content-type": string;
+  authorization?: string;
 };
 
 function migrationError(operation: string, cause: unknown) {
@@ -38,21 +47,22 @@ async function readResponse(
   operation: string,
 ): Promise<RemoteMigrationResponse> {
   const text = await response.text();
-  let parsed: unknown;
+  let parsed: JsonValue;
   try {
-    parsed = JSON.parse(text);
+    parsed = parseJson(text);
   } catch (cause) {
     throw new Error(
       `Remote migration returned non-JSON HTTP ${response.status}.`,
       { cause },
     );
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  const responseBody = jsonObject(parsed);
+  if (responseBody === undefined) {
     throw new Error(
       `Remote migration returned an invalid ${operation} response.`,
     );
   }
-  return parsed as RemoteMigrationResponse;
+  return responseBody;
 }
 
 function migrationUrl(queryUrl: string, path: string): string {
@@ -64,21 +74,23 @@ function migrationUrl(queryUrl: string, path: string): string {
   return parsed.toString();
 }
 
-function asRecord(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function asRecord(value: JsonValue, label: string): JsonObject {
+  const object = jsonObject(value);
+  if (object === undefined) {
     throw new Error(`Remote migration returned an invalid ${label}.`);
   }
-  return value as Record<string, unknown>;
+  return object;
 }
 
-function integerField(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+function integerField(value: JsonValue, label: string): number {
+  const number = jsonNumber(value);
+  if (number === undefined || !Number.isSafeInteger(number)) {
     throw new Error(`Remote migration returned an invalid ${label}.`);
   }
-  return value;
+  return number;
 }
 
-function parseBatchResult(value: unknown): RemoteMigrationBatchResult {
+function parseBatchResult(value: JsonValue): RemoteMigrationBatchResult {
   const result = asRecord(value, "batch result");
   const rawItems = result.items;
   if (!Array.isArray(rawItems)) {
@@ -86,7 +98,7 @@ function parseBatchResult(value: unknown): RemoteMigrationBatchResult {
   }
   const items = rawItems.map((item, index): RemoteMigrationItem => {
     const record = asRecord(item, `batch item ${index + 1}`);
-    const status = record.status;
+    const status = jsonString(record.status);
     if (status !== "inserted" && status !== "duplicate") {
       throw new Error(`Remote migration returned an invalid item status.`);
     }
@@ -108,14 +120,12 @@ function request(
   queryUrl: string,
   token: string | undefined,
   path: string,
-  body: unknown,
+  body: JsonValue,
   operation: string,
 ): Effect.Effect<RemoteMigrationResponse, MemoryDatabaseError> {
   return Effect.tryPromise({
     try: async () => {
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-      };
+      const headers: RequestHeaders = { "content-type": "application/json" };
       if (token) {
         headers.authorization = `Bearer ${token}`;
       }
@@ -127,9 +137,8 @@ function request(
       const parsed = await readResponse(response, operation);
       if (!response.ok || parsed.ok !== true) {
         const message =
-          typeof parsed.error === "string"
-            ? parsed.error
-            : `Remote migration returned HTTP ${response.status}.`;
+          jsonString(parsed.error) ??
+          `Remote migration returned HTTP ${response.status}.`;
         throw new Error(message);
       }
       return parsed;
