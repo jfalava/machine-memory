@@ -1,6 +1,5 @@
 # This file is published as a static asset at:
 #   https://machine-memory.jfa.dev/install.ps1
-# Keep the release asset names in sync with .github/workflows/release.yml.
 
 $ErrorActionPreference = "Stop"
 
