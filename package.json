@@ -32,7 +32,11 @@
   },
   "type": "module",
   "scripts": {
-    "format": "bunx oxfmt"
+    "format": "bunx oxfmt",
+    "check:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare check",
+    "lint:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare lint",
+    "format:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare format",
+    "typecheck:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare typecheck"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.78.0",

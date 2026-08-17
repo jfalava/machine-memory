@@ -78,6 +78,7 @@ async function exchangeGithubCode(params: {
     }).toString(),
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "machine-memory-oauth",
     },
     method: "POST",
   });
@@ -111,7 +112,11 @@ async function fetchGithubUser(accessToken: string): Promise<{
   email: string;
 }> {
   const resp = await fetch(GITHUB_USER_URL, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "User-Agent": "machine-memory-oauth",
+      Accept: "application/vnd.github+json",
+    },
   });
   if (!resp.ok) {
     throw new Error(
@@ -269,8 +274,22 @@ async function fetchOrError(
   try {
     return await fetchGithubUser(accessToken);
   } catch (error) {
-    console.error("GitHub user fetch error:", error);
-    return new Response("Failed to fetch GitHub user info", { status: 500 });
+    const detail =
+      error instanceof Error
+        ? `${error.name}: ${error.message}${
+            error.cause === undefined
+              ? ""
+              : ` (cause: ${
+                  error.cause instanceof Error
+                    ? `${error.cause.name}: ${error.cause.message}`
+                    : JSON.stringify(error.cause)
+                })`
+          }`
+        : String(error);
+    console.error("GitHub user fetch error:", detail);
+    return new Response(`Failed to fetch GitHub user info: ${detail}`, {
+      status: 500,
+    });
   }
 }
 
