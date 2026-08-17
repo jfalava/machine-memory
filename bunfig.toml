@@ -1,2 +1,2 @@
-# [install]
-# minimunReleaseAge = 86400
+[install]
+minimunReleaseAge = 86400

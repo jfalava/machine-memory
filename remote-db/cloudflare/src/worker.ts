@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Database } from "./database";
+import { Database, OAuthKv } from "./database";
 import { apiName } from "./config";
 import { validateEmbeddingText } from "./embedding";
 import { VectorIndex } from "./vectorize";
@@ -18,6 +18,8 @@ import {
   type JsonObject,
   type JsonValue,
 } from "./json";
+import { handleOAuthPath, isOAuthPath } from "./oauth-bridge";
+import { handleRestRequest, type RestHandlers } from "./rest-handlers";
 
 type QueryOperation = "run" | "get" | "all";
 
@@ -28,7 +30,6 @@ const DEFAULT_SEARCH_LIMIT = 8;
 const MAX_SEARCH_LIMIT = 50;
 const MAX_MIGRATION_ROWS = 50;
 const MAX_MIGRATION_LINKS = 100;
-const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
 const RATE_LIMIT_ERROR = "Too Many Requests";
 
@@ -474,9 +475,28 @@ export default Cloudflare.Worker<{}>()(
     const sql = yield* SQL.D1(d1);
     const vectorize = yield* Cloudflare.Vectorize.SearchIndex(vectorIndex);
     const ai = yield* Cloudflare.Workers.AI();
+    const oauthKv = yield* Cloudflare.KV.ReadWriteNamespace(OAuthKv);
     const expectedToken = yield* Config.redacted(
       "MACHINE_MEMORY_DB_TOKEN",
     ).pipe(Effect.orDie);
+    const githubClientId = yield* Config.string("GITHUB_CLIENT_ID").pipe(
+      Effect.orDie,
+    );
+    const githubClientSecret = yield* Config.redacted(
+      "GITHUB_CLIENT_SECRET",
+    ).pipe(Effect.orDie);
+    const cookieEncryptionKey = yield* Config.redacted(
+      "COOKIE_ENCRYPTION_KEY",
+    ).pipe(Effect.orDie);
+    const oauthResources = {
+      d1,
+      vectorize,
+      ai,
+      oauthKv,
+      githubClientId,
+      githubClientSecret: Redacted.value(githubClientSecret),
+      cookieEncryptionKey: Redacted.value(cookieEncryptionKey),
+    };
     const embed = (text: string) =>
       ai
         .run(EMBEDDING_MODEL, { text: [text] })
@@ -740,71 +760,23 @@ export default Cloudflare.Worker<{}>()(
         });
       });
 
+    const restHandlers = {
+      expectedToken,
+      handleQuery,
+      handleMigration,
+      handleMigrationLinks,
+      handleVectorizeUpsert,
+      handleVectorizeSearch,
+      handleVectorizeDelete,
+    } satisfies RestHandlers;
+
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        if (
-          request.method !== "POST" ||
-          ![
-            "/query",
-            "/migrate",
-            "/migrate/links",
-            "/vectorize/upsert",
-            "/vectorize/search",
-            "/vectorize/delete",
-          ].includes(request.url)
-        ) {
-          return yield* HttpServerResponse.json(
-            { error: "Not found" },
-            { status: 404 },
-          );
+        if (isOAuthPath(request.url)) {
+          return yield* handleOAuthPath(oauthResources, request);
         }
-
-        if (
-          request.headers.authorization !==
-          `Bearer ${Redacted.value(expectedToken)}`
-        ) {
-          return yield* HttpServerResponse.json(
-            { error: "Unauthorized" },
-            { status: 401 },
-          );
-        }
-
-        const bodyResult = yield* request.json.pipe(
-          Effect.map((body) => ({
-            ok: true as const,
-            body: Schema.decodeUnknownSync(Schema.Json)(body),
-          })),
-          Effect.catchCause(() => Effect.succeed({ ok: false as const })),
-        );
-        if (!bodyResult.ok) {
-          return yield* HttpServerResponse.json(
-            { ok: false, error: INVALID_JSON_BODY_ERROR },
-            { status: 400 },
-          );
-        }
-        const body = bodyResult.body;
-        if (request.url === "/query") {
-          return yield* handleQuery(body);
-        }
-
-        if (request.url === "/migrate") {
-          return yield* handleMigration(body);
-        }
-
-        if (request.url === "/migrate/links") {
-          return yield* handleMigrationLinks(body);
-        }
-
-        if (request.url === "/vectorize/upsert") {
-          return yield* handleVectorizeUpsert(body);
-        }
-
-        if (request.url === "/vectorize/delete") {
-          return yield* handleVectorizeDelete(body);
-        }
-
-        return yield* handleVectorizeSearch(body);
+        return yield* handleRestRequest(restHandlers, request);
       }).pipe(
         Effect.catchCause(() =>
           HttpServerResponse.json(
@@ -818,5 +790,6 @@ export default Cloudflare.Worker<{}>()(
     Effect.provide(Cloudflare.D1.QueryDatabaseBinding),
     Effect.provide(Cloudflare.Vectorize.SearchIndexBinding),
     Effect.provide(Cloudflare.Workers.AIBinding),
+    Effect.provide(Cloudflare.KV.ReadWriteNamespaceBinding),
   ),
 );

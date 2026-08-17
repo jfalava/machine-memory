@@ -14,3 +14,5 @@ export const apiName =
   environment.MACHINE_MEMORY_API_NAME ?? "machine-memory-api";
 export const vectorIndexName =
   environment.MACHINE_MEMORY_VECTOR_INDEX_NAME ?? "machine-memory-v1";
+export const oauthKvName =
+  environment.MACHINE_MEMORY_OAUTH_KV_NAME ?? "machine-memory-oauth-kv";
