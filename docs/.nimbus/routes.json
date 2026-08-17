@@ -12,6 +12,7 @@
     "/human/reindex",
     "/human/remote",
     "/human/remote/keychain-access",
+    "/human/remote/mcp",
     "/human/remote/provision",
     "/human/remote/setup",
     "/human/upgrade",

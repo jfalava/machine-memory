@@ -101,8 +101,8 @@ async function exchangeGithubCode(params: {
 
 const GitHubUserSchema = Schema.Struct({
   login: Schema.String,
-  name: Schema.optional(Schema.String),
-  email: Schema.optional(Schema.String),
+  name: Schema.NullOr(Schema.String),
+  email: Schema.NullOr(Schema.String),
 });
 
 async function fetchGithubUser(accessToken: string): Promise<{
@@ -114,14 +114,23 @@ async function fetchGithubUser(accessToken: string): Promise<{
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!resp.ok) {
-    throw new Error("Failed to fetch GitHub user info");
+    throw new Error(
+      `GitHub /user failed: ${resp.status} ${(await resp.text()).slice(0, 200)}`,
+    );
   }
-  const user = Schema.decodeUnknownSync(GitHubUserSchema)(await resp.json());
-  return {
-    login: user.login,
-    name: user.name ?? user.login,
-    email: user.email ?? "",
-  };
+  const body = await resp.json();
+  try {
+    const user = Schema.decodeUnknownSync(GitHubUserSchema)(body);
+    return {
+      login: user.login,
+      name: user.name ?? user.login,
+      email: user.email ?? "",
+    };
+  } catch (_error) {
+    throw new Error(
+      `Failed to decode GitHub /user response: ${JSON.stringify(body).slice(0, 200)}`,
+    );
+  }
 }
 
 function redirectToGithub(

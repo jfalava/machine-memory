@@ -5,7 +5,9 @@ sidebar:
   order: 7
 ---
 
-The remote Worker can also act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect to it over OAuth 2.1 with a GitHub account, so memory access follows the repository namespace instead of a shared bearer token.
+The remote Worker can also act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect to it over OAuth 2.1, so memory access follows the repository namespace instead of a shared bearer token.
+
+> Only GitHub OAuth is supported for now.
 
 The MCP endpoint is opt-in. Without configuration the REST API keeps working and MCP routes return `503` with a hint listing the missing variables.
 
@@ -43,13 +45,13 @@ On first connection the browser opens the authorization page: the client is regi
 
 Every tool requires a `repository` argument in `owner/name` form. Memories are stored in D1 and mirrored to Vectorize automatically.
 
-| Tool            | Purpose                                                      |
-| --------------- | ------------------------------------------------------------ |
-| `memory_query`  | Keyword, semantic, or hybrid search with filters             |
-| `memory_get`    | Fetch one memory by numeric id                               |
-| `memory_list`   | List recent memories with optional filters                   |
-| `memory_add`    | Create a memory (content, tags, context, type, certainty)    |
-| `memory_update` | Update a memory's content or metadata by id                  |
-| `memory_delete` | Delete a memory and its vector by id                         |
+| Tool            | Purpose                                                   |
+| --------------- | --------------------------------------------------------- |
+| `memory_query`  | Keyword, semantic, or hybrid search with filters          |
+| `memory_get`    | Fetch one memory by numeric id                            |
+| `memory_list`   | List recent memories with optional filters                |
+| `memory_add`    | Create a memory (content, tags, context, type, certainty) |
+| `memory_update` | Update a memory's content or metadata by id               |
+| `memory_delete` | Delete a memory and its vector by id                      |
 
 Search modes mirror the CLI: `keyword` uses the D1 full-text index, `semantic` uses Vectorize embeddings, and `hybrid` merges both. The `status`, `memory_type`, and `certainty` filters accept the same enum values as the CLI.
