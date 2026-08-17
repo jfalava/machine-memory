@@ -250,7 +250,10 @@ export function remoteSetup(context: CommandContext) {
           apiName: currentRemote?.apiName,
         }),
       catch: (cause) =>
-        commandError("Could not store credentials in the OS keychain.", cause),
+        commandError(
+          "Could not store credentials in the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKENin the repository root instead.",
+          cause,
+        ),
     });
 
     yield* Effect.sync(() => printRemoteSaved(url));
@@ -324,7 +327,7 @@ export function remoteProvision(context: CommandContext) {
         }),
       catch: (cause) =>
         commandError(
-          "The remote database was deployed, but credentials could not be stored in the OS keychain.",
+          "The remote database was deployed, but credentials could not be stored in the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
           cause,
           "remote provision",
         ),

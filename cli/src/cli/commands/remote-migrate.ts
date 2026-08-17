@@ -124,7 +124,7 @@ export function handleLocalExport(context: CommandContext) {
     if (remote.kind !== "remote") {
       return yield* Effect.fail(
         migrationCommandError(
-          "Local export requires configured remote credentials. Run 'machine-memory remote setup'.",
+          "Local export requires configured remote credentials. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup'.",
         ),
       );
     }

@@ -89,12 +89,12 @@ export async function loadDatabaseConfig(
       stored = await Bun.secrets.get(REMOTE_CREDENTIALS_SECRET);
     } catch (cause) {
       throw new Error(
-        `Remote backend requested, but stored credentials could not be read. Run 'machine-memory remote setup'. ${String(cause)}`,
+        `Remote backend requested, but stored credentials could not be read from the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN. ${String(cause)}`,
       );
     }
     if (!stored) {
       throw new Error(
-        "Remote backend requested, but no remote credentials are configured. Run 'machine-memory remote setup'.",
+        "Remote backend requested, but no remote credentials are configured. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup' if not already done.",
       );
     }
     return {
@@ -160,13 +160,13 @@ function parseRemoteCredentials(stored: string): RemoteCredentials {
     parsed = parseJson(stored);
   } catch (cause) {
     throw new Error(
-      `Stored remote credentials are invalid. Run 'machine-memory remote setup' again. ${String(cause)}`,
+      `Stored remote credentials are invalid. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup' again to overwrite them. ${String(cause)}`,
     );
   }
   const candidate = jsonObject(parsed);
   if (candidate === undefined) {
     throw new Error(
-      "Stored remote credentials are invalid. Run 'machine-memory remote setup' again.",
+      "Stored remote credentials are invalid. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup' again to overwrite them.",
     );
   }
   const url = jsonString(candidate.url);
@@ -178,7 +178,7 @@ function parseRemoteCredentials(stored: string): RemoteCredentials {
     token.length === 0
   ) {
     throw new Error(
-      "Stored remote credentials are invalid. Run 'machine-memory remote setup' again.",
+      "Stored remote credentials are invalid. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup' again to overwrite them.",
     );
   }
   return {
