@@ -1,5 +1,5 @@
 ---
-title: Keychain Access
+title: Sandboxed Keychain Access
 description: Configure remote memory credentials when OS keychain access is unavailable.
 sidebar:
   order: 6
@@ -17,11 +17,5 @@ MACHINE_MEMORY_DB_TOKEN=your-worker-token
 ```
 
 `MACHINE_MEMORY_DB_URL` may be the Worker URL or its `/query` endpoint; the CLI normalizes it to the `/query` endpoint.
-
-Run database-backed commands from that repository root so the binary can load the file:
-
-```sh
-machine-memory query "topic" --remote --json-min
-```
 
 > Remember: keep `.env` out of version control!
