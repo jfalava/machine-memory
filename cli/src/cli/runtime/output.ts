@@ -8,6 +8,7 @@ import type { JsonObject, JsonValue } from "../../json";
 export const prettyOutput = GlobalFlag.setting("pretty")({
   flag: Flag.boolean("pretty").pipe(
     Flag.withDescription("Render human-readable output for machine commands"),
+    Flag.withDefault(false),
   ),
 });
 
