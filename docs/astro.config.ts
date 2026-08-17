@@ -45,6 +45,10 @@ const nimbusConfig = defineNimbusConfig({
                 label: "Keychain Access",
                 link: "/human/remote/keychain-access",
               },
+              {
+                label: "MCP server",
+                link: "/human/remote/mcp",
+              },
             ],
           },
           { label: "upgrade", link: "/human/upgrade" },

@@ -104,7 +104,11 @@ export function validateCSRFToken(
 ): CSRFValidation {
   const tokenFromForm = formData.get("csrf_token");
   if (tokenFromForm === null || tokenFromForm instanceof File) {
-    throw new OAuthError("invalid_request", "Missing CSRF token in form data", 400);
+    throw new OAuthError(
+      "invalid_request",
+      "Missing CSRF token in form data",
+      400,
+    );
   }
 
   const cookieHeader = request.headers.get("Cookie") ?? "";
@@ -228,7 +232,10 @@ export async function isClientApproved(
   clientId: string,
   cookieSecret: string,
 ): Promise<boolean> {
-  const approvedClients = await getApprovedClientsFromCookie(request, cookieSecret);
+  const approvedClients = await getApprovedClientsFromCookie(
+    request,
+    cookieSecret,
+  );
   return approvedClients?.includes(clientId) ?? false;
 }
 
@@ -250,9 +257,7 @@ export async function addApprovedClient(
   return `${APPROVED_CLIENTS_COOKIE_NAME}=${cookieValue}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=${THIRTY_DAYS_IN_SECONDS}`;
 }
 
-function approvedClientsFromCookie(
-  request: Request,
-): string | null {
+function approvedClientsFromCookie(request: Request): string | null {
   const cookieHeader = request.headers.get("Cookie");
   if (cookieHeader === null) {
     return null;
@@ -309,7 +314,10 @@ async function getApprovedClientsFromCookie(
 
 async function sha256Hex(value: string): Promise<string> {
   const encoder = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  const hashBuffer = await crypto.subtle.digest(
+    "SHA-256",
+    encoder.encode(value),
+  );
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -332,7 +340,11 @@ async function importKey(secret: string): Promise<CryptoKey> {
 async function signData(data: string, secret: string): Promise<string> {
   const key = await importKey(secret);
   const enc = new TextEncoder();
-  const signatureBuffer = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  const signatureBuffer = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    enc.encode(data),
+  );
   return Array.from(new Uint8Array(signatureBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -396,10 +408,16 @@ function optionalUriRows(client: ClientInfo | null): string[] {
       ? clientLinkRow("Website", sanitizeText(sanitizeUrl(client.clientUri)))
       : "",
     client?.policyUri
-      ? clientLinkRow("Privacy Policy", sanitizeText(sanitizeUrl(client.policyUri)))
+      ? clientLinkRow(
+          "Privacy Policy",
+          sanitizeText(sanitizeUrl(client.policyUri)),
+        )
       : "",
     client?.tosUri
-      ? clientLinkRow("Terms of Service", sanitizeText(sanitizeUrl(client.tosUri)))
+      ? clientLinkRow(
+          "Terms of Service",
+          sanitizeText(sanitizeUrl(client.tosUri)),
+        )
       : "",
   ];
   return rows.filter((row) => row !== "");

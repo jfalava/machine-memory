@@ -7,22 +7,20 @@ import { createOauthProvider, type OAuthEnv } from "./auth/oauth-provider";
 
 const INTERNAL_ERROR = "Internal server error.";
 
-const OAUTH_PATHS = [
-  "/mcp",
-  "/authorize",
-  "/callback",
-  "/token",
-  "/register",
-];
+const OAUTH_PATHS = ["/mcp", "/authorize", "/callback", "/token", "/register"];
 
 export type OAuthResources = {
   readonly d1: { readonly raw: Effect.Effect<unknown, never, RuntimeContext> };
-  readonly vectorize: { readonly raw: Effect.Effect<unknown, never, RuntimeContext> };
+  readonly vectorize: {
+    readonly raw: Effect.Effect<unknown, never, RuntimeContext>;
+  };
   readonly ai: { readonly raw: Effect.Effect<unknown, never, RuntimeContext> };
-  readonly oauthKv: { readonly raw: Effect.Effect<unknown, never, RuntimeContext> };
-  readonly githubClientId: string;
-  readonly githubClientSecret: string;
-  readonly cookieEncryptionKey: string;
+  readonly oauthKv: {
+    readonly raw: Effect.Effect<unknown, never, RuntimeContext>;
+  };
+  readonly githubClientId: string | undefined;
+  readonly githubClientSecret: string | undefined;
+  readonly cookieEncryptionKey: string | undefined;
 };
 
 export function isOAuthPath(url: string): boolean {
@@ -32,10 +30,53 @@ export function isOAuthPath(url: string): boolean {
   );
 }
 
+type OAuthConfig = {
+  readonly githubClientId: string;
+  readonly githubClientSecret: string;
+  readonly cookieEncryptionKey: string;
+};
+
+type OAuthConfigResolution =
+  | { readonly config: OAuthConfig; readonly missing: [] }
+  | { readonly config: undefined; readonly missing: string[] };
+
+function resolveOAuthConfig(resources: OAuthResources): OAuthConfigResolution {
+  const { githubClientId, githubClientSecret, cookieEncryptionKey } = resources;
+  if (
+    githubClientId === undefined ||
+    githubClientSecret === undefined ||
+    cookieEncryptionKey === undefined
+  ) {
+    const missing = [
+      githubClientId === undefined ? "GITHUB_CLIENT_ID" : "",
+      githubClientSecret === undefined ? "GITHUB_CLIENT_SECRET" : "",
+      cookieEncryptionKey === undefined ? "COOKIE_ENCRYPTION_KEY" : "",
+    ].filter((name) => name !== "");
+    return { config: undefined, missing };
+  }
+  return {
+    config: { githubClientId, githubClientSecret, cookieEncryptionKey },
+    missing: [],
+  };
+}
+
 export function handleOAuthPath(
   resources: OAuthResources,
   request: HttpServerRequest.HttpServerRequest,
 ) {
+  const { config, missing } = resolveOAuthConfig(resources);
+  if (config === undefined) {
+    return Effect.succeed(
+      HttpServerResponse.jsonUnsafe(
+        {
+          ok: false,
+          error: `MCP is not configured. Set ${missing.join(", ")} and redeploy the stack.`,
+        },
+        { status: 503 },
+      ),
+    );
+  }
+
   const buildOAuthEnv = Effect.gen(function* () {
     const [rawD1, rawVectorize, rawAi, rawKv] = yield* Effect.all([
       resources.d1.raw,
@@ -48,17 +89,17 @@ export function handleOAuthPath(
       VECTORIZE: rawVectorize as Vectorize,
       AI: rawAi as Ai,
       OAUTH_KV: rawKv as KVNamespace,
-      GITHUB_CLIENT_ID: resources.githubClientId,
-      GITHUB_CLIENT_SECRET: resources.githubClientSecret,
-      COOKIE_ENCRYPTION_KEY: resources.cookieEncryptionKey,
+      GITHUB_CLIENT_ID: config.githubClientId,
+      GITHUB_CLIENT_SECRET: config.githubClientSecret,
+      COOKIE_ENCRYPTION_KEY: config.cookieEncryptionKey,
     } satisfies OAuthEnv;
   });
 
   const buildProviderResponse = Effect.gen(function* () {
     const oauthEnv = yield* buildOAuthEnv;
     const execCtx = yield* Cloudflare.WorkerExecutionContext;
-    const provider = createOauthProvider();
     const webRequest = yield* HttpServerRequest.toWeb(request);
+    const provider = yield* Effect.promise(() => createOauthProvider());
     return yield* Effect.promise(() =>
       provider.fetch(webRequest, oauthEnv, execCtx.raw),
     );
@@ -71,4 +112,3 @@ export function handleOAuthPath(
     Effect.map((response) => HttpServerResponse.fromWeb(response)),
   );
 }
-

@@ -83,7 +83,10 @@ async function exchangeGithubCode(params: {
   });
   if (!resp.ok) {
     console.error(await resp.text());
-    return [null, new Response("Failed to fetch access token", { status: 500 })];
+    return [
+      null,
+      new Response("Failed to fetch access token", { status: 500 }),
+    ];
   }
   const body = await resp.formData();
   const accessToken = body.get("access_token");
@@ -154,13 +157,12 @@ function redirectToGithubFromState(
   oauthReqInfo: AuthRequest,
   _clientId: string,
 ): Promise<Response> {
-  return createOAuthState(oauthReqInfo, env.OAUTH_KV).then(
-    ({ stateToken }) =>
-      bindStateToSession(stateToken).then(({ setCookie }) =>
-        redirectToGithub(request, env, stateToken, {
-          "Set-Cookie": setCookie,
-        }),
-      ),
+  return createOAuthState(oauthReqInfo, env.OAUTH_KV).then(({ stateToken }) =>
+    bindStateToSession(stateToken).then(({ setCookie }) =>
+      redirectToGithub(request, env, stateToken, {
+        "Set-Cookie": setCookie,
+      }),
+    ),
   );
 }
 
@@ -227,9 +229,8 @@ async function handleAuthorizePost(
     );
 
     const { stateToken } = await createOAuthState(oauthReqInfo, env.OAUTH_KV);
-    const { setCookie: sessionBindingCookie } = await bindStateToSession(
-      stateToken,
-    );
+    const { setCookie: sessionBindingCookie } =
+      await bindStateToSession(stateToken);
 
     const headers = new Headers();
     headers.append("Set-Cookie", approvedClientCookie);
@@ -282,7 +283,11 @@ async function exchangeCodeForUser(
   request: Request,
   env: OAuthEnv,
 ): Promise<
-  | { kind: "ok"; accessToken: string; user: { login: string; name: string; email: string } }
+  | {
+      kind: "ok";
+      accessToken: string;
+      user: { login: string; name: string; email: string };
+    }
   | { kind: "error"; response: Response }
 > {
   const url = new URL(request.url);

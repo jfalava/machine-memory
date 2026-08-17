@@ -2,6 +2,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as SQL from "alchemy/SQL/D1";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
@@ -479,23 +480,29 @@ export default Cloudflare.Worker<{}>()(
     const expectedToken = yield* Config.redacted(
       "MACHINE_MEMORY_DB_TOKEN",
     ).pipe(Effect.orDie);
-    const githubClientId = yield* Config.string("GITHUB_CLIENT_ID").pipe(
-      Effect.orDie,
-    );
-    const githubClientSecret = yield* Config.redacted(
-      "GITHUB_CLIENT_SECRET",
-    ).pipe(Effect.orDie);
-    const cookieEncryptionKey = yield* Config.redacted(
-      "COOKIE_ENCRYPTION_KEY",
-    ).pipe(Effect.orDie);
+    const oauthConfig = yield* Effect.all({
+      githubClientId: Config.string("GITHUB_CLIENT_ID").pipe(Effect.option),
+      githubClientSecret: Config.redacted("GITHUB_CLIENT_SECRET").pipe(
+        Effect.option,
+      ),
+      cookieEncryptionKey: Config.redacted("COOKIE_ENCRYPTION_KEY").pipe(
+        Effect.option,
+      ),
+    });
     const oauthResources = {
       d1,
       vectorize,
       ai,
       oauthKv,
-      githubClientId,
-      githubClientSecret: Redacted.value(githubClientSecret),
-      cookieEncryptionKey: Redacted.value(cookieEncryptionKey),
+      githubClientId: Option.getOrUndefined(oauthConfig.githubClientId),
+      githubClientSecret: Option.map(
+        oauthConfig.githubClientSecret,
+        Redacted.value,
+      ).pipe(Option.getOrUndefined),
+      cookieEncryptionKey: Option.map(
+        oauthConfig.cookieEncryptionKey,
+        Redacted.value,
+      ).pipe(Option.getOrUndefined),
     };
     const embed = (text: string) =>
       ai
@@ -779,9 +786,11 @@ export default Cloudflare.Worker<{}>()(
         return yield* handleRestRequest(restHandlers, request);
       }).pipe(
         Effect.catchCause(() =>
-          HttpServerResponse.json(
-            { ok: false, error: INTERNAL_ERROR },
-            { status: 500 },
+          Effect.succeed(
+            HttpServerResponse.jsonUnsafe(
+              { ok: false, error: INTERNAL_ERROR },
+              { status: 500 },
+            ),
           ),
         ),
       ),

@@ -11,22 +11,64 @@ const INTERNAL_ERROR = "Internal server error.";
 
 export type RestHandlers = {
   readonly expectedToken: Redacted.Redacted;
-  readonly handleQuery: (body: JsonValue) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
-  readonly handleMigration: (body: JsonValue) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
-  readonly handleMigrationLinks: (body: JsonValue) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
-  readonly handleVectorizeUpsert: (body: JsonValue) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
-  readonly handleVectorizeSearch: (body: JsonValue) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
-  readonly handleVectorizeDelete: (body: JsonValue) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
+  readonly handleQuery: (
+    body: JsonValue,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >;
+  readonly handleMigration: (
+    body: JsonValue,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >;
+  readonly handleMigrationLinks: (
+    body: JsonValue,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >;
+  readonly handleVectorizeUpsert: (
+    body: JsonValue,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >;
+  readonly handleVectorizeSearch: (
+    body: JsonValue,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >;
+  readonly handleVectorizeDelete: (
+    body: JsonValue,
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >;
 };
 
 function catchInternal(
-  effect: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>,
-): Effect.Effect<HttpServerResponse.HttpServerResponse, never, unknown> {
+  effect: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    unknown,
+    RuntimeContext
+  >,
+): Effect.Effect<HttpServerResponse.HttpServerResponse, never, RuntimeContext> {
   return effect.pipe(
     Effect.catchCause(() =>
-      HttpServerResponse.json(
-        { ok: false, error: INTERNAL_ERROR },
-        { status: 500 },
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe(
+          { ok: false, error: INTERNAL_ERROR },
+          { status: 500 },
+        ),
       ),
     ),
   );
@@ -35,7 +77,7 @@ function catchInternal(
 export function handleRestRequest(
   handlers: RestHandlers,
   request: HttpServerRequest.HttpServerRequest,
-): Effect.Effect<HttpServerResponse.HttpServerResponse, never, unknown> {
+): Effect.Effect<HttpServerResponse.HttpServerResponse, never, RuntimeContext> {
   const route = (body: JsonValue) => {
     if (request.url === "/query") {
       return handlers.handleQuery(body);
@@ -69,7 +111,7 @@ export function handleRestRequest(
         "/vectorize/delete",
       ].includes(request.url)
     ) {
-      return yield* HttpServerResponse.json(
+      return HttpServerResponse.jsonUnsafe(
         { error: "Not found" },
         { status: 404 },
       );
@@ -79,7 +121,7 @@ export function handleRestRequest(
       request.headers.authorization !==
       `Bearer ${Redacted.value(handlers.expectedToken)}`
     ) {
-      return yield* HttpServerResponse.json(
+      return HttpServerResponse.jsonUnsafe(
         { error: "Unauthorized" },
         { status: 401 },
       );
@@ -93,7 +135,7 @@ export function handleRestRequest(
       Effect.catchCause(() => Effect.succeed({ ok: false as const })),
     );
     if (!bodyResult.ok) {
-      return yield* HttpServerResponse.json(
+      return HttpServerResponse.jsonUnsafe(
         { ok: false, error: INVALID_JSON_BODY_ERROR },
         { status: 400 },
       );

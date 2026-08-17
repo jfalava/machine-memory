@@ -1,4 +1,7 @@
-import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import type {
+  OAuthHelpers,
+  OAuthProvider,
+} from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
 import { createMemoryServer, type McpBindings } from "../mcp";
 import { githubHandler } from "./github-handler";
@@ -23,6 +26,17 @@ export type OAuthEnv = McpBindings & {
 };
 
 /**
+ * The provider package top-level imports `cloudflare:workers`, which only
+ * workerd resolves. Load it lazily so importing this module outside the
+ * Worker runtime (the Alchemy CLI stack import under Bun, typechecking)
+ * never trips on the builtin specifier; the import rejects there and the
+ * fallback `undefined` keeps the module graph loadable.
+ */
+const providerModule: Promise<
+  typeof import("@cloudflare/workers-oauth-provider") | undefined
+> = import("@cloudflare/workers-oauth-provider").catch(() => undefined);
+
+/**
  * Builds the OAuth 2.1 provider protecting the `/mcp` route.
  *
  * The OAuth provider owns token issuance, refresh, revocation, client
@@ -32,26 +46,31 @@ export type OAuthEnv = McpBindings & {
  *
  * The provider is a plain handler, not an Effect, so it is composed inside
  * the Alchemy worker's Effect fetch handler via the `toWeb`/`fromWeb` bridge.
+ * Construction is async because the provider package is loaded lazily at
+ * request time, inside the Worker runtime.
  */
-export function createOauthProvider(): OAuthProvider<OAuthEnv> {
-  return new OAuthProvider<OAuthEnv>({
-    apiRoute: "/mcp",
-    apiHandler: {
-      fetch: (request, env, ctx) =>
-        createMcpHandler(() => createMemoryServer(env))(
-          request,
-          env,
-          ctx,
-        ),
-    },
-    defaultHandler: githubHandler,
-    authorizeEndpoint: AUTHORIZE_ENDPOINT,
-    tokenEndpoint: TOKEN_ENDPOINT,
-    clientRegistrationEndpoint: CLIENT_REGISTRATION_ENDPOINT,
-    scopesSupported: ["mcp:read", "mcp:write"],
-    resourceMetadata: {
-      scopes_supported: ["mcp:read", "mcp:write"],
-      resource_name: "Machine Memory MCP",
-    },
+export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
+  return providerModule.then((mod) => {
+    if (mod === undefined) {
+      throw new Error(
+        "The OAuth provider is only available inside the Worker runtime.",
+      );
+    }
+    return new mod.OAuthProvider<OAuthEnv>({
+      apiRoute: "/mcp",
+      apiHandler: {
+        fetch: (request, env, ctx) =>
+          createMcpHandler(() => createMemoryServer(env))(request, env, ctx),
+      },
+      defaultHandler: githubHandler,
+      authorizeEndpoint: AUTHORIZE_ENDPOINT,
+      tokenEndpoint: TOKEN_ENDPOINT,
+      clientRegistrationEndpoint: CLIENT_REGISTRATION_ENDPOINT,
+      scopesSupported: ["mcp:read", "mcp:write"],
+      resourceMetadata: {
+        scopes_supported: ["mcp:read", "mcp:write"],
+        resource_name: "Machine Memory MCP",
+      },
+    });
   });
 }

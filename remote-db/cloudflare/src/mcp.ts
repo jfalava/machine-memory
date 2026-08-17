@@ -120,7 +120,10 @@ type InsertInput = {
   expires_after_days: number | null;
 };
 
-async function insertMemory(db: D1Database, input: InsertInput): Promise<number> {
+async function insertMemory(
+  db: D1Database,
+  input: InsertInput,
+): Promise<number> {
   const result = await db
     .prepare(
       `INSERT INTO memories (
@@ -146,7 +149,10 @@ async function insertMemory(db: D1Database, input: InsertInput): Promise<number>
   return Number(result.meta.last_row_id);
 }
 
-async function upsertVector(bindings: McpBindings, row: MemoryRow): Promise<void> {
+async function upsertVector(
+  bindings: McpBindings,
+  row: MemoryRow,
+): Promise<void> {
   const values = await embedText(bindings.AI, embeddingText(row));
   await bindings.VECTORIZE.upsert([
     {
@@ -308,8 +314,7 @@ function errorResult(cause: unknown): ErrorToolResult {
     content: [
       {
         type: "text",
-        text:
-          cause instanceof Error ? cause.message : "Internal server error.",
+        text: cause instanceof Error ? cause.message : "Internal server error.",
       },
     ],
     isError: true,
@@ -608,7 +613,10 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
           .describe("New canonical content."),
         tags: z.string().optional().describe("New comma-separated tags."),
         context: z.string().optional().describe("New supporting context."),
-        memory_type: z.enum(MEMORY_TYPES).optional().describe("New memory type."),
+        memory_type: z
+          .enum(MEMORY_TYPES)
+          .optional()
+          .describe("New memory type."),
         certainty: z
           .enum(CERTAINTY_LEVELS)
           .optional()
@@ -670,11 +678,13 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
         )
           .bind(args.repository, args.id)
           .run();
-        await bindings.VECTORIZE.deleteByIds([String(args.id)]).catch((cause) => {
-          console.error(
-            `memory ${args.id} deleted but vector cleanup failed: ${String(cause)}`,
-          );
-        });
+        await bindings.VECTORIZE.deleteByIds([String(args.id)]).catch(
+          (cause) => {
+            console.error(
+              `memory ${args.id} deleted but vector cleanup failed: ${String(cause)}`,
+            );
+          },
+        );
         return textResult([
           {
             id: args.id,
