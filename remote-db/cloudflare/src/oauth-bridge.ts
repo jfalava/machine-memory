@@ -24,9 +24,12 @@ export type OAuthResources = {
 };
 
 export function isOAuthPath(url: string): boolean {
+  const pathname = url.split("?")[0];
   return (
-    OAUTH_PATHS.some((path) => url === path || url.startsWith(`${path}/`)) ||
-    url.startsWith("/.well-known/oauth-")
+    OAUTH_PATHS.some(
+      (path) => pathname === path || pathname.startsWith(`${path}/`),
+    ) ||
+    pathname.startsWith("/.well-known/oauth-")
   );
 }
 
