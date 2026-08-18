@@ -1,6 +1,6 @@
 {
-  "name": "Outfitting by JFA: automatic setup of personal machines",
-  "short_name": "Outfitting",
+  "name": "Machine Memory by JFA: Persistent project-scoped memory for LLM agents.",
+  "short_name": "Machine Memory",
   "icons": [
     {
       "src": "/android-chrome-192x192.png",
