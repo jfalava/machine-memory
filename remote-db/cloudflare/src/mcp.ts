@@ -485,7 +485,7 @@ export function createMemoryServer(
         validateNamespace(args.repository);
         const row = await rowById(bindings.DB, args.repository, args.id);
         if (!row) {
-          return textMessage("No memory found with that id.");
+          return textMessage(`No memory found with id ${args.id} in repository '${args.repository}'.`);
         }
         return textResult([row]);
       } catch (cause) {
@@ -642,7 +642,7 @@ export function createMemoryServer(
     "memory_update",
     {
       description:
-        `⚠️ WRITE OPERATION — a wrong repository slug will silently find no matching record (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Re-embeds the vector so future semantic searches reflect the change.`,
+        `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Re-embeds the vector so future semantic searches reflect the change.`,
       inputSchema: {
         repository: z
           .string()
@@ -678,7 +678,7 @@ export function createMemoryServer(
         validateNamespace(args.repository);
         const existing = await rowById(bindings.DB, args.repository, args.id);
         if (!existing) {
-          return textMessage("No memory found with that id.");
+          return textMessage(`No memory found with id ${args.id} in repository '${args.repository}'. Verify the repository slug with list_repositories before retrying.`);
         }
         const update = updateClause(args);
         if (update === null) {
