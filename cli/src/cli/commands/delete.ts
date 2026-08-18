@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { usageError } from "../../cli-utils";
 import { deleteMemoryVector } from "../../effect/vector-sync";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { parseIdSpec } from "../shared";
+import { collectPositionalArgs, parseIdSpec } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 
@@ -10,7 +10,7 @@ export function handleDeleteCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const idSpec = args.join(",");
+    const idSpec = collectPositionalArgs(args, []).join(",");
     if (!idSpec.trim()) {
       usageError("Usage: delete <id|id,id,...>");
     }

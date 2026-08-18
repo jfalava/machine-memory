@@ -297,6 +297,27 @@ describe("CLI rewrite integration", () => {
     expect(JSON.parse(machine.stdout.trim()).ids).toEqual([1]);
   });
 
+  it("deletes a memory when given an explicit backend flag", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Memory to delete",
+      "--local",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const id = Number(added.json.id);
+
+    const deleted = await runCli(cwd, dbPath, "delete", String(id), "--local");
+    expect(deleted.code, deleted.stderr).toBe(0);
+    expect(deleted.json).toEqual({ deleted: id });
+
+    const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
+    expect(fetched.json).toEqual({ error: "Not found" });
+  });
+
   it("isolates records from other repositories in a shared database", async () => {
     const { cwd, dbPath } = await createProject();
     const local = await runCli(
