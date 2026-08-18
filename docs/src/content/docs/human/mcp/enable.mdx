@@ -1,0 +1,25 @@
+---
+title: Enable the endpoint
+description: Configure GitHub OAuth so the remote Worker exposes its MCP server.
+sidebar:
+  order: 2
+---
+
+1. Create a [GitHub OAuth app](https://github.com/settings/developers). The callback URL must be `https://<worker-url>/callback`.
+2. Set the following variables when deploying the stack, for example in `remote-db/cloudflare/.env`:
+
+   ```sh
+   GITHUB_CLIENT_ID=your-github-oauth-app-client-id
+   GITHUB_CLIENT_SECRET=your-github-oauth-app-client-secret
+   COOKIE_ENCRYPTION_KEY=your-random-cookie-signing-secret
+   ```
+
+   Generate the cookie signing key with `openssl rand -hex 32`.
+
+3. Redeploy:
+
+   ```sh
+   machine-memory remote provision
+   ```
+
+The variables are bound to the Worker as secrets. They are read once at worker startup; missing values keep the MCP routes disabled.

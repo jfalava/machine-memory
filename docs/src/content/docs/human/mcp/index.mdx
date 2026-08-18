@@ -1,0 +1,21 @@
+---
+title: MCP server
+description: Expose the remote memory store to LLM agents through the Model Context Protocol.
+sidebar:
+  order: 1
+---
+
+The remote Worker can also act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect to it over OAuth 2.1, so memory access follows the repository namespace instead of a shared bearer token.
+
+> Only GitHub OAuth is supported for now.
+
+The MCP endpoint is opt-in. Without configuration the REST API keeps working and MCP routes return `503` with a hint listing the missing variables. Follow [Enable the endpoint](/human/mcp/enable) to turn it on.
+
+## Connect a client
+
+Point an OAuth-capable MCP client at `https://<worker-url>/mcp`. The OAuth 2.1 flow handles client registration, dynamic client metadata, token issuance, and refresh tokens automatically.
+
+- Authorization server metadata: `https://<worker-url>/.well-known/oauth-authorization-server`
+- Protected resource metadata: `https://<worker-url>/.well-known/oauth-protected-resource`
+
+On first connection the browser opens the authorization page: the client is registered, GitHub identity is verified, and the resulting tokens carry `mcp:read` and `mcp:write` scopes for the MCP API. Once connected, the server exposes read and write tools for searching and editing memories — see [MCP tools](/human/mcp/tools) for the full reference.
