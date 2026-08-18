@@ -381,17 +381,54 @@ async function hybridSearch(
   return [...byId.values()].slice(0, input.limit);
 }
 
-export function createMemoryServer(bindings: McpBindings): McpServer {
+export function createMemoryServer(
+  bindings: McpBindings,
+  authenticatedLogin?: string,
+): McpServer {
   const server = new McpServer({
     name: "machine-memory",
     version: "1.0.0",
   });
 
+  const ownerHint = authenticatedLogin
+    ? ` The authenticated GitHub user is '${authenticatedLogin}', so repositories under that owner (e.g. '${authenticatedLogin}/repo-name') are likely candidates. Call list_repositories first if unsure.`
+    : " Call list_repositories first if you are unsure which repository slug to use.";
+
+  server.registerTool(
+    "list_repositories",
+    {
+      description:
+        "List all repository slugs (owner/name) that have at least one memory stored. Call this before any mutating tool (memory_add, memory_update, memory_delete) when you are not certain which repository slug to use. Reads (memory_query, memory_list, memory_get) can proceed loosely — a wrong slug returns empty results and nothing is lost. Writes against a wrong slug corrupt data, so always confirm the slug first.",
+      inputSchema: {
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_SEARCH_LIMIT)
+          .default(MAX_SEARCH_LIMIT)
+          .describe("Maximum number of repository slugs to return."),
+      },
+    },
+    async (args) => {
+      try {
+        const result = await bindings.DB.prepare(
+          `SELECT DISTINCT repository FROM memories ORDER BY repository LIMIT ?`,
+        )
+          .bind(args.limit)
+          .all<{ repository: string }>();
+        const repos = (result.results ?? []).map((r) => r.repository);
+        return textResult(repos);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
   server.registerTool(
     "memory_query",
     {
       description:
-        "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text) and semantic (embedding-based) search.",
+        "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text) and semantic (embedding-based) search. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
       inputSchema: {
         repository: repositorySchema,
         query: z
@@ -433,7 +470,7 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
     "memory_get",
     {
       description:
-        "Fetch a single memory by its numeric id from a repository's memory store.",
+        "Fetch a single memory by its numeric id from a repository's memory store. This is a read-only tool — a wrong repository slug returns 'No memory found'; nothing is lost.",
       inputSchema: {
         repository: repositorySchema,
         id: z
@@ -461,7 +498,7 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
     "memory_list",
     {
       description:
-        "List memories for a repository, optionally filtered by status, memory type, or certainty.",
+        "List memories for a repository, optionally filtered by status, memory type, or certainty. This is a read-only tool — a wrong repository slug returns an empty list; nothing is lost.",
       inputSchema: {
         repository: repositorySchema,
         limit: z
@@ -509,9 +546,14 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
     "memory_add",
     {
       description:
-        "Create a new memory for a repository. Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them.",
+        `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them.`,
       inputSchema: {
-        repository: repositorySchema,
+        repository: z
+          .string()
+          .min(1)
+          .describe(
+            "The GitHub repository (owner/name) to write this memory to. Required — no default. Call list_repositories to enumerate valid slugs before writing.",
+          ),
         content: z
           .string()
           .min(1)
@@ -587,7 +629,9 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
           status: args.status,
           certainty: args.certainty,
         };
-        return textResult([created]);
+        return textResult([
+          { written_to: args.repository, id: created.id, memory: created },
+        ]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -598,9 +642,14 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
     "memory_update",
     {
       description:
-        "Update an existing memory's content or metadata by id for a repository. Re-embeds the vector so future semantic searches reflect the change.",
+        `⚠️ WRITE OPERATION — a wrong repository slug will silently find no matching record (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Re-embeds the vector so future semantic searches reflect the change.`,
       inputSchema: {
-        repository: repositorySchema,
+        repository: z
+          .string()
+          .min(1)
+          .describe(
+            "The GitHub repository (owner/name) the memory belongs to. Required — no default. Call list_repositories to enumerate valid slugs before writing.",
+          ),
         id: z
           .number()
           .int()
@@ -659,9 +708,14 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
     "memory_delete",
     {
       description:
-        "Delete a memory by id for a repository. Also removes its vector embedding.",
+        `⚠️ WRITE OPERATION — deletion is permanent. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if unsure.${ownerHint} Also removes the vector embedding.`,
       inputSchema: {
-        repository: repositorySchema,
+        repository: z
+          .string()
+          .min(1)
+          .describe(
+            "The GitHub repository (owner/name) the memory belongs to. Required — no default. Call list_repositories to enumerate valid slugs before deleting.",
+          ),
         id: z
           .number()
           .int()
@@ -687,6 +741,7 @@ export function createMemoryServer(bindings: McpBindings): McpServer {
         );
         return textResult([
           {
+            deleted_from: args.repository,
             id: args.id,
             deleted: (result.meta.changes ?? 0) > 0,
             existed: existing !== undefined,

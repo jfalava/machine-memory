@@ -60,7 +60,12 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
       apiRoute: "/mcp",
       apiHandler: {
         fetch: (request, env, ctx) =>
-          createMcpHandler(() => createMemoryServer(env))(request, env, ctx),
+          createMcpHandler(() =>
+            createMemoryServer(
+              env,
+              (ctx.props as { login?: string } | undefined)?.login,
+            ),
+          )(request, env, ctx),
       },
       defaultHandler: githubHandler,
       authorizeEndpoint: AUTHORIZE_ENDPOINT,
