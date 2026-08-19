@@ -29,10 +29,10 @@
     "@fontsource/google-sans-code": "5.3.0",
     "@fontsource/pretendard": "5.3.0",
     "@iconify-json/ph": "1.2.2",
-    "astro": "7.2.2",
-    "astro-icon": "1.1.5",
+    "astro": "7.2.4",
+    "astro-icon": "1.2.0",
     "astro-og-canvas": "0.13.0",
-    "canvaskit-wasm": "0.41.1",
+    "canvaskit-wasm": "0.42.0",
     "clsx": "2.1.1",
     "tailwind-merge": "3.6.0"
   },
@@ -48,6 +48,6 @@
     "prettier-plugin-astro": "0.14.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "wrangler": "4.123.0"
+    "wrangler": "4.124.0"
   }
 }
