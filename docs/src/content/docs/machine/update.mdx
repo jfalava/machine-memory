@@ -26,3 +26,20 @@ clears expiry. The content update increments `update_count` and refreshes
 
 `--match` must resolve to an active memory and cannot be combined with more
 than one positional content argument.
+
+## Embedding budget
+
+Like `add`, `update` validates the composed embedding text **before** writing.
+If the updated memory (new content plus retained or replaced metadata) would
+exceed the embedding service's 512-token limit — or its conservative byte+2
+estimate — the update fails with the per-part token breakdown and no memory is
+changed:
+
+```sh
+machine-memory update 42 "very long replacement content..." --local
+# error: Memory 42 has 534/512 embedding tokens; ...
+```
+
+Pass `--token-report` to include the breakdown on a successful update as
+`tokens` (for a single target) or as a `tokens` array of
+`{id, ...breakdown}` entries when updating multiple IDs.

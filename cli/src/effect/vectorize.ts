@@ -8,7 +8,11 @@ import {
   type JsonValue,
 } from "../json";
 import { MemoryDatabaseError } from "./errors";
-import { validateBgeEmbeddingText } from "./bge-tokenizer";
+import {
+  composeEmbeddingText,
+  validateBgeEmbeddingText,
+  type EmbeddingTextPart,
+} from "./bge-tokenizer";
 
 export type MemoryVectorDocument = {
   readonly id: string;
@@ -59,19 +63,26 @@ export type MemoryVectorSearchRequest = {
   readonly certainty?: string;
 };
 
+export function memoryVectorEmbeddingParts(
+  document: MemoryVectorDocument,
+): EmbeddingTextPart[] {
+  return [
+    { part: "content", text: document.content },
+    { part: "tags", text: document.tags ? `Tags: ${document.tags}` : "" },
+    {
+      part: "context",
+      text: document.context ? `Context: ${document.context}` : "",
+    },
+    { part: "memory_type", text: `Memory type: ${document.memory_type}` },
+    { part: "status", text: `Status: ${document.status}` },
+    { part: "certainty", text: `Certainty: ${document.certainty}` },
+  ];
+}
+
 export function memoryVectorEmbeddingText(
   document: MemoryVectorDocument,
 ): string {
-  return [
-    document.content,
-    document.tags ? `Tags: ${document.tags}` : undefined,
-    document.context ? `Context: ${document.context}` : undefined,
-    `Memory type: ${document.memory_type}`,
-    `Status: ${document.status}`,
-    `Certainty: ${document.certainty}`,
-  ]
-    .filter((part): part is string => part !== undefined)
-    .join("\n");
+  return composeEmbeddingText(memoryVectorEmbeddingParts(document));
 }
 
 type RemoteVectorResponse = JsonObject;

@@ -266,4 +266,23 @@ describe("Effect application boundaries", () => {
       "https://memory.example.workers.dev/query",
     );
   });
+
+  it("keeps an explicit --local selection even when stored remote credentials exist", async () => {
+    const storedCredentials = JSON.stringify({
+      url: "https://stored.example/query",
+      token: "stored-token",
+    });
+    const secretsGet = vi.fn().mockResolvedValue(storedCredentials);
+    vi.stubGlobal("Bun", { secrets: { get: secretsGet } });
+
+    try {
+      await expect(
+        loadDatabaseConfig({}, { local: true, remote: false }),
+      ).resolves.toEqual({ kind: "local" });
+      // The stored credential lookup must not be consulted at all.
+      expect(secretsGet).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

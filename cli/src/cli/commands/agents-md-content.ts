@@ -26,7 +26,7 @@ export function agentsMdContent(backend: AgentsMemoryBackend): string {
     "## Project memory",
     "",
     ...AGENTS_MD_BACKEND_CONTENT[backend],
-    "Memory size: keep every memory below 512 tokens, including its content, tags, context, and metadata, so the embedding service can accept it.",
+    "Memory size: keep every memory below 512 tokens, including its content, tags, context, and metadata, so the embedding service can accept it. `add` and `update` fail before writing when the composed embedding text exceeds the limit (or the embedding service's conservative byte+2 estimate); pass `--token-report` to include the per-part token breakdown in the response.",
     "",
     "⚠️ MANDATORY: Complete the memory scan BEFORE any code changes. Skipping it causes rework, regressions, and duplicated decisions.",
     "",

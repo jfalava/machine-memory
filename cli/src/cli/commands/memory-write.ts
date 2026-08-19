@@ -38,6 +38,18 @@ import {
 } from "../features/memory/usage";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { syncMemoryVector } from "../../effect/vector-sync";
+import {
+  analyzeBgeEmbedding,
+  analyzeEmbeddingByBytes,
+  assertBgeBreakdown,
+  type BgeTokenBreakdown,
+  type EmbeddingTextPart,
+} from "../../effect/bge-tokenizer";
+import {
+  memoryVectorEmbeddingParts,
+  type MemoryVectorDocument,
+} from "../../effect/vectorize";
+import { commandError, type CommandError } from "../../effect/errors";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 
@@ -77,6 +89,107 @@ type UpdateSpec = {
   clause: string;
   value: string | number | null;
 };
+
+/**
+ * Pure token-budget analysis for the embedding text a write would produce.
+ * Uses the real BGE tokenizer when reachable and degrades to the Worker's
+ * conservative byte estimate when it is not, so offline writes stay safe
+ * without ever silently accepting text the embedding service would reject.
+ */
+function validateEmbeddingFit(
+  command: string,
+  label: string,
+  parts: EmbeddingTextPart[],
+): Effect.Effect<BgeTokenBreakdown, CommandError> {
+  return Effect.tryPromise({
+    try: async () => {
+      let breakdown: BgeTokenBreakdown;
+      try {
+        breakdown = await analyzeBgeEmbedding(parts);
+      } catch {
+        breakdown = analyzeEmbeddingByBytes(parts);
+      }
+      assertBgeBreakdown(breakdown, label);
+      return breakdown;
+    },
+    catch: (cause) =>
+      commandError(
+        command,
+        cause instanceof Error
+          ? cause.message
+          : "Embedding validation failed.",
+        cause,
+      ),
+  });
+}
+
+function addEmbeddingDocumentParts(
+  content: string,
+  metadata: AddMetadata,
+): EmbeddingTextPart[] {
+  return memoryVectorEmbeddingParts({
+    id: "0",
+    repository: repositoryForCurrentDirectory(),
+    content,
+    tags: metadata.tags,
+    context: metadata.memo,
+    memory_type: metadata.memoryType,
+    status: "active",
+    certainty: metadata.certainty,
+  });
+}
+
+function prospectiveUpdateDocuments(
+  args: string[],
+  database: MemoryDatabaseApi,
+  targetIds: number[],
+  content: string,
+): Effect.Effect<
+  Array<{ id: number; document: MemoryVectorDocument }>,
+  MemoryDatabaseError
+> {
+  const overrides = {
+    tags: getFlagValue(args, "--tags"),
+    context: getFlagValue(args, "--context"),
+    memory_type: requireMemoryType(args),
+    certainty: requireCertainty(args),
+  };
+  return Effect.forEach(targetIds, (id) =>
+    getMemoryById(database, id).pipe(
+      Effect.map((row) => {
+        if (!row) {
+          return null;
+        }
+        return {
+          id,
+          document: {
+            id: String(id),
+            repository:
+              stringValue(row.repository) ?? repositoryForCurrentDirectory(),
+            content,
+            tags: overrides.tags ?? stringValue(row.tags),
+            context: overrides.context ?? stringValue(row.context),
+            memory_type:
+              overrides.memory_type ??
+              stringValue(row.memory_type, "convention"),
+            status: stringValue(row.status, "active"),
+            certainty:
+              overrides.certainty ?? stringValue(row.certainty, "inferred"),
+          } satisfies MemoryVectorDocument,
+        };
+      }),
+    ),
+  ).pipe(
+    Effect.map((entries) =>
+      entries.filter(
+        (
+          entry,
+        ): entry is { id: number; document: MemoryVectorDocument } =>
+          entry !== null,
+      ),
+    ),
+  );
+}
 
 function resolveAddContent(
   args: string[],
@@ -226,17 +339,25 @@ function printUpsertResult(
   outputMode: CommandContext["outputMode"],
   mode: "created" | "updated",
   id: number,
+  tokenReport?: BgeTokenBreakdown,
 ) {
-  printCommandOutput({ command: "add", outputMode }, { mode, id });
+  printCommandOutput(
+    { command: "add", outputMode },
+    tokenReport ? { mode, id, tokens: tokenReport } : { mode, id },
+  );
 }
 
 function maybeHandleAddUpsert(
   database: MemoryDatabaseApi,
-  args: string[],
-  content: string,
-  metadata: AddMetadata,
-  outputMode: CommandContext["outputMode"],
+  options: {
+    args: string[];
+    content: string;
+    metadata: AddMetadata;
+    outputMode: CommandContext["outputMode"];
+    tokenReport?: BgeTokenBreakdown;
+  },
 ): Effect.Effect<boolean, MemoryDatabaseError> {
+  const { args, content, metadata, outputMode, tokenReport } = options;
   const upsertQuery = parseAddUpsertQuery(args);
   if (upsertQuery === undefined) {
     return Effect.succeed(false);
@@ -251,7 +372,7 @@ function maybeHandleAddUpsert(
         yield* syncMemoryVector(database, updated);
       }
       yield* Effect.sync(() =>
-        printUpsertResult(outputMode, "updated", matchedId),
+        printUpsertResult(outputMode, "updated", matchedId, tokenReport),
       );
       return true;
     }
@@ -263,7 +384,7 @@ function maybeHandleAddUpsert(
       yield* syncMemoryVector(database, created);
     }
     yield* Effect.sync(() =>
-      printUpsertResult(outputMode, "created", createdId),
+      printUpsertResult(outputMode, "created", createdId, tokenReport),
     );
     return true;
   });
@@ -323,6 +444,31 @@ function addInsert(
   );
 }
 
+function attachTokenReport(
+  payload: JsonObject,
+  tokenReport: BgeTokenBreakdown | undefined,
+): void {
+  if (tokenReport) {
+    Object.assign(payload, { tokens: tokenReport });
+  }
+}
+
+function briefAddPayload(params: {
+  createdId: number;
+  conflictCount: number;
+  statusCascadeCount: number;
+  tokenReport?: BgeTokenBreakdown;
+}): JsonObject {
+  const payload: JsonObject = {
+    id: params.createdId,
+    status: "created",
+    conflict_count: params.conflictCount,
+    status_cascade_count: params.statusCascadeCount,
+  };
+  attachTokenReport(payload, params.tokenReport);
+  return payload;
+}
+
 function printAddResult(params: {
   outputMode: CommandContext["outputMode"];
   createdId: number;
@@ -332,6 +478,7 @@ function printAddResult(params: {
   includeConflicts: boolean;
   potentialConflicts: JsonObject[];
   statusCascade: JsonObject[];
+  tokenReport?: BgeTokenBreakdown;
 }) {
   const {
     outputMode,
@@ -342,18 +489,25 @@ function printAddResult(params: {
     includeConflicts,
     potentialConflicts,
     statusCascade,
+    tokenReport,
   } = params;
   if (outputMode.jsonMin || outputMode.quiet) {
-    printJson({ id: createdId });
+    printJson(
+      tokenReport
+        ? { id: createdId, tokens: tokenReport }
+        : { id: createdId },
+    );
     return;
   }
   if (outputMode.brief) {
-    printJson({
-      id: createdId,
-      status: "created",
-      conflict_count: potentialConflicts.length,
-      status_cascade_count: statusCascade.length,
-    });
+    printJson(
+      briefAddPayload({
+        createdId,
+        conflictCount: potentialConflicts.length,
+        statusCascadeCount: statusCascade.length,
+        tokenReport,
+      }),
+    );
     return;
   }
 
@@ -380,6 +534,9 @@ function printAddResult(params: {
       },
     });
   }
+  if (tokenReport) {
+    attachTokenReport(payload, tokenReport);
+  }
   printCommandOutput({ command: "add", outputMode }, payload);
 }
 
@@ -389,8 +546,22 @@ export function handleAddCommand(commandCtx: CommandContext) {
     const database = requireDatabase(commandCtx);
     const content = yield* resolveAddContent(args, commandCtx.fileSystem);
     const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
+    const embeddingBreakdown = yield* validateEmbeddingFit(
+      "add",
+      "Memory",
+      addEmbeddingDocumentParts(content, metadata),
+    );
+    const tokenReport = hasFlag(args, "--token-report")
+      ? embeddingBreakdown
+      : undefined;
     if (
-      yield* maybeHandleAddUpsert(database, args, content, metadata, outputMode)
+      yield* maybeHandleAddUpsert(database, {
+        args,
+        content,
+        metadata,
+        outputMode,
+        tokenReport,
+      })
     ) {
       return;
     }
@@ -421,6 +592,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
         includeConflicts: conflictState.includeConflicts,
         potentialConflicts: conflictState.potentialConflicts,
         statusCascade,
+        tokenReport,
       }),
     );
   });
@@ -587,6 +759,24 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
     if (targetIds.length === 0) {
       usageError(`Usage: ${UPDATE_USAGE}`);
     }
+    const tokenReportEnabled = hasFlag(args, "--token-report");
+    const prospective = yield* prospectiveUpdateDocuments(
+      args,
+      database,
+      targetIds,
+      content,
+    );
+    const tokenBreakdowns = new Map<number, BgeTokenBreakdown>();
+    for (const entry of prospective) {
+      const breakdown = yield* validateEmbeddingFit(
+        "update",
+        `Memory ${entry.id}`,
+        memoryVectorEmbeddingParts(entry.document),
+      );
+      if (tokenReportEnabled) {
+        tokenBreakdowns.set(entry.id, breakdown);
+      }
+    }
     const { sets, params } = updateSetsAndParams(args, content);
     const { rows, missingIds } = yield* runBatchMemoryUpdate(
       database,
@@ -599,14 +789,31 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
     }
     yield* Effect.sync(() => {
       if (targetIds.length === 1) {
-        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
+        const payload = rows[0] ?? { error: "Not found" };
+        const firstId = targetIds[0];
+        if (tokenReportEnabled && firstId !== undefined) {
+          const breakdown = tokenBreakdowns.get(firstId);
+          if (breakdown) {
+            Object.assign(payload, { tokens: breakdown });
+          }
+        }
+        printCommandOutput(commandCtx, payload);
         return;
       }
-      printCommandOutput(commandCtx, {
+      const payload: JsonObject = {
         updated: rows,
         not_found: missingIds,
         count: rows.length,
-      });
+      };
+      if (tokenReportEnabled && tokenBreakdowns.size > 0) {
+        Object.assign(payload, {
+          tokens: [...tokenBreakdowns.entries()].map(([id, breakdown]) => ({
+            id,
+            ...breakdown,
+          })),
+        });
+      }
+      printCommandOutput(commandCtx, payload);
     });
   });
 }

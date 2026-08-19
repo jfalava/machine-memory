@@ -36,3 +36,33 @@ references, and `--expires-after-days` is useful for transient status.
 `--from-file` and inline content are mutually exclusive. `--no-conflicts`
 suppresses conflict details; `--brief`, `--json-min`, and `--quiet` select
 smaller responses.
+
+## Embedding budget
+
+Every memory is composed into a single embedding text that must fit the BGE
+embedding service's limit (512 tokens, and at most 512 for its conservative
+byte+2 estimate). `add` fails **before** writing when the composed text
+exceeds either bound, and the error lists the per-part token counts plus the
+byte estimate so you can see what to trim:
+
+```sh
+machine-memory add "long content..." --local
+# error: Memory has 534/512 embedding tokens; the embedding service byte
+#        estimate is 1240/512.  content: 520 tokens ...
+#        Trim at least 23 token(s) ...
+```
+
+Pass `--token-report` to attach the same breakdown to a successful response
+(including with `--json-min` or `--quiet`), so agents can budget upcoming
+writes:
+
+```json
+{"id": 42, "tokens": {"source": "tokenizer", "total_tokens": 26,
+ "max_tokens": 512, "bytes_estimate": 108, "within_limit": true,
+ "over_by": 0, "remaining": 485, "parts": [{"part": "content", "tokens": 8},
+ {"part": "tags", "tokens": 8}, ...], "overhead": 8}}
+```
+
+When the BGE tokenizer cannot be fetched (for example offline), the gate
+degrades to the embedding service's conservative byte+2 estimate and marks
+the breakdown `"source": "bytes"` without per-part counts.

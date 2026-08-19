@@ -78,29 +78,46 @@ export function databaseConfig(
   return { kind: "local" };
 }
 
+async function storedRemoteConfig(
+  required: boolean,
+): Promise<DatabaseConfig | undefined> {
+  let stored: string | null;
+  try {
+    stored = await Bun.secrets.get(REMOTE_CREDENTIALS_SECRET);
+  } catch (cause) {
+    if (required) {
+      throw new Error(
+        `Remote backend requested, but stored credentials could not be read from the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN. ${String(cause)}`,
+      );
+    }
+    return undefined;
+  }
+  if (!stored) {
+    if (required) {
+      throw new Error(
+        "Remote backend requested, but no remote credentials are configured. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup' if not already done.",
+      );
+    }
+    return undefined;
+  }
+  return {
+    kind: "remote",
+    ...parseRemoteCredentials(stored),
+  };
+}
+
 export async function loadDatabaseConfig(
   environment: Record<string, string | undefined> = process.env,
   backendFlags: DatabaseBackendFlags = DEFAULT_DATABASE_BACKEND_FLAGS,
 ): Promise<DatabaseConfig> {
   const configured = databaseConfig(environment, backendFlags);
+  if (backendFlags.local) {
+    // An explicit --local selection must never be overridden by stored
+    // remote credentials or by MACHINE_MEMORY_DB_PATH fallbacks.
+    return configured;
+  }
   if (backendFlags.remote && configured.kind === "local") {
-    let stored: string | null;
-    try {
-      stored = await Bun.secrets.get(REMOTE_CREDENTIALS_SECRET);
-    } catch (cause) {
-      throw new Error(
-        `Remote backend requested, but stored credentials could not be read from the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN. ${String(cause)}`,
-      );
-    }
-    if (!stored) {
-      throw new Error(
-        "Remote backend requested, but no remote credentials are configured. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup' if not already done.",
-      );
-    }
-    return {
-      kind: "remote",
-      ...parseRemoteCredentials(stored),
-    };
+    return (await storedRemoteConfig(true)) ?? configured;
   }
   if (configured.kind === "remote") {
     return configured;
@@ -108,23 +125,7 @@ export async function loadDatabaseConfig(
   if (environment["MACHINE_MEMORY_DB_PATH"]?.trim()) {
     return configured;
   }
-
-  let stored: string | null;
-  try {
-    stored = await Bun.secrets.get(REMOTE_CREDENTIALS_SECRET);
-  } catch {
-    // Keep the local backend usable on hosts without a configured secret
-    // service. The setup command still reports storage errors to the user.
-    return configured;
-  }
-  if (!stored) {
-    return configured;
-  }
-
-  return {
-    kind: "remote",
-    ...parseRemoteCredentials(stored),
-  };
+  return (await storedRemoteConfig(false)) ?? configured;
 }
 
 export async function loadStoredRemoteCredentials(): Promise<

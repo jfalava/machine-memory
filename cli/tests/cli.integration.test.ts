@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { execFile as execFileCallback } from "node:child_process";
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,6 +9,83 @@ import {
   binaryNameForPlatform,
   extractZipBinary,
 } from "@/upgrade";
+
+const cliTokenizerJson = {
+  version: "1.0",
+  truncation: null,
+  padding: null,
+  added_tokens: [
+    {
+      id: 0,
+      content: "[PAD]",
+      single_word: false,
+      lstrip: false,
+      rstrip: false,
+      normalized: false,
+      special: true,
+    },
+    {
+      id: 1,
+      content: "[UNK]",
+      single_word: false,
+      lstrip: false,
+      rstrip: false,
+      normalized: false,
+      special: true,
+    },
+    {
+      id: 2,
+      content: "[CLS]",
+      single_word: false,
+      lstrip: false,
+      rstrip: false,
+      normalized: false,
+      special: true,
+    },
+    {
+      id: 3,
+      content: "[SEP]",
+      single_word: false,
+      lstrip: false,
+      rstrip: false,
+      normalized: false,
+      special: true,
+    },
+  ],
+  normalizer: {
+    type: "BertNormalizer",
+    clean_text: true,
+    handle_chinese_chars: true,
+    strip_accents: null,
+    lowercase: true,
+  },
+  pre_tokenizer: { type: "BertPreTokenizer" },
+  post_processor: {
+    type: "BertProcessing",
+    sep: ["[SEP]", 3],
+    cls: ["[CLS]", 2],
+  },
+  decoder: { type: "WordPiece", prefix: "##", cleanup: true },
+  model: {
+    type: "WordPiece",
+    unk_token: "[UNK]",
+    continuing_subword_prefix: "##",
+    max_input_chars_per_word: 100,
+    vocab: { "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, hello: 4 },
+  },
+};
+
+const cliTokenizerConfig = {
+  model_max_length: 512,
+  do_lower_case: true,
+  cls_token: "[CLS]",
+  sep_token: "[SEP]",
+  unk_token: "[UNK]",
+  pad_token: "[PAD]",
+};
+
+let tokenizerServer: Server;
+let tokenizerEnv: Record<string, string> = {};
 
 type RunResult = {
   code: number;
@@ -50,29 +127,41 @@ function execBun(
   args: string[],
   options: { cwd?: string; env?: Record<string, string | undefined> },
 ): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    execFileCallback("bun", args, options, (error, stdout, stderr) => {
-      const processError = error as
-        | { code?: unknown; signal?: unknown; message?: unknown }
-        | undefined;
-      const numericCode =
-        typeof processError?.code === "number"
-          ? processError.code
-          : processError?.signal === "SIGSEGV"
-            ? 139
-            : error
-              ? 1
-              : 0;
-      resolve({
-        code: numericCode,
-        stdout,
-        stderr:
-          stderr ||
-          (typeof processError?.message === "string"
-            ? processError.message
-            : ""),
-      });
-    });
+  return new Promise((resolvePromise) => {
+    execFileCallback(
+      "bun",
+      args,
+      {
+        ...options,
+        env: {
+          ...process.env,
+          ...tokenizerEnv,
+          ...options.env,
+        },
+      },
+      (error, stdout, stderr) => {
+        const processError = error as
+          | { code?: unknown; signal?: unknown; message?: unknown }
+          | undefined;
+        const numericCode =
+          typeof processError?.code === "number"
+            ? processError.code
+            : processError?.signal === "SIGSEGV"
+              ? 139
+              : error
+                ? 1
+                : 0;
+        resolvePromise({
+          code: numericCode,
+          stdout,
+          stderr:
+            stderr ||
+            (typeof processError?.message === "string"
+              ? processError.message
+              : ""),
+        });
+      },
+    );
   });
 }
 
@@ -190,6 +279,43 @@ afterEach(async () => {
       await rm(directory, { recursive: true, force: true });
     }
   }
+});
+
+beforeAll(async () => {
+  tokenizerServer = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (url.endsWith("/tokenizer.json")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(cliTokenizerJson));
+      return;
+    }
+    if (url.endsWith("/tokenizer_config.json")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(cliTokenizerConfig));
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not found" }));
+  });
+  await new Promise<void>((resolvePromise) =>
+    tokenizerServer.listen(0, "127.0.0.1", resolvePromise),
+  );
+  const address = tokenizerServer.address();
+  const port =
+    typeof address === "object" && address !== null ? address.port : 0;
+  const baseUrl = `http://127.0.0.1:${port}`;
+  tokenizerEnv = {
+    MACHINE_MEMORY_BGE_TOKENIZER_URL: `${baseUrl}/tokenizer.json`,
+    MACHINE_MEMORY_BGE_TOKENIZER_CONFIG_URL: `${baseUrl}/tokenizer_config.json`,
+  };
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolvePromise, rejectPromise) =>
+    tokenizerServer.close((error) =>
+      error ? rejectPromise(error) : resolvePromise(),
+    ),
+  );
 });
 
 describe("CLI rewrite integration", () => {
@@ -493,6 +619,111 @@ describe("CLI rewrite integration", () => {
         ),
       );
     }
+  });
+
+  it("attaches an embedding token breakdown with --token-report", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "hello",
+      "--tags",
+      "cli",
+      "--token-report",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const tokens = added.json.tokens as Record<string, unknown>;
+    expect(tokens).toBeDefined();
+    expect(tokens.source).toBe("tokenizer");
+    expect(tokens.within_limit).toBe(true);
+    expect(tokens.over_by).toBe(0);
+    expect(Number(tokens.total_tokens)).toBeGreaterThan(0);
+    const parts = tokens.parts as Array<{ part: string; tokens: number }>;
+    expect(parts.map((entry) => entry.part)).toEqual(
+      expect.arrayContaining(["content", "memory_type", "status", "certainty"]),
+    );
+  });
+
+  it("rejects an oversized add before writing and reports the breakdown", async () => {
+    const { cwd, dbPath } = await createProject();
+    const addResult = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      Array.from({ length: 600 }, () => "hello").join(" "),
+      "--local",
+    );
+    expect(addResult.code).toBe(1);
+    const error = String(addResult.json.error ?? "");
+    expect(error).toContain("embedding tokens");
+    expect(error).toContain("byte estimate");
+    expect(error).toContain("Trim at least");
+    expect(error).toContain("content: 602 tokens");
+
+    const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
+    expect(fetched.json).toEqual({ error: "Not found" });
+  });
+
+  it("rejects an oversized update and leaves the memory unchanged", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "original content",
+      "--local",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const id = Number(added.json.id);
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      String(id),
+      Array.from({ length: 600 }, () => "hello").join(" "),
+      "--local",
+    );
+    expect(updated.code).toBe(1);
+    expect(String(updated.json.error ?? "")).toContain(`Memory ${id}`);
+    expect(String(updated.json.error ?? "")).toContain("byte estimate");
+    expect(String(updated.json.error ?? "")).toContain("Trim at least");
+
+    const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
+    expect(fetched.json.content).toBe("original content");
+  });
+
+  it("attaches token breakdowns to a successful update with --token-report", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "original content",
+      "--local",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const id = Number(added.json.id);
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      String(id),
+      "replacement content",
+      "--token-report",
+      "--local",
+    );
+    expect(updated.code).toBe(0);
+    expect(updated.json.content).toBe("replacement content");
+    expect(updated.json.tokens).toMatchObject({
+      source: "tokenizer",
+      within_limit: true,
+    });
   });
 });
 

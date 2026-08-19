@@ -66,6 +66,7 @@ const addCommand = effectCommand(
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
     "no-conflicts": booleanFlag("no-conflicts"),
+    "token-report": booleanFlag("token-report"),
     ...outputConfig(),
   },
   [
@@ -80,6 +81,7 @@ const addCommand = effectCommand(
     stringSpec("refs"),
     stringSpec("expires-after-days"),
     booleanSpec("no-conflicts"),
+    booleanSpec("token-report"),
     ...outputSpecs,
   ],
   "write",
@@ -160,6 +162,7 @@ const updateCommand = effectCommand(
     "updated-by": stringFlag("updated-by"),
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
+    "token-report": booleanFlag("token-report"),
   },
   [
     stringSpec("match"),
@@ -171,6 +174,7 @@ const updateCommand = effectCommand(
     stringSpec("updated-by"),
     stringSpec("refs"),
     stringSpec("expires-after-days"),
+    booleanSpec("token-report"),
   ],
   "write",
   handleUpdateCommand,
