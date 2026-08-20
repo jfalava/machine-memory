@@ -1,5 +1,5 @@
 import { Tokenizer } from "@huggingface/tokenizers";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   analyzeBgeEmbeddingWith,
   analyzeEmbeddingByBytes,
@@ -7,11 +7,18 @@ import {
   assertBgeTokenCount,
   bgeEmbeddingLimitMessage,
   BGE_MAX_EMBEDDING_TOKENS,
+  BGE_TOKENIZER_FETCH_TIMEOUT_MS,
   composeEmbeddingText,
   countTokens,
   estimateEmbeddingBytes,
+  validateBgeEmbeddingText,
   type EmbeddingTextPart,
 } from "@/effect/bge-tokenizer";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const tokenizerJson = {
   version: "1.0",
@@ -240,5 +247,26 @@ describe("BGE token breakdown", () => {
   it("estimates embedding bytes as UTF-8 length plus special tokens", () => {
     expect(estimateEmbeddingBytes("abc")).toBe(5);
     expect(estimateEmbeddingBytes("é")).toBe(4);
+  });
+
+  it("falls back to byte validation after tokenizer downloads time out", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        }),
+      ),
+    );
+
+    const validation = validateBgeEmbeddingText("hello", "Memory");
+    await vi.advanceTimersByTimeAsync(BGE_TOKENIZER_FETCH_TIMEOUT_MS);
+
+    await expect(validation).resolves.toBeUndefined();
   });
 });

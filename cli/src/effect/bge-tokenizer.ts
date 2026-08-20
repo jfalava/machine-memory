@@ -2,11 +2,14 @@ import { Tokenizer } from "@huggingface/tokenizers";
 import { Schema } from "effect";
 
 export const BGE_MAX_EMBEDDING_TOKENS = 512;
+export const BGE_TOKENIZER_FETCH_TIMEOUT_MS = 5_000;
 
+const BGE_TOKENIZER_REVISION =
+  "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a";
 const DEFAULT_BGE_TOKENIZER_URL =
-  "https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/main/tokenizer.json";
+  `https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/${BGE_TOKENIZER_REVISION}/tokenizer.json`;
 const DEFAULT_BGE_TOKENIZER_CONFIG_URL =
-  "https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/main/tokenizer_config.json";
+  `https://huggingface.co/BAAI/bge-base-en-v1.5/resolve/${BGE_TOKENIZER_REVISION}/tokenizer_config.json`;
 
 /**
  * The BGE tokenizer and its config are fetched from Hugging Face at runtime.
@@ -22,15 +25,24 @@ const BGE_TOKENIZER_CONFIG_URL =
 let tokenizerPromise: Promise<Tokenizer> | undefined;
 
 async function readJson(url: string, description: string): Promise<object> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(
-      `Could not load the BGE ${description} (HTTP ${response.status}).`,
-    );
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    BGE_TOKENIZER_FETCH_TIMEOUT_MS,
+  );
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(
+        `Could not load the BGE ${description} (HTTP ${response.status}).`,
+      );
+    }
+    return Schema.decodeUnknownSync(
+      Schema.Record(Schema.String, Schema.MutableJson),
+    )(await response.json());
+  } finally {
+    clearTimeout(timeout);
   }
-  return Schema.decodeUnknownSync(
-    Schema.Record(Schema.String, Schema.MutableJson),
-  )(await response.json());
 }
 
 async function loadBgeTokenizer(): Promise<Tokenizer> {
@@ -42,11 +54,7 @@ async function loadBgeTokenizer(): Promise<Tokenizer> {
 }
 
 function getBgeTokenizer(): Promise<Tokenizer> {
-  tokenizerPromise ??= loadBgeTokenizer().catch((cause: unknown) => {
-    tokenizerPromise = undefined;
-    throw cause;
-  });
-  return tokenizerPromise;
+  return (tokenizerPromise ??= loadBgeTokenizer());
 }
 
 export function countTokens(tokenizer: Tokenizer, text: string): number {
@@ -66,7 +74,17 @@ export async function validateBgeEmbeddingText(
   text: string,
   label: string,
 ): Promise<void> {
-  const tokenCount = countTokens(await getBgeTokenizer(), text);
+  let tokenizer: Tokenizer;
+  try {
+    tokenizer = await getBgeTokenizer();
+  } catch {
+    assertBgeBreakdown(
+      analyzeEmbeddingByBytes([{ part: "content", text }]),
+      label,
+    );
+    return;
+  }
+  const tokenCount = countTokens(tokenizer, text);
   assertBgeTokenCount(tokenCount, label);
 }
 

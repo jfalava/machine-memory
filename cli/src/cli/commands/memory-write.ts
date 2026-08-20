@@ -139,6 +139,33 @@ function addEmbeddingDocumentParts(
   });
 }
 
+function addUpsertEmbeddingDocument(
+  matched: JsonObject,
+  content: string,
+  metadata: AddMetadata,
+): MemoryVectorDocument {
+  return {
+    id: String(jsonNumber(matched.id) ?? 0),
+    repository:
+      stringValue(matched.repository) ?? repositoryForCurrentDirectory(),
+    content,
+    tags:
+      metadata.explicit.tags || metadata.mappedTags.length > 0
+        ? metadata.tags
+        : stringValue(matched.tags),
+    context: metadata.explicit.context
+      ? metadata.memo
+      : stringValue(matched.context),
+    memory_type: metadata.explicit.memoryType
+      ? metadata.memoryType
+      : stringValue(matched.memory_type, "convention"),
+    status: stringValue(matched.status, "active"),
+    certainty: metadata.explicit.certainty
+      ? metadata.certainty
+      : stringValue(matched.certainty, "inferred"),
+  };
+}
+
 function prospectiveUpdateDocuments(
   args: string[],
   database: MemoryDatabaseApi,
@@ -354,10 +381,10 @@ function maybeHandleAddUpsert(
     content: string;
     metadata: AddMetadata;
     outputMode: CommandContext["outputMode"];
-    tokenReport?: BgeTokenBreakdown;
+    tokenReportEnabled: boolean;
   },
-): Effect.Effect<boolean, MemoryDatabaseError> {
-  const { args, content, metadata, outputMode, tokenReport } = options;
+) {
+  const { args, content, metadata, outputMode, tokenReportEnabled } = options;
   const upsertQuery = parseAddUpsertQuery(args);
   if (upsertQuery === undefined) {
     return Effect.succeed(false);
@@ -366,16 +393,33 @@ function maybeHandleAddUpsert(
     const matched = yield* findMemoryByMatch(database, upsertQuery);
     if (matched && isStrongUpsertMatch(matched, content, metadata)) {
       const matchedId = Number(matched.id);
+      const breakdown = yield* validateEmbeddingFit(
+        "add",
+        `Memory ${matchedId}`,
+        memoryVectorEmbeddingParts(
+          addUpsertEmbeddingDocument(matched, content, metadata),
+        ),
+      );
       yield* updateFromAddPayload(database, matchedId, content, metadata);
       const updated = yield* getMemoryById(database, matchedId);
       if (updated) {
         yield* syncMemoryVector(database, updated);
       }
       yield* Effect.sync(() =>
-        printUpsertResult(outputMode, "updated", matchedId, tokenReport),
+        printUpsertResult(
+          outputMode,
+          "updated",
+          matchedId,
+          tokenReportEnabled ? breakdown : undefined,
+        ),
       );
       return true;
     }
+    const breakdown = yield* validateEmbeddingFit(
+      "add",
+      "Memory",
+      addEmbeddingDocumentParts(content, metadata),
+    );
     const createdResult = yield* addInsert(database, content, metadata);
     const createdId =
       jsonNumber(jsonObject(createdResult)?.lastInsertRowid) ?? 0;
@@ -384,7 +428,12 @@ function maybeHandleAddUpsert(
       yield* syncMemoryVector(database, created);
     }
     yield* Effect.sync(() =>
-      printUpsertResult(outputMode, "created", createdId, tokenReport),
+      printUpsertResult(
+        outputMode,
+        "created",
+        createdId,
+        tokenReportEnabled ? breakdown : undefined,
+      ),
     );
     return true;
   });
@@ -546,25 +595,24 @@ export function handleAddCommand(commandCtx: CommandContext) {
     const database = requireDatabase(commandCtx);
     const content = yield* resolveAddContent(args, commandCtx.fileSystem);
     const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
-    const embeddingBreakdown = yield* validateEmbeddingFit(
-      "add",
-      "Memory",
-      addEmbeddingDocumentParts(content, metadata),
-    );
-    const tokenReport = hasFlag(args, "--token-report")
-      ? embeddingBreakdown
-      : undefined;
+    const tokenReportEnabled = hasFlag(args, "--token-report");
     if (
       yield* maybeHandleAddUpsert(database, {
         args,
         content,
         metadata,
         outputMode,
-        tokenReport,
+        tokenReportEnabled,
       })
     ) {
       return;
     }
+    const embeddingBreakdown = yield* validateEmbeddingFit(
+      "add",
+      "Memory",
+      addEmbeddingDocumentParts(content, metadata),
+    );
+    const tokenReport = tokenReportEnabled ? embeddingBreakdown : undefined;
     const conflictState = yield* detectAddConflicts(
       database,
       outputMode,

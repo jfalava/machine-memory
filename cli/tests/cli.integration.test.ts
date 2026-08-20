@@ -666,6 +666,46 @@ describe("CLI rewrite integration", () => {
     expect(fetched.json).toEqual({ error: "Not found" });
   });
 
+  it("validates retained metadata before updating an upsert match", async () => {
+    const { cwd, dbPath } = await createProject();
+    const original = Array.from({ length: 10 }, () => "alpha beta gamma").join(
+      " ",
+    );
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      original,
+      "--context",
+      original,
+      "--type",
+      "decision",
+      "--certainty",
+      "verified",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const id = Number(added.json.id);
+
+    const upserted = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      Array.from({ length: 20 }, () => "alpha beta gamma").join(" "),
+      "--upsert-match",
+      "alpha beta gamma",
+      "--token-report",
+      "--quiet",
+    );
+    expect(upserted.code).toBe(1);
+    expect(String(upserted.json.error ?? "")).toContain(`Memory ${id}`);
+    expect(String(upserted.json.error ?? "")).toContain("byte estimate");
+
+    const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
+    expect(fetched.json.content).toBe(original);
+    expect(fetched.json.context).toBe(original);
+  });
+
   it("rejects an oversized update and leaves the memory unchanged", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(
