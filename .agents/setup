@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+step() {
+  printf '\n==> %s\n' "$1"
+}
+
+if ! command -v bun >/dev/null 2>&1; then
+  step "Installing Bun"
+
+  packages=()
+  for package in curl unzip; do
+    dpkg-query --show --showformat='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed || packages+=("$package")
+  done
+  if ((${#packages[@]})); then
+    apt-get update
+    apt-get install -y "${packages[@]}"
+  fi
+
+  curl -fsSL https://bun.sh/install | bash
+  export PATH="$HOME/.bun/bin:$PATH"
+fi
+
+step "Installing workspace dependencies"
+bun install --frozen-lockfile
+
+step "Setup complete"
+bun --version

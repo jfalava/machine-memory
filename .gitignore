@@ -39,3 +39,6 @@ machine-memory.db-*
 
 # alchemy
 **/.alchemy
+
+# Amp orb portal metadata
+.amp/portals/*
