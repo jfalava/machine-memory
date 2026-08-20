@@ -1,6 +1,6 @@
 {
   "name": "@machine-memory/docs",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -48,6 +48,6 @@
     "prettier-plugin-astro": "0.14.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "wrangler": "4.124.0"
+    "wrangler": "4.125.0"
   }
 }
