@@ -43,3 +43,14 @@ Extract the release archive for your platform. Put the executable inside anywher
 ```sh
 chmod +x machine-memory
 ```
+
+## macOS troubleshooting
+
+If a freshly downloaded binary dies with `zsh: killed`, macOS rejected its embedded ad-hoc signature because the code no longer matches it. Confirm with `codesign -v --strict machine-memory` (it reports `invalid signature`), then re-sign locally:
+
+```sh
+xattr -c machine-memory
+codesign --force --sign - machine-memory
+```
+
+`chmod +x` alone does not fix this.
