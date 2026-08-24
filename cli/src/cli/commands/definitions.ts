@@ -19,6 +19,7 @@ import {
   handleDeprecateCommand,
   handleUpdateCommand,
 } from "./memory-write";
+import { handleSizeCommand } from "./size";
 import { handleTagMapCommand } from "./tag-map";
 import { handleInitCommand } from "./init";
 import { handleDiffCommand } from "./diff";
@@ -57,6 +58,9 @@ const addCommand = effectCommand(
     args: positionalArgs(),
     "from-file": stringFlag("from-file"),
     "upsert-match": stringFlag("upsert-match"),
+    force: booleanFlag("force"),
+    "upsert-threshold": stringFlag("upsert-threshold"),
+    "dry-run": booleanFlag("dry-run"),
     path: stringFlag("path"),
     tags: stringFlag("tags"),
     context: stringFlag("context"),
@@ -72,6 +76,9 @@ const addCommand = effectCommand(
   [
     stringSpec("from-file"),
     stringSpec("upsert-match"),
+    booleanSpec("force"),
+    stringSpec("upsert-threshold"),
+    booleanSpec("dry-run"),
     stringSpec("path"),
     stringSpec("tags"),
     stringSpec("context"),
@@ -144,8 +151,8 @@ const listCommand = effectCommand(
 
 const getCommand = effectCommand(
   "get",
-  { args: positionalArgs() },
-  [],
+  { args: positionalArgs(), ...outputConfig() },
+  outputSpecs,
   "read",
   handleGetCommand,
 );
@@ -155,6 +162,7 @@ const updateCommand = effectCommand(
     args: positionalArgs(),
     match: stringFlag("match"),
     "from-file": stringFlag("from-file"),
+    "dry-run": booleanFlag("dry-run"),
     tags: stringFlag("tags"),
     context: stringFlag("context"),
     type: stringFlag("type"),
@@ -163,10 +171,12 @@ const updateCommand = effectCommand(
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
     "token-report": booleanFlag("token-report"),
+    ...outputConfig(),
   },
   [
     stringSpec("match"),
     stringSpec("from-file"),
+    booleanSpec("dry-run"),
     stringSpec("tags"),
     stringSpec("context"),
     stringSpec("type"),
@@ -175,6 +185,7 @@ const updateCommand = effectCommand(
     stringSpec("refs"),
     stringSpec("expires-after-days"),
     booleanSpec("token-report"),
+    ...outputSpecs,
   ],
   "write",
   handleUpdateCommand,
@@ -186,15 +197,21 @@ const deprecateCommand = effectCommand(
     match: stringFlag("match"),
     "superseded-by": stringFlag("superseded-by"),
     "updated-by": stringFlag("updated-by"),
+    ...outputConfig(),
   },
-  [stringSpec("match"), stringSpec("superseded-by"), stringSpec("updated-by")],
+  [
+    stringSpec("match"),
+    stringSpec("superseded-by"),
+    stringSpec("updated-by"),
+    ...outputSpecs,
+  ],
   "write",
   handleDeprecateCommand,
 );
 const deleteCommand = effectCommand(
   "delete",
-  { args: positionalArgs() },
-  [],
+  { args: positionalArgs(), ...outputConfig() },
+  outputSpecs,
   "write",
   handleDeleteCommand,
 );
@@ -259,33 +276,69 @@ const doctorCommand = effectCommand(
 );
 const verifyCommand = effectCommand(
   "verify",
-  { args: positionalArgs() },
-  [],
+  { args: positionalArgs(), ...outputConfig() },
+  outputSpecs,
   "read",
   handleVerifyCommand,
 );
 const diffCommand = effectCommand(
   "diff",
-  { args: positionalArgs() },
-  [],
+  { args: positionalArgs(), ...outputConfig() },
+  outputSpecs,
   "read",
   handleDiffCommand,
 );
 const coverageCommand = effectCommand(
   "coverage",
-  { args: positionalArgs(), root: stringFlag("root") },
-  [stringSpec("root")],
+  { args: positionalArgs(), root: stringFlag("root"), ...outputConfig() },
+  [stringSpec("root"), ...outputSpecs],
   "read",
   handleCoverageCommand,
 );
 const gcCommand = effectCommand(
   "gc",
-  { args: positionalArgs(), "dry-run": booleanFlag("dry-run") },
-  [booleanSpec("dry-run")],
+  {
+    args: positionalArgs(),
+    "dry-run": booleanFlag("dry-run"),
+    ...outputConfig(),
+  },
+  [booleanSpec("dry-run"), ...outputSpecs],
   "read",
   handleGcCommand,
 );
-const statsCommand = effectCommand("stats", {}, [], "read", handleStatsCommand);
+const statsCommand = effectCommand(
+  "stats",
+  { ...outputConfig() },
+  outputSpecs,
+  "read",
+  handleStatsCommand,
+);
+const sizeCommand = effectCommand(
+  "size",
+  {
+    args: positionalArgs(),
+    "from-file": stringFlag("from-file"),
+    tags: stringFlag("tags"),
+    context: stringFlag("context"),
+    type: stringFlag("type"),
+    certainty: stringFlag("certainty"),
+    local: booleanFlag("local"),
+    remote: booleanFlag("remote"),
+    ...outputConfig(),
+  },
+  [
+    stringSpec("from-file"),
+    stringSpec("tags"),
+    stringSpec("context"),
+    stringSpec("type"),
+    stringSpec("certainty"),
+    booleanSpec("local"),
+    booleanSpec("remote"),
+    ...outputSpecs,
+  ],
+  undefined,
+  handleSizeCommand,
+);
 const importCommand = effectCommand(
   "import",
   { args: positionalArgs() },
@@ -308,12 +361,14 @@ const exportCommand = effectCommand(
     type: stringFlag("type"),
     certainty: stringFlag("certainty"),
     since: stringFlag("since"),
+    ...outputConfig(),
   },
   [
     stringSpec("tags"),
     stringSpec("type"),
     stringSpec("certainty"),
     stringSpec("since"),
+    ...outputSpecs,
   ],
   "read",
   handleExportCommand,
@@ -359,6 +414,7 @@ export const featureCommands = [
   coverageCommand,
   gcCommand,
   statsCommand,
+  sizeCommand,
   importCommand,
   reindexCommand,
   exportCommand,

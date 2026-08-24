@@ -26,6 +26,9 @@ export function handleVerifyCommand(commandCtx: CommandContext) {
     );
     const memory = yield* getMemoryById(requireDatabase(commandCtx), id);
     yield* Effect.sync(() => {
+      if (commandCtx.outputMode.quiet) {
+        return;
+      }
       if (!memory) {
         printCommandOutput(commandCtx, { error: "Not found" });
         return;

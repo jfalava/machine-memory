@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { usageError } from "../../cli-utils";
+import { printJson, usageError } from "../../cli-utils";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { normalizeSqliteRow } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
@@ -22,12 +22,23 @@ export function handleGcCommand(commandCtx: CommandContext) {
       [repositoryForCurrentDirectory()],
     );
     const expired = rows.map((row) => normalizeSqliteRow(row));
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      if (commandCtx.outputMode.quiet) {
+        return;
+      }
+      if (commandCtx.outputMode.jsonMin) {
+        printJson({
+          dry_run: true,
+          count: expired.length,
+          ids: expired.map((row) => Number(row.id)),
+        });
+        return;
+      }
       printCommandOutput(commandCtx, {
         dry_run: true,
         count: expired.length,
         expired,
-      }),
-    );
+      });
+    });
   });
 }

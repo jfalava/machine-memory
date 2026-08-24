@@ -14,85 +14,12 @@ import {
   validateBgeEmbeddingText,
   type EmbeddingTextPart,
 } from "@/effect/bge-tokenizer";
+import { tokenizerConfig, tokenizerJson } from "./fixtures/tokenizer";
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-
-const tokenizerJson = {
-  version: "1.0",
-  truncation: null,
-  padding: null,
-  added_tokens: [
-    {
-      id: 0,
-      content: "[PAD]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 1,
-      content: "[UNK]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 2,
-      content: "[CLS]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 3,
-      content: "[SEP]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-  ],
-  normalizer: {
-    type: "BertNormalizer",
-    clean_text: true,
-    handle_chinese_chars: true,
-    strip_accents: null,
-    lowercase: true,
-  },
-  pre_tokenizer: { type: "BertPreTokenizer" },
-  post_processor: {
-    type: "BertProcessing",
-    sep: ["[SEP]", 3],
-    cls: ["[CLS]", 2],
-  },
-  decoder: { type: "WordPiece", prefix: "##", cleanup: true },
-  model: {
-    type: "WordPiece",
-    unk_token: "[UNK]",
-    continuing_subword_prefix: "##",
-    max_input_chars_per_word: 100,
-    vocab: { "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, hello: 4 },
-  },
-};
-
-const tokenizerConfig = {
-  model_max_length: BGE_MAX_EMBEDDING_TOKENS,
-  do_lower_case: true,
-  cls_token: "[CLS]",
-  sep_token: "[SEP]",
-  unk_token: "[UNK]",
-  pad_token: "[PAD]",
-};
 
 describe("BGE tokenizer validation", () => {
   it("counts model special tokens", () => {
@@ -143,7 +70,9 @@ describe("BGE token breakdown", () => {
     expect(breakdown.within_limit).toBe(true);
     expect(breakdown.over_by).toBe(0);
     expect(breakdown.remaining).toBe(511 - 15);
-    expect(breakdown.bytes_estimate).toBe(estimateEmbeddingBytes(composeEmbeddingText(parts)));
+    expect(breakdown.bytes_estimate).toBe(
+      estimateEmbeddingBytes(composeEmbeddingText(parts)),
+    );
     expect(breakdown.parts).toEqual([
       { part: "content", tokens: 3 },
       { part: "context", tokens: 4 },
@@ -174,10 +103,7 @@ describe("BGE token breakdown", () => {
     expect(breakdown.total_tokens).toBe(partSum - breakdown.overhead);
     expect(breakdown.within_limit).toBe(false);
     expect(breakdown.over_by).toBe(
-      Math.max(
-        breakdown.total_tokens - 511,
-        breakdown.bytes_estimate - 512,
-      ),
+      Math.max(breakdown.total_tokens - 511, breakdown.bytes_estimate - 512),
     );
     expect(() => assertBgeBreakdown(breakdown, "Memory")).toThrow(
       /Memory has 614\/512 embedding tokens/,
@@ -186,7 +112,17 @@ describe("BGE token breakdown", () => {
     const message = bgeEmbeddingLimitMessage(breakdown, "Memory");
     expect(message).toContain("content: 602 tokens");
     expect(message).toContain("byte estimate");
-    expect(message).toContain(`Trim at least ${breakdown.over_by} token(s)`);
+    expect(breakdown.binding_limit).toBe("both");
+    expect(message).toContain(
+      `Memory is over the 512-byte embedding estimate by ${breakdown.over_by_bytes} bytes.`,
+    );
+    expect(message).toContain(
+      `Memory is over the 512-token embedding limit by ${breakdown.over_by_tokens} tokens.`,
+    );
+    expect(message).toContain("Largest part: content");
+    expect(message).toMatch(
+      /Suggestion: .+ \(truncating content to ~\d+ bytes/,
+    );
   });
 
   it("rejects on the embedding service byte estimate even when tokens fit", () => {
@@ -208,8 +144,17 @@ describe("BGE token breakdown", () => {
     expect(breakdown.over_by).toBe(
       breakdown.bytes_estimate - BGE_MAX_EMBEDDING_TOKENS,
     );
-    expect(bgeEmbeddingLimitMessage(breakdown, "Memory")).toContain(
-      "token count fits",
+    expect(breakdown.binding_limit).toBe("bytes");
+    expect(breakdown.over_by_tokens).toBe(0);
+    expect(breakdown.trimmed_suggestion).toMatch(
+      /truncating content to ~\d+ bytes makes the byte\+2 estimate fit/,
+    );
+    const message = bgeEmbeddingLimitMessage(breakdown, "Memory");
+    expect(message).toContain(
+      `Memory is over the 512-byte embedding estimate by ${breakdown.over_by_bytes} bytes — the token count itself fits.`,
+    );
+    expect(message).toContain(
+      `Trim at least ${breakdown.over_by_bytes} byte(s) from the composed text.`,
     );
   });
 
@@ -253,14 +198,15 @@ describe("BGE token breakdown", () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener(
-            "abort",
-            () => reject(init.signal?.reason),
-            { once: true },
-          );
-        }),
+      vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+          }),
       ),
     );
 

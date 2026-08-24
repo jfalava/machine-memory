@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { createInterface } from "node:readline/promises";
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import {
   jsonNumber,
@@ -39,8 +40,6 @@ import {
 import { repositoryForCurrentDirectory } from "../../repository";
 import { syncMemoryVector } from "../../effect/vector-sync";
 import {
-  analyzeBgeEmbedding,
-  analyzeEmbeddingByBytes,
   assertBgeBreakdown,
   type BgeTokenBreakdown,
   type EmbeddingTextPart,
@@ -52,9 +51,50 @@ import {
 import { commandError, type CommandError } from "../../effect/errors";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import {
+  embeddingSizeReport,
+  measureEmbeddingFit,
+} from "../features/memory/size-report";
 
 const UPSERT_MIN_SIMILARITY = 0.62;
 const UPSERT_MIN_SCORE = 32;
+const UPSERT_MIN_SCORE_ENV = "MACHINE_MEMORY_UPSERT_MIN_SCORE";
+
+function defaultUpsertMinScore(): number {
+  const raw = process.env[UPSERT_MIN_SCORE_ENV];
+  if (raw === undefined) {
+    return UPSERT_MIN_SCORE;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return UPSERT_MIN_SCORE;
+  }
+  return Math.min(100, Math.max(0, parsed));
+}
+
+function resolveUpsertMinScore(
+  args: string[],
+): Effect.Effect<number, CommandError> {
+  const raw = getFlagValue(args, "--upsert-threshold");
+  if (raw === undefined) {
+    return Effect.succeed(defaultUpsertMinScore());
+  }
+  const parsed = Number(raw);
+  if (
+    raw.trim() === "" ||
+    !Number.isFinite(parsed) ||
+    parsed < 0 ||
+    parsed > 100
+  ) {
+    return Effect.fail(
+      commandError(
+        "add",
+        "--upsert-threshold must be a number between 0 and 100.",
+      ),
+    );
+  }
+  return Effect.succeed(parsed);
+}
 
 type AddExplicitFlags = {
   tags: boolean;
@@ -101,26 +141,27 @@ function validateEmbeddingFit(
   label: string,
   parts: EmbeddingTextPart[],
 ): Effect.Effect<BgeTokenBreakdown, CommandError> {
-  return Effect.tryPromise({
-    try: async () => {
-      let breakdown: BgeTokenBreakdown;
-      try {
-        breakdown = await analyzeBgeEmbedding(parts);
-      } catch {
-        breakdown = analyzeEmbeddingByBytes(parts);
-      }
-      assertBgeBreakdown(breakdown, label);
-      return breakdown;
-    },
-    catch: (cause) =>
-      commandError(
-        command,
-        cause instanceof Error
-          ? cause.message
-          : "Embedding validation failed.",
-        cause,
-      ),
-  });
+  return measureEmbeddingFit(parts).pipe(
+    Effect.mapError((cause) =>
+      commandError(command, cause.message, cause.cause),
+    ),
+    Effect.flatMap((breakdown) =>
+      Effect.try({
+        try: () => {
+          assertBgeBreakdown(breakdown, label);
+          return breakdown;
+        },
+        catch: (cause) =>
+          commandError(
+            command,
+            cause instanceof Error
+              ? cause.message
+              : "Embedding validation failed.",
+            cause,
+          ),
+      }),
+    ),
+  );
 }
 
 function addEmbeddingDocumentParts(
@@ -209,9 +250,7 @@ function prospectiveUpdateDocuments(
   ).pipe(
     Effect.map((entries) =>
       entries.filter(
-        (
-          entry,
-        ): entry is { id: number; document: MemoryVectorDocument } =>
+        (entry): entry is { id: number; document: MemoryVectorDocument } =>
           entry !== null,
       ),
     ),
@@ -295,6 +334,7 @@ function isStrongUpsertMatch(
   matched: JsonObject,
   content: string,
   metadata: AddMetadata,
+  minScore: number = UPSERT_MIN_SCORE,
 ): boolean {
   const matchedText = [
     stringValue(matched.content),
@@ -304,7 +344,52 @@ function isStrongUpsertMatch(
   const incomingText = upsertComparableText(content, metadata);
   const similarity = compareFact(matchedText, incomingText).similarity;
   const score = Number(matched.score ?? 0);
-  return similarity >= UPSERT_MIN_SIMILARITY && score >= UPSERT_MIN_SCORE;
+  return similarity >= UPSERT_MIN_SIMILARITY && score >= minScore;
+}
+
+function contentHead(text: string, maxChars = 120): string {
+  const flattened = text.replace(/\s+/g, " ").trim();
+  return flattened.length > maxChars
+    ? `${flattened.slice(0, maxChars)}…`
+    : flattened;
+}
+
+function upsertMatchInfo(
+  matched: JsonObject,
+  content: string,
+  metadata: AddMetadata,
+): JsonObject {
+  const matchedText = [
+    stringValue(matched.content),
+    stringValue(matched.tags),
+    stringValue(matched.context),
+  ].join(" ");
+  return {
+    id: Number(matched.id ?? 0),
+    score: Number(matched.score ?? 0),
+    similarity:
+      Math.round(
+        compareFact(matchedText, upsertComparableText(content, metadata))
+          .similarity * 1000,
+      ) / 1000,
+    memory_type: stringValue(matched.memory_type, "convention"),
+    status: stringValue(matched.status, "active"),
+    content_head: contentHead(stringValue(matched.content)),
+  };
+}
+
+type UpsertMatchSummary = {
+  id: number;
+  score: number;
+  similarity: number;
+};
+
+function summarizeUpsertMatch(info: JsonObject): UpsertMatchSummary {
+  return {
+    id: Number(info.id ?? 0),
+    score: Number(info.score ?? 0),
+    similarity: Number(info.similarity ?? 0),
+  };
 }
 
 function upsertUpdateSpecs(metadata: AddMetadata): UpdateSpec[] {
@@ -367,11 +452,41 @@ function printUpsertResult(
   mode: "created" | "updated",
   id: number,
   tokenReport?: BgeTokenBreakdown,
+  matchInfo?: JsonObject,
 ) {
-  printCommandOutput(
-    { command: "add", outputMode },
-    tokenReport ? { mode, id, tokens: tokenReport } : { mode, id },
+  const payload: JsonObject = matchInfo
+    ? { mode, id, upsert_match: matchInfo }
+    : { mode, id };
+  if (tokenReport) {
+    Object.assign(payload, { tokens: tokenReport });
+  }
+  printCommandOutput({ command: "add", outputMode }, payload);
+}
+
+function weakMatchGateMessage(
+  summary: UpsertMatchSummary,
+  minScore: number,
+): string {
+  return (
+    `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, similarity ${summary.similarity}; ` +
+    `needs score >= ${minScore} AND similarity >= ${UPSERT_MIN_SIMILARITY}). ` +
+    `Refusing to silently ignore memory #${summary.id}: inspect it with 'add ... --upsert-match ... --dry-run', ` +
+    `rerun with --force to create a new record anyway, or lower the bar with --upsert-threshold <0-100>.`
   );
+}
+
+function confirmWeakMatchCreate(summary: UpsertMatchSummary): Promise<boolean> {
+  const rl = createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+  return rl
+    .question(
+      `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, ` +
+        `similarity ${summary.similarity}). Create a new record anyway? [y/N] `,
+    )
+    .then((answer) => /^y(es)?$/i.test(answer.trim()))
+    .finally(() => rl.close());
 }
 
 function maybeHandleAddUpsert(
@@ -389,32 +504,101 @@ function maybeHandleAddUpsert(
   if (upsertQuery === undefined) {
     return Effect.succeed(false);
   }
+  const dryRun = hasFlag(args, "--dry-run");
+  const force = hasFlag(args, "--force");
   return Effect.gen(function* () {
+    const minScore = yield* resolveUpsertMinScore(args);
     const matched = yield* findMemoryByMatch(database, upsertQuery);
-    if (matched && isStrongUpsertMatch(matched, content, metadata)) {
-      const matchedId = Number(matched.id);
-      const breakdown = yield* validateEmbeddingFit(
-        "add",
-        `Memory ${matchedId}`,
-        memoryVectorEmbeddingParts(
-          addUpsertEmbeddingDocument(matched, content, metadata),
-        ),
-      );
-      yield* updateFromAddPayload(database, matchedId, content, metadata);
-      const updated = yield* getMemoryById(database, matchedId);
-      if (updated) {
-        yield* syncMemoryVector(database, updated);
-      }
-      yield* Effect.sync(() =>
-        printUpsertResult(
-          outputMode,
-          "updated",
-          matchedId,
-          tokenReportEnabled ? breakdown : undefined,
-        ),
-      );
-      return true;
+    const strong =
+      matched !== null &&
+      isStrongUpsertMatch(matched, content, metadata, minScore);
+    const info =
+      matched !== null ? upsertMatchInfo(matched, content, metadata) : null;
+    const summary = info ? summarizeUpsertMatch(info) : null;
+
+    if (dryRun) {
+      return yield* runAddUpsertDryRun({
+        content,
+        metadata,
+        outputMode,
+        matched,
+        strong,
+        info,
+        summary,
+        minScore,
+      });
     }
+
+    if (matched !== null && !strong && summary) {
+      yield* enforceWeakMatchGate(summary, minScore, force);
+    }
+
+    if (strong && matched) {
+      return yield* runStrongUpsertUpdate({
+        database,
+        matched,
+        content,
+        metadata,
+        outputMode,
+        tokenReportEnabled,
+      });
+    }
+    return yield* runUpsertCreate({
+      database,
+      content,
+      metadata,
+      outputMode,
+      tokenReportEnabled,
+      info,
+    });
+  });
+}
+
+function runStrongUpsertUpdate(params: {
+  database: MemoryDatabaseApi;
+  matched: JsonObject;
+  content: string;
+  metadata: AddMetadata;
+  outputMode: CommandContext["outputMode"];
+  tokenReportEnabled: boolean;
+}): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+  return Effect.gen(function* () {
+    const { database, matched, content, metadata, outputMode } = params;
+    const matchedId = Number(matched.id);
+    const breakdown = yield* validateEmbeddingFit(
+      "add",
+      `Memory ${matchedId}`,
+      memoryVectorEmbeddingParts(
+        addUpsertEmbeddingDocument(matched, content, metadata),
+      ),
+    );
+    yield* updateFromAddPayload(database, matchedId, content, metadata);
+    const updated = yield* getMemoryById(database, matchedId);
+    if (updated) {
+      yield* syncMemoryVector(database, updated);
+    }
+    yield* Effect.sync(() =>
+      printUpsertResult(
+        outputMode,
+        "updated",
+        matchedId,
+        params.tokenReportEnabled ? breakdown : undefined,
+      ),
+    );
+    return true;
+  });
+}
+
+function runUpsertCreate(params: {
+  database: MemoryDatabaseApi;
+  content: string;
+  metadata: AddMetadata;
+  outputMode: CommandContext["outputMode"];
+  tokenReportEnabled: boolean;
+  info: JsonObject | null;
+}): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+  return Effect.gen(function* () {
+    const { database, content, metadata, outputMode } = params;
     const breakdown = yield* validateEmbeddingFit(
       "add",
       "Memory",
@@ -432,10 +616,96 @@ function maybeHandleAddUpsert(
         outputMode,
         "created",
         createdId,
-        tokenReportEnabled ? breakdown : undefined,
+        params.tokenReportEnabled ? breakdown : undefined,
+        params.info ?? undefined,
       ),
     );
     return true;
+  });
+}
+
+type AddUpsertDryRunParams = {
+  content: string;
+  metadata: AddMetadata;
+  outputMode: CommandContext["outputMode"];
+  matched: JsonObject | null;
+  strong: boolean;
+  info: JsonObject | null;
+  summary: UpsertMatchSummary | null;
+  minScore: number;
+};
+
+function addUpsertDryRunPayload(
+  params: AddUpsertDryRunParams,
+  size: BgeTokenBreakdown,
+): JsonObject {
+  const { strong, info, summary, minScore } = params;
+  const payload: JsonObject = {
+    command: "add",
+    dry_run: true,
+    action: strong ? "update" : "create",
+  };
+  if (info) {
+    Object.assign(payload, { would_match: info });
+  }
+  if (!strong && summary) {
+    Object.assign(payload, {
+      note: `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, similarity ${summary.similarity}; needs score >= ${minScore} AND similarity >= ${UPSERT_MIN_SIMILARITY}); without --force this write creates a NEW record instead of updating #${summary.id}.`,
+    });
+  }
+  Object.assign(payload, { size: embeddingSizeReport(size) });
+  return payload;
+}
+
+function runAddUpsertDryRun(
+  params: AddUpsertDryRunParams,
+): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+  return Effect.gen(function* () {
+    const prospectiveParts =
+      params.strong && params.matched
+        ? memoryVectorEmbeddingParts(
+            addUpsertEmbeddingDocument(
+              params.matched,
+              params.content,
+              params.metadata,
+            ),
+          )
+        : addEmbeddingDocumentParts(params.content, params.metadata);
+    const size = yield* measureEmbeddingFit(prospectiveParts);
+    yield* Effect.sync(() => {
+      printCommandOutput(
+        { command: "add", outputMode: params.outputMode },
+        addUpsertDryRunPayload(params, size),
+      );
+      if (!size.within_limit) {
+        process.exitCode = 1;
+      }
+    });
+    return true;
+  });
+}
+
+function enforceWeakMatchGate(
+  summary: UpsertMatchSummary,
+  minScore: number,
+  force: boolean,
+): Effect.Effect<void, CommandError> {
+  if (force) {
+    return Effect.void;
+  }
+  const refusal = () =>
+    commandError("add", weakMatchGateMessage(summary, minScore));
+  if (!process.stdin.isTTY) {
+    return Effect.fail(refusal());
+  }
+  return Effect.gen(function* () {
+    const confirmed = yield* Effect.tryPromise({
+      try: () => confirmWeakMatchCreate(summary),
+      catch: () => refusal(),
+    });
+    if (!confirmed) {
+      return yield* Effect.fail(refusal());
+    }
   });
 }
 
@@ -542,9 +812,7 @@ function printAddResult(params: {
   } = params;
   if (outputMode.jsonMin || outputMode.quiet) {
     printJson(
-      tokenReport
-        ? { id: createdId, tokens: tokenReport }
-        : { id: createdId },
+      tokenReport ? { id: createdId, tokens: tokenReport } : { id: createdId },
     );
     return;
   }
@@ -589,36 +857,46 @@ function printAddResult(params: {
   printCommandOutput({ command: "add", outputMode }, payload);
 }
 
-export function handleAddCommand(commandCtx: CommandContext) {
+function runAddDryRun(
+  commandCtx: CommandContext,
+  content: string,
+  metadata: AddMetadata,
+): Effect.Effect<void, CommandError> {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
-    const database = requireDatabase(commandCtx);
-    const content = yield* resolveAddContent(args, commandCtx.fileSystem);
-    const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
-    const tokenReportEnabled = hasFlag(args, "--token-report");
-    if (
-      yield* maybeHandleAddUpsert(database, {
-        args,
-        content,
-        metadata,
-        outputMode,
-        tokenReportEnabled,
-      })
-    ) {
-      return;
-    }
-    const embeddingBreakdown = yield* validateEmbeddingFit(
-      "add",
-      "Memory",
+    const size = yield* measureEmbeddingFit(
       addEmbeddingDocumentParts(content, metadata),
     );
-    const tokenReport = tokenReportEnabled ? embeddingBreakdown : undefined;
-    const conflictState = yield* detectAddConflicts(
-      database,
-      outputMode,
-      content,
-      metadata,
-    );
+    yield* Effect.sync(() => {
+      printCommandOutput(
+        { command: "add", outputMode: commandCtx.outputMode },
+        {
+          command: "add",
+          dry_run: true,
+          action: "create",
+          size: embeddingSizeReport(size),
+        } satisfies JsonObject,
+      );
+      if (!size.within_limit) {
+        process.exitCode = 1;
+      }
+    });
+  });
+}
+
+function runPlainAddInsert(params: {
+  database: MemoryDatabaseApi;
+  commandCtx: CommandContext;
+  content: string;
+  metadata: AddMetadata;
+  tokenReport: BgeTokenBreakdown | undefined;
+  conflictState: {
+    includeConflicts: boolean;
+    potentialConflicts: JsonObject[];
+  };
+}): Effect.Effect<void, MemoryDatabaseError | CommandError> {
+  const { database, commandCtx, content, metadata } = params;
+  return Effect.gen(function* () {
+    const { outputMode } = commandCtx;
     const result = yield* addInsert(database, content, metadata);
     const insertId = jsonNumber(jsonObject(result)?.lastInsertRowid) ?? 0;
     const created = yield* getMemoryById(database, insertId);
@@ -637,12 +915,57 @@ export function handleAddCommand(commandCtx: CommandContext) {
         created,
         content,
         metadata,
-        includeConflicts: conflictState.includeConflicts,
-        potentialConflicts: conflictState.potentialConflicts,
+        includeConflicts: params.conflictState.includeConflicts,
+        potentialConflicts: params.conflictState.potentialConflicts,
         statusCascade,
-        tokenReport,
+        tokenReport: params.tokenReport,
       }),
     );
+  });
+}
+
+export function handleAddCommand(commandCtx: CommandContext) {
+  return Effect.gen(function* () {
+    const { args, outputMode } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    const content = yield* resolveAddContent(args, commandCtx.fileSystem);
+    const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
+    const tokenReportEnabled = hasFlag(args, "--token-report");
+    if (
+      yield* maybeHandleAddUpsert(database, {
+        args,
+        content,
+        metadata,
+        outputMode,
+        tokenReportEnabled,
+      })
+    ) {
+      return;
+    }
+    if (hasFlag(args, "--dry-run")) {
+      yield* runAddDryRun(commandCtx, content, metadata);
+      return;
+    }
+    const embeddingBreakdown = yield* validateEmbeddingFit(
+      "add",
+      "Memory",
+      addEmbeddingDocumentParts(content, metadata),
+    );
+    const tokenReport = tokenReportEnabled ? embeddingBreakdown : undefined;
+    const conflictState = yield* detectAddConflicts(
+      database,
+      outputMode,
+      content,
+      metadata,
+    );
+    yield* runPlainAddInsert({
+      database,
+      commandCtx,
+      content,
+      metadata,
+      tokenReport,
+      conflictState,
+    });
   });
 }
 
@@ -791,6 +1114,143 @@ function runBatchMemoryUpdate(
   });
 }
 
+function printSingleUpdateResult(params: {
+  commandCtx: CommandContext;
+  firstId: number | undefined;
+  row: JsonObject | undefined;
+  tokenReportEnabled: boolean;
+  tokenBreakdowns: Map<number, BgeTokenBreakdown>;
+}): void {
+  const { commandCtx, firstId, row, tokenReportEnabled, tokenBreakdowns } =
+    params;
+  const { outputMode } = commandCtx;
+  if (hasMinimalOutput(outputMode)) {
+    const breakdown =
+      firstId !== undefined ? tokenBreakdowns.get(firstId) : undefined;
+    if (outputMode.brief) {
+      const compact: JsonObject = { id: firstId, status: "updated" };
+      if (breakdown) {
+        Object.assign(compact, { tokens: breakdown });
+      }
+      printJson(compact);
+      return;
+    }
+    printJson({ id: firstId });
+    return;
+  }
+  const payload = row ?? { error: "Not found" };
+  if (
+    tokenReportEnabled &&
+    firstId !== undefined &&
+    "error" in payload === false
+  ) {
+    const breakdown = tokenBreakdowns.get(firstId);
+    if (breakdown) {
+      Object.assign(payload, { tokens: breakdown });
+    }
+  }
+  printCommandOutput(commandCtx, payload);
+}
+
+function printUpdateResults(params: {
+  commandCtx: CommandContext;
+  targetIds: number[];
+  rows: JsonObject[];
+  missingIds: number[];
+  tokenReportEnabled: boolean;
+  tokenBreakdowns: Map<number, BgeTokenBreakdown>;
+}): void {
+  const {
+    commandCtx,
+    targetIds,
+    rows,
+    missingIds,
+    tokenReportEnabled,
+    tokenBreakdowns,
+  } = params;
+  const { outputMode } = commandCtx;
+  if (targetIds.length === 1) {
+    printSingleUpdateResult({
+      commandCtx,
+      firstId: targetIds[0],
+      row: rows[0],
+      tokenReportEnabled,
+      tokenBreakdowns,
+    });
+    return;
+  }
+  if (hasMinimalOutput(outputMode)) {
+    printJson({
+      updated_ids: rows.map((row) => Number(row.id)),
+      not_found: missingIds,
+      count: rows.length,
+    });
+    return;
+  }
+  const payload: JsonObject = {
+    updated: rows,
+    not_found: missingIds,
+    count: rows.length,
+  };
+  if (tokenReportEnabled && tokenBreakdowns.size > 0) {
+    Object.assign(payload, {
+      tokens: [...tokenBreakdowns.entries()].map(([id, breakdown]) => ({
+        id,
+        ...breakdown,
+      })),
+    });
+  }
+  printCommandOutput(commandCtx, payload);
+}
+
+function runUpdateDryRun(
+  commandCtx: CommandContext,
+  prospective: Array<{ id: number; document: MemoryVectorDocument }>,
+): Effect.Effect<void, CommandError> {
+  return Effect.gen(function* () {
+    const targets: JsonObject[] = [];
+    let anyOverBudget = false;
+    for (const entry of prospective) {
+      const size = yield* measureEmbeddingFit(
+        memoryVectorEmbeddingParts(entry.document),
+      );
+      anyOverBudget = anyOverBudget || !size.within_limit;
+      targets.push({ id: entry.id, size: embeddingSizeReport(size) });
+    }
+    yield* Effect.sync(() => {
+      printCommandOutput(commandCtx, {
+        command: "update",
+        dry_run: true,
+        count: targets.length,
+        targets,
+      });
+      if (anyOverBudget) {
+        process.exitCode = 1;
+      }
+    });
+  });
+}
+
+function validateProspectiveUpdates(
+  prospective: Array<{ id: number; document: MemoryVectorDocument }>,
+  tokenReportEnabled: boolean,
+): Effect.Effect<Map<number, BgeTokenBreakdown>, CommandError> {
+  return Effect.gen(function* () {
+    const tokenBreakdowns = new Map<number, BgeTokenBreakdown>();
+    for (const entry of prospective) {
+      const breakdown = yield* validateEmbeddingFit(
+        "update",
+        `Memory ${entry.id}`,
+        memoryVectorEmbeddingParts(entry.document),
+      );
+      if (tokenReportEnabled) {
+        tokenBreakdowns.set(entry.id, breakdown);
+      }
+    }
+    return tokenBreakdowns;
+  });
+}
+
 export function handleUpdateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
@@ -814,17 +1274,14 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       targetIds,
       content,
     );
-    const tokenBreakdowns = new Map<number, BgeTokenBreakdown>();
-    for (const entry of prospective) {
-      const breakdown = yield* validateEmbeddingFit(
-        "update",
-        `Memory ${entry.id}`,
-        memoryVectorEmbeddingParts(entry.document),
-      );
-      if (tokenReportEnabled) {
-        tokenBreakdowns.set(entry.id, breakdown);
-      }
+    if (hasFlag(args, "--dry-run")) {
+      yield* runUpdateDryRun(commandCtx, prospective);
+      return;
     }
+    const tokenBreakdowns = yield* validateProspectiveUpdates(
+      prospective,
+      tokenReportEnabled,
+    );
     const { sets, params } = updateSetsAndParams(args, content);
     const { rows, missingIds } = yield* runBatchMemoryUpdate(
       database,
@@ -835,34 +1292,16 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
     for (const row of rows) {
       yield* syncMemoryVector(database, row);
     }
-    yield* Effect.sync(() => {
-      if (targetIds.length === 1) {
-        const payload = rows[0] ?? { error: "Not found" };
-        const firstId = targetIds[0];
-        if (tokenReportEnabled && firstId !== undefined) {
-          const breakdown = tokenBreakdowns.get(firstId);
-          if (breakdown) {
-            Object.assign(payload, { tokens: breakdown });
-          }
-        }
-        printCommandOutput(commandCtx, payload);
-        return;
-      }
-      const payload: JsonObject = {
-        updated: rows,
-        not_found: missingIds,
-        count: rows.length,
-      };
-      if (tokenReportEnabled && tokenBreakdowns.size > 0) {
-        Object.assign(payload, {
-          tokens: [...tokenBreakdowns.entries()].map(([id, breakdown]) => ({
-            id,
-            ...breakdown,
-          })),
-        });
-      }
-      printCommandOutput(commandCtx, payload);
-    });
+    yield* Effect.sync(() =>
+      printUpdateResults({
+        commandCtx,
+        targetIds,
+        rows,
+        missingIds,
+        tokenReportEnabled,
+        tokenBreakdowns,
+      }),
+    );
   });
 }
 
@@ -921,6 +1360,47 @@ function deprecateSetsAndParams(args: string[], targetIds: number[]) {
   return { sets, params };
 }
 
+function printDeprecateResults(params: {
+  commandCtx: CommandContext;
+  supersededByRequested: boolean;
+  targetIds: number[];
+  rows: JsonObject[];
+  missingIds: number[];
+}): void {
+  const { commandCtx, supersededByRequested, targetIds, rows, missingIds } =
+    params;
+  const { outputMode } = commandCtx;
+  if (hasMinimalOutput(outputMode)) {
+    if (targetIds.length === 1) {
+      const firstId = targetIds[0];
+      if (outputMode.brief) {
+        printJson({
+          id: firstId,
+          status: supersededByRequested ? "superseded_by" : "deprecated",
+        });
+      } else {
+        printJson({ id: firstId });
+      }
+    } else {
+      printJson({
+        deprecated_ids: rows.map((row) => Number(row.id)),
+        not_found: missingIds,
+        count: rows.length,
+      });
+    }
+    return;
+  }
+  if (targetIds.length === 1) {
+    printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
+    return;
+  }
+  printCommandOutput(commandCtx, {
+    deprecated: rows,
+    not_found: missingIds,
+    count: rows.length,
+  });
+}
+
 export function handleDeprecateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
@@ -936,16 +1416,14 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     for (const row of rows) {
       yield* syncMemoryVector(database, row);
     }
-    yield* Effect.sync(() => {
-      if (targetIds.length === 1) {
-        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
-        return;
-      }
-      printCommandOutput(commandCtx, {
-        deprecated: rows,
-        not_found: missingIds,
-        count: rows.length,
-      });
-    });
+    yield* Effect.sync(() =>
+      printDeprecateResults({
+        commandCtx,
+        supersededByRequested: hasFlag(args, "--superseded-by"),
+        targetIds,
+        rows,
+        missingIds,
+      }),
+    );
   });
 }

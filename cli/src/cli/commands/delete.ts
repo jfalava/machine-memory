@@ -22,13 +22,16 @@ export function handleDeleteCommand(commandCtx: CommandContext) {
       );
       yield* deleteMemoryVector(database, id);
     }
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      if (commandCtx.outputMode.quiet) {
+        return;
+      }
       printCommandOutput(
         commandCtx,
         ids.length === 1
           ? { deleted: ids[0] }
           : { deleted: ids, count: ids.length },
-      ),
-    );
+      );
+    });
   });
 }

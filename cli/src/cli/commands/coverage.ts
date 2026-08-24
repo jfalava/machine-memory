@@ -36,12 +36,15 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
         .filter(Boolean);
       return parts.length > 0 && !parts.some((part) => tagSet.has(part));
     });
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      if (commandCtx.outputMode.quiet) {
+        return;
+      }
       printCommandOutput(commandCtx, {
         root,
         uncovered_paths: uncoveredPaths,
         tag_distribution: tagDistribution,
-      }),
-    );
+      });
+    });
   });
 }

@@ -659,8 +659,9 @@ describe("CLI rewrite integration", () => {
     const error = String(addResult.json.error ?? "");
     expect(error).toContain("embedding tokens");
     expect(error).toContain("byte estimate");
-    expect(error).toContain("Trim at least");
+    expect(error).toContain("Both limits bind");
     expect(error).toContain("content: 602 tokens");
+    expect(error).toMatch(/over the 512-byte embedding estimate by \d+ bytes/);
 
     const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
     expect(fetched.json).toEqual({ error: "Not found" });
@@ -730,7 +731,7 @@ describe("CLI rewrite integration", () => {
     expect(updated.code).toBe(1);
     expect(String(updated.json.error ?? "")).toContain(`Memory ${id}`);
     expect(String(updated.json.error ?? "")).toContain("byte estimate");
-    expect(String(updated.json.error ?? "")).toContain("Trim at least");
+    expect(String(updated.json.error ?? "")).toContain("Both limits bind");
 
     const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
     expect(fetched.json.content).toBe("original content");
@@ -764,6 +765,333 @@ describe("CLI rewrite integration", () => {
       source: "tokenizer",
       within_limit: true,
     });
+  });
+
+  it("preflights the embedding budget with the size command", async () => {
+    const { cwd, dbPath } = await createProject();
+    const within = await runCli(cwd, dbPath, "size", "hello world");
+    expect(within.code).toBe(0);
+    expect(within.json.within_budget).toBe(true);
+    expect(within.json.binding_limit).toBeNull();
+    const limits = within.json.limits as Record<string, { pass: boolean }>;
+    expect(limits.tokens?.pass).toBe(true);
+    expect(limits.bytes_estimate?.pass).toBe(true);
+
+    // --remote is accepted as a no-op for the non-database size command.
+    const withRemote = await runCli(
+      cwd,
+      dbPath,
+      "size",
+      "hello world",
+      "--remote",
+    );
+    expect(withRemote.code).toBe(0);
+
+    const over = await runCli(cwd, dbPath, "size", "é".repeat(400));
+    expect(over.code).toBe(1);
+    expect(over.json.within_budget).toBe(false);
+    expect(over.json.binding_limit).toBe("bytes");
+    expect(over.json.over_by_bytes).toBeGreaterThan(0);
+    expect(
+      String(
+        (over.json.limits as Record<string, { pass: boolean }>).tokens?.pass,
+      ),
+    ).toBe("true");
+  });
+
+  it("reports the add size with --dry-run without writing", async () => {
+    const { cwd, dbPath } = await createProject();
+    const dry = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      Array.from({ length: 600 }, () => "hello").join(" "),
+      "--dry-run",
+      "--local",
+    );
+    expect(dry.code).toBe(1);
+    expect(dry.json.command).toBe("add");
+    expect(dry.json.dry_run).toBe(true);
+    expect(dry.json.action).toBe("create");
+    const size = dry.json.size as Record<string, unknown>;
+    expect(size.within_budget).toBe(false);
+    expect(size.trimmed_suggestion).toMatch(/truncating content to ~\d+ bytes/);
+
+    const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
+    expect(fetched.json).toEqual({ error: "Not found" });
+  });
+
+  it("reports the update size per target with --dry-run without writing", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "original content",
+      "--quiet",
+      "--local",
+    );
+    const id = Number(added.json.id);
+
+    const dry = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      String(id),
+      "é".repeat(400),
+      "--dry-run",
+      "--local",
+    );
+    expect(dry.code).toBe(1);
+    expect(dry.json.command).toBe("update");
+    expect(dry.json.dry_run).toBe(true);
+    expect(dry.json.count).toBe(1);
+    const targets = dry.json.targets as Array<Record<string, unknown>>;
+    expect(targets[0]?.id).toBe(id);
+    expect((targets[0]?.size as Record<string, unknown>).binding_limit).toBe(
+      "bytes",
+    );
+
+    const okDry = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      `${id},${id + 1}`,
+      "small content",
+      "--dry-run",
+      "--local",
+    );
+    // Missing ids are filtered before measurement; the found target fits.
+    expect(okDry.code).toBe(0);
+    expect(okDry.json.count).toBe(1);
+    const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
+    expect(fetched.json.content).toBe("original content");
+  });
+
+  it("shows the upsert candidate with add --upsert-match --dry-run", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "alpha beta gamma delta epsilon zeta",
+      "--quiet",
+      "--local",
+    );
+    const existingId = Number(added.json.id);
+
+    // Identical content resolves to a strong match -> action "update".
+    const strong = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "alpha beta gamma delta epsilon zeta",
+      "--upsert-match",
+      "alpha beta gamma",
+      "--dry-run",
+      "--local",
+    );
+    expect(strong.code).toBe(0);
+    expect(strong.json.action).toBe("update");
+    expect((strong.json.would_match as Record<string, unknown>).id).toBe(
+      existingId,
+    );
+    expect(
+      String((strong.json.would_match as Record<string, unknown>).content_head),
+    ).toContain("alpha beta gamma");
+    expect((strong.json.size as Record<string, unknown>).within_budget).toBe(
+      true,
+    );
+
+    // A weak match would NOT be updated; the write path creates a new record.
+    const weak = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "unrelated omega psi quantum flux capacitor notes",
+      "--upsert-match",
+      "alpha beta gamma",
+      "--dry-run",
+      "--local",
+    );
+    expect(weak.code).toBe(0);
+    expect(weak.json.action).toBe("create");
+    expect((weak.json.would_match as Record<string, unknown>).id).toBe(
+      existingId,
+    );
+    expect(String(weak.json.note)).toContain("not a strong upsert match");
+
+    const fetched = await runCli(
+      cwd,
+      dbPath,
+      "get",
+      String(existingId),
+      "--local",
+    );
+    expect(fetched.json.update_count).toBe(0);
+  });
+
+  it("gates weak upsert matches behind --force", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "alpha beta gamma delta epsilon zeta",
+      "--quiet",
+      "--local",
+    );
+    const existingId = Number(added.json.id);
+
+    const blocked = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "unrelated omega psi quantum flux capacitor notes",
+      "--upsert-match",
+      "alpha beta gamma",
+      "--local",
+    );
+    expect(blocked.code).toBe(1);
+    expect(String(blocked.json.error)).toContain("not a strong upsert match");
+
+    // Still just one record after the blocked attempt.
+    const afterBlock = await runCli(
+      cwd,
+      dbPath,
+      "list",
+      "--json-min",
+      "--local",
+    );
+    expect(afterBlock.json.count).toBe(1);
+
+    const forced = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "unrelated omega psi quantum flux capacitor notes",
+      "--upsert-match",
+      "alpha beta gamma",
+      "--force",
+      "--local",
+    );
+    expect(forced.code).toBe(0);
+    expect(forced.json.mode).toBe("created");
+    const newId = Number(forced.json.id);
+    expect(newId).not.toBe(existingId);
+    expect((forced.json.upsert_match as Record<string, unknown>).id).toBe(
+      existingId,
+    );
+
+    const lowered = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "another distinct record about rust build caches",
+      "--upsert-match",
+      "alpha beta gamma",
+      "--upsert-threshold",
+      "0.000001",
+      "--local",
+    );
+    expect(lowered.code).toBe(1); // similarity floor still applies
+  });
+
+  it("supports get --json-min, get --brief and get --quiet", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "parity check memory for get output modes",
+      "--tags",
+      "area:cli,kind:test",
+      "--type",
+      "reference",
+      "--certainty",
+      "verified",
+      "--quiet",
+      "--local",
+    );
+    const id = Number(added.json.id);
+
+    const jsonMin = await runCli(
+      cwd,
+      dbPath,
+      "get",
+      String(id),
+      "--json-min",
+      "--local",
+    );
+    expect(jsonMin.json.count).toBe(1);
+    expect(jsonMin.json.ids).toEqual([id]);
+    expect(jsonMin.json.results).toEqual([
+      {
+        id,
+        memory_type: "reference",
+        certainty: "verified",
+        status: "active",
+        tags: ["area:cli", "kind:test"],
+      },
+    ]);
+
+    const quiet = await runCli(
+      cwd,
+      dbPath,
+      "get",
+      String(id),
+      "--quiet",
+      "--local",
+    );
+    expect(quiet.json).toEqual({ count: 1, ids: [id] });
+
+    const brief = await runCliText(
+      cwd,
+      dbPath,
+      "get",
+      String(id),
+      "--brief",
+      "--local",
+    );
+    expect(brief.stdout).toContain(`[${id}]`);
+    expect(brief.stdout).toContain("<verified>");
+    expect(brief.stdout).toContain("#area:cli");
+  });
+
+  it("supports update --brief and deprecate --brief", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "original content",
+      "--quiet",
+      "--local",
+    );
+    const id = Number(added.json.id);
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      String(id),
+      "replacement content",
+      "--brief",
+      "--local",
+    );
+    expect(updated.code).toBe(0);
+    expect(updated.json).toMatchObject({ id, status: "updated" });
+
+    const deprecated = await runCli(
+      cwd,
+      dbPath,
+      "deprecate",
+      String(id),
+      "--brief",
+      "--local",
+    );
+    expect(deprecated.code).toBe(0);
+    expect(deprecated.json).toEqual({ id, status: "deprecated" });
   });
 });
 

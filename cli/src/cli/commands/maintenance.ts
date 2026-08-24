@@ -1,5 +1,4 @@
 import { Effect } from "effect";
-import { usageError } from "../../cli-utils";
 import type {
   MemoryDatabaseApi,
   MemoryDatabaseError,
@@ -40,7 +39,8 @@ import { syncMemoryVector } from "../../effect/vector-sync";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { resolve } from "node:path";
-import { printCommandOutput } from "../runtime/output";
+import { printJson, usageError } from "../../cli-utils";
+import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 
 type ImportNormalized = {
   content: string;
@@ -400,7 +400,10 @@ export function handleStatsCommand(commandCtx: CommandContext) {
     for (const memory of memories) {
       ingestMemoryStats(accumulator, memory);
     }
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      if (commandCtx.outputMode.quiet) {
+        return;
+      }
       printCommandOutput(commandCtx, {
         total_memories: memories.length,
         breakdown_by_memory_type: accumulator.byType,
@@ -409,8 +412,8 @@ export function handleStatsCommand(commandCtx: CommandContext) {
         oldest_memory: accumulator.oldest,
         memories_not_updated_over_90_days: accumulator.staleCount,
         memories_with_no_tags: accumulator.noTagsCount,
-      }),
-    );
+      });
+    });
   });
 }
 
@@ -433,6 +436,21 @@ export function handleImportCommand(commandCtx: CommandContext) {
         }
       }
     }
-    yield* Effect.sync(() => printCommandOutput(commandCtx, { results }));
+    yield* Effect.sync(() => {
+      if (commandCtx.outputMode.quiet) {
+        return;
+      }
+      if (hasMinimalOutput(commandCtx.outputMode)) {
+        printJson({
+          imported: results.filter((result) => result.status === "success")
+            .length,
+          failed: results.filter((result) => result.status !== "success")
+            .length,
+          count: results.length,
+        });
+        return;
+      }
+      printCommandOutput(commandCtx, { results });
+    });
   });
 }
