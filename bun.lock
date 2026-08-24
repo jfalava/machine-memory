@@ -11,7 +11,7 @@
     },
     "cli": {
       "name": "@machine-memory/cli",
-      "version": "0.14.2",
+      "version": "0.15.0",
       "bin": {
         "machine-memory": "src/app.ts",
       },
@@ -33,7 +33,7 @@
     },
     "docs": {
       "name": "@machine-memory/docs",
-      "version": "0.14.2",
+      "version": "0.15.0",
       "dependencies": {
         "@cloudflare/nimbus-docs": "0.10.0",
         "@fontsource/google-sans-code": "5.3.0",
@@ -63,7 +63,7 @@
     },
     "remote-db/cloudflare": {
       "name": "@machine-memory/remote-db-cloudflare",
-      "version": "0.14.2",
+      "version": "0.15.0",
       "dependencies": {
         "@cloudflare/workers-oauth-provider": "0.10.3",
         "@cloudflare/workers-types": "5.20260820.1",
