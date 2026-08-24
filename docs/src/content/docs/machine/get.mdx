@@ -14,4 +14,8 @@ machine-memory get <id,id,...> (--local|--remote)
 
 `get` retrieves exact memory IDs for the current repository. A single ID
 returns one object; multiple IDs return a `results` array and report any
-missing IDs separately. It does not take output-mode flags.
+missing IDs separately.
+
+Output flags: `--json-min` prints `{count, ids, results}` with each result
+reduced to `{id, memory_type, certainty, status, tags}`; `--quiet` prints only
+`{count, ids}` (plus `missing_ids`); `--brief` prints one-line summaries.

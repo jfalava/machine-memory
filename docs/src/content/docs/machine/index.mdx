@@ -17,12 +17,12 @@ machine-memory query "backend" (--local|--remote) --json-min
 
 ## Output modes
 
-Read commands normally return JSON. Commands that support output flags also
-accept:
+Database-backed commands return JSON. Unless a page states otherwise, every
+command accepts:
 
 | Flag         | Use                                                               |
 | ------------ | ----------------------------------------------------------------- |
-| `--brief`    | Human-readable one-line summaries.                                |
+| `--brief`    | Human-readable one-line summaries or compact ack payloads.        |
 | `--json-min` | Compact JSON with stable identifiers and minimal summaries.       |
 | `--quiet`    | The smallest machine-oriented response available for the command. |
 
@@ -46,6 +46,7 @@ machine-memory query "backend" --remote --pretty
 | [`help`](/machine/help)           | Print the command catalog and enum values as JSON.    |
 | [`version`](/machine/version)     | Print the installed CLI version.                      |
 | [`add`](/machine/add)             | Create a memory, optionally upserting a strong match. |
+| [`size`](/machine/size)           | Preflight the embedding budget without writing.       |
 | [`get`](/machine/get)             | Fetch one or more memories by ID.                     |
 | [`update`](/machine/update)       | Change memory content or metadata.                    |
 | [`deprecate`](/machine/deprecate) | Mark memories deprecated or superseded.               |

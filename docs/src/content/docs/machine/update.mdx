@@ -31,14 +31,20 @@ than one positional content argument.
 
 Like `add`, `update` validates the composed embedding text **before** writing.
 If the updated memory (new content plus retained or replaced metadata) would
-exceed the embedding service's 512-token limit — or its conservative byte+2
-estimate — the update fails with the per-part token breakdown and no memory is
-changed:
+exceed the 512-token limit — or the conservative byte+2 estimate — the update
+fails with the exact byte or token deficit and no memory is changed. Preflight
+with `--dry-run` to print a per-target size report without writing; it exits
+`1` when any target would be over budget:
 
 ```sh
-machine-memory update 42 "very long replacement content..." --local
-# error: Memory 42 has 534/512 embedding tokens; ...
+machine-memory update 42 "replacement content" --dry-run --remote
+# {"command":"update","dry_run":true,"count":1,
+#  "targets":[{"id":42,"size":{...}}]}
 ```
+
+Output flags: `--brief` prints `{id, status}` (plus `tokens` with
+`--token-report`); `--json-min`/`--quiet` print `{id}` for single targets and
+compact `{updated_ids, not_found, count}` payloads for batches.
 
 Pass `--token-report` to include the breakdown on a successful update as
 `tokens` (for a single target) or as a `tokens` array of

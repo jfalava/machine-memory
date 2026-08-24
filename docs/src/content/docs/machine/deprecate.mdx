@@ -18,4 +18,6 @@ With it, they receive `superseded_by` and point at the canonical replacement.
 
 The command accepts either IDs or an active-memory `--match` query. It returns
 the changed rows, missing IDs for batch requests, and the count of updated
-memories.
+memories. Output flags: `--brief` prints `{id, status}`, `--json-min`/`--quiet`
+print `{id}` for single targets and compact `{deprecated_ids, not_found,
+count}` payloads for batches.

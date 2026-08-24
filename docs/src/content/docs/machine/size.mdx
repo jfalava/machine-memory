@@ -1,0 +1,53 @@
+---
+title: size
+description: Preflight the embedding budget for a prospective memory.
+sidebar:
+  order: 3
+---
+
+## Usage
+
+```sh
+machine-memory size <content> (--local|--remote)
+machine-memory size --from-file <path> (--local|--remote)
+```
+
+`size` reports whether a prospective memory would pass the embedding budget
+**without touching the database**. It composes the embedding text exactly like
+an `add` would (content plus tags/context lines plus fixed type/status/certainty
+lines) and reports both limits independently:
+
+```json
+{
+  "source": "tokenizer",
+  "total_tokens": 16,
+  "bytes_estimate": 72,
+  "limits": {
+    "tokens": { "value": 16, "limit": "below 512", "pass": true },
+    "bytes_estimate": { "value": 72, "limit": 512, "pass": true }
+  },
+  "within_budget": true,
+  "binding_limit": null,
+  "over_by_tokens": 0,
+  "over_by_bytes": 0,
+  "parts": [{ "part": "content", "tokens": 4 }]
+}
+```
+
+## Exit code
+
+The command exits `1` when either limit fails, so scripts can preflight writes:
+
+```sh
+machine-memory size "$(cat long-note.txt)" || echo "would be rejected"
+```
+
+When over budget, the report includes `largest_part` and a mechanically derived
+`trimmed_suggestion` — an exact UTF-8-safe truncation when the byte+2 estimate
+binds, or an approximation labeled as such when tokens bind.
+
+## Options
+
+`--tags`, `--context`, `--type`, and `--certainty` are honored so the composed
+text matches the real write. `--from-file` reads content from a file. The
+backend flag is accepted for invocation symmetry but no database is accessed.
