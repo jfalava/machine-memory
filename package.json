@@ -39,6 +39,8 @@
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",
+    "oxfmt": "catalog:maintenance",
+    "oxlint": "catalog:build",
     "vite-tsconfig-paths": "6.1.1"
   },
   "packageManager": "bun@1.4.0"
