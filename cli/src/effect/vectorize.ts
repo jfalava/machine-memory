@@ -119,6 +119,8 @@ function remoteRequestError(
   response: Response,
   message: string,
 ): RemoteRequestError {
+  // SAFETY: status and retryAfterMs are attached via defineProperties right below,
+  // satisfying RemoteRequestError.
   const error = new Error(message) as RemoteRequestError;
   Object.defineProperties(error, {
     status: { value: response.status, enumerable: false },

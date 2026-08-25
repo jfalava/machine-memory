@@ -87,6 +87,8 @@ export function handleOAuthPath(
       resources.ai.raw,
       resources.oauthKv.raw,
     ]);
+    // SAFETY: worker.ts provides these resources from real Cloudflare bindings;
+    // alchemy's RuntimeContext types raw values as unknown only.
     return {
       DB: rawD1 as D1Database,
       VECTORIZE: rawVectorize as Vectorize,

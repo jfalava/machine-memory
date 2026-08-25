@@ -67,6 +67,7 @@ export const provider: SearchProvider = {
       window.location.origin,
     );
     const pagefindUrl = new URL("pagefind/pagefind.js", baseUrl);
+    // SAFETY: the build emits pagefind/pagefind.js exporting the PagefindApi shape.
     pagefind = (await import(
       /* @vite-ignore */ pagefindUrl.href
     )) as PagefindApi;

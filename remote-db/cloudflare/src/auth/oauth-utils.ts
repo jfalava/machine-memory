@@ -170,6 +170,8 @@ function parseStoredState(value: string): AuthRequest {
   } catch {
     throw new OAuthError("server_error", "Invalid state data", 500);
   }
+  // SAFETY: the payload was written to KV by this Worker's authorize step and its
+  // state hash was verified above; consumers read AuthRequest fields only.
   return Schema.decodeUnknownSync(Schema.Any)(parsed) as AuthRequest;
 }
 

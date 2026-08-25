@@ -111,6 +111,7 @@ export function initSearch(config: SearchConfig): SearchInstance {
     }
 
     option.addEventListener("click", (event) => {
+      // SAFETY: click event targets are Elements or null; the chain guards null.
       if ((event.target as Element | null)?.closest("a")) return;
       link.click();
     });
@@ -254,6 +255,7 @@ function bindGlobals() {
   globalsBound = true;
 
   document.addEventListener("click", (event) => {
+    // SAFETY: click event targets are Elements or null; the chain guards null.
     const trigger = (event.target as Element | null)?.closest(
       "[data-search-trigger]",
     );
@@ -276,6 +278,7 @@ function bindGlobals() {
 // on astro:before-swap. Replaces the hand-rolled data-search-ready init loop;
 // data-search-ready is now just the "wired" marker primaryDialog() selects on.
 mount("[data-search-dialog]", (root) => {
+  // SAFETY: mount matched [data-search-dialog]; SearchDialogElement extras are attached by this module.
   const dialog = root as SearchDialogElement;
   dialog.setAttribute("data-search-ready", "true");
 

@@ -24,6 +24,7 @@ type PackageManagerLocals = {
   __nbCounters?: Map<string, number>;
 };
 
+// SAFETY: locals is app-controlled; only this component writes __nbCounters.
 const locals = Astro.locals as PackageManagerLocals;
 const counters =
   locals.__nbCounters ??

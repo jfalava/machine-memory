@@ -212,6 +212,7 @@ function initPersistence(root: HTMLElement): (() => void) | null {
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "/") return;
+    // SAFETY: activeElement is null or an Element; editable targets are HTMLElements.
     const active = document.activeElement as HTMLElement | null;
     if (
       active &&

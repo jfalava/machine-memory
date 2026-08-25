@@ -3,6 +3,7 @@
 import { mount } from "@cloudflare/nimbus-docs/client";
 
 mount("[data-search-trigger]", (btn) => {
+  // SAFETY: userAgentData is missing from lib.dom but optional here; reads stay guarded.
   const nav = navigator as Navigator & {
     userAgentData?: { platform?: string };
   };

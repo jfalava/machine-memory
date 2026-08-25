@@ -96,6 +96,7 @@ function offerFirstRunSetup(
       const answer = globalThis.prompt(
         "No remote memory is configured. Choose setup, create, or skip [setup]:",
       );
+      // SAFETY: unrecognized answers hit the else branch below, which fails loudly.
       return (answer?.trim().toLowerCase() || "setup") as
         | "setup"
         | "create"

@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { getFlagValue } from "../../cli-utils";
-import { commandError, type CommandError } from "../../effect/errors";
+import { commandError } from "../../effect/errors";
 import {
   collectPositionalArgs,
   parseContentFromFileFlag,
@@ -25,7 +25,7 @@ export function handleSizeCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
     const fail = (message: string) =>
-      Effect.fail(commandError("size", message, undefined) as CommandError);
+      Effect.fail(commandError("size", message, undefined));
     const positional = collectPositionalArgs(args, SIZE_FLAGS_WITH_VALUES);
     const contentFromArg = positional[0];
     const contentFromFile = yield* parseContentFromFileFlag(

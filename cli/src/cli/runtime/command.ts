@@ -112,6 +112,7 @@ export function effectCommand<
   const commandSpecs = mode ? [...specs, ...databaseBackendSpecs] : specs;
 
   return Command.make(name, commandConfig, (input) => {
+    // SAFETY: the CLI parsed input against commandSpecs before this handler runs.
     const inputRecord = input as CommandInput;
     const backendFlags: DatabaseBackendFlags = {
       local: inputRecord.local === true,
@@ -132,6 +133,8 @@ export function effectCommand<
         }),
       );
     });
+    // SAFETY: databaseLayer(mode) supplies MemoryDatabase, leaving FileSystem.FileSystem
+    // as the only remaining requirement; the error channel is deliberately unknown.
     return (
       mode
         ? resources.pipe(Effect.provide(databaseLayer(mode, backendFlags)))

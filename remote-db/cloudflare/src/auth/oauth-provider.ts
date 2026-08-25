@@ -56,6 +56,7 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
         "The OAuth provider is only available inside the Worker runtime.",
       );
     }
+    // SAFETY: completeAuthorization stored GitHubAuthProps, so ctx.props always carries login.
     return new mod.OAuthProvider<OAuthEnv>({
       apiRoute: "/mcp",
       apiHandler: {

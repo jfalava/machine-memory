@@ -37,6 +37,7 @@ export async function getStaticPaths() {
       .filter((group) => !group.hidden)
       .map((group) => ({
         params: { section: group.slug },
+        // SAFETY: IndexedGroup fields mirror SectionProps exactly.
         props: {
           slug: group.slug,
           label: group.label,

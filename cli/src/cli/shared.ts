@@ -31,10 +31,12 @@ import {
 import { repositoryForCurrentDirectory } from "../repository";
 
 export function isMemoryType(value: string): value is MemoryType {
+  // SAFETY: MEMORY_TYPES is a const tuple; widening only enables includes().
   return (MEMORY_TYPES as readonly string[]).includes(value);
 }
 
 function isCertainty(value: string): value is Certainty {
+  // SAFETY: CERTAINTY_LEVELS is a const tuple; widening only enables includes().
   return (CERTAINTY_LEVELS as readonly string[]).includes(value);
 }
 
@@ -75,6 +77,7 @@ export function normalizeCertaintyValue(
 }
 
 export function isMemoryStatus(value: string): value is MemoryStatus {
+  // SAFETY: MEMORY_STATUSES is a const tuple; widening only enables includes().
   return (MEMORY_STATUSES as readonly string[]).includes(value);
 }
 

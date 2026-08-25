@@ -4,6 +4,7 @@ type RuntimeGlobals = typeof globalThis & {
   };
 };
 
+// SAFETY: RuntimeGlobals only adds optional members, so the assertion cannot misstate existing globals.
 const environment = (globalThis as RuntimeGlobals).process?.env ?? {};
 
 export const stackName =

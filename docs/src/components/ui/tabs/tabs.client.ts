@@ -19,7 +19,10 @@ function initTabContainer(container: HTMLElement): () => void {
   // parent into manual mode (or vice-versa), independent of mount order.
   const existingTriggers = Array.from(
     container.querySelectorAll("[data-nb-tabs-trigger]"),
-  ).filter((t) => (t as HTMLElement).closest("[data-nb-tabs]") === container);
+  ).filter((t) => {
+    // SAFETY: triggers are authored <button> elements, so narrowing cannot mislabel them.
+    return (t as HTMLElement).closest("[data-nb-tabs]") === container;
+  });
   const synthesize = existingTriggers.length === 0;
 
   if (synthesize && tablist) {

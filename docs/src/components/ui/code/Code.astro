@@ -9,6 +9,7 @@ import { Code as AstroCode } from "astro:components";
 import { defaultCodeTransformers } from "@cloudflare/nimbus-docs";
 
 type Props = Parameters<typeof AstroCode>[0];
+// SAFETY: Astro delivers untyped runtime props; every caller passes Code-compatible props.
 const rawProps = Astro.props as Props;
 const usesNimbusDefaultThemes = !("theme" in rawProps) && !("themes" in rawProps);
 const themed = usesNimbusDefaultThemes

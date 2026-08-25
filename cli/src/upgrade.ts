@@ -157,6 +157,8 @@ function fetchLatestRelease(
         }),
       );
     }
+    // SAFETY: trusted machine-memory GitHub releases payload; a malformed shape
+    // surfaces as UpgradeError from selectAsset.
     return yield* promiseEffect(
       "Failed to decode latest release",
       () => response.json() as Promise<Release>,

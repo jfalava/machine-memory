@@ -663,6 +663,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
       ? yield* fetchQueryResults(commandCtx, queryTerm, { explainScore, limit })
       : {
           results: [],
+          // SAFETY: empty array literal; string[] cannot be violated.
           queryTokens: [] as string[],
           filters: parseCommonFilters(args),
         };

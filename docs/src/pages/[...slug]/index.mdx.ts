@@ -40,6 +40,7 @@ export async function getStaticPaths() {
       params: {
         slug: item.entry.id === "index" ? undefined : item.entry.id,
       },
+      // SAFETY: item is the IndexedEntry SlugProps declares.
       props: { item } as SlugProps,
     }));
 }
@@ -47,6 +48,7 @@ export async function getStaticPaths() {
 export async function GET({ props }: { props: SlugProps }) {
   const { item } = props;
   const { entry, title, description, version } = item;
+  // SAFETY: the docs collection schema defines entry.data; only optional socialImage is read.
   const data = entry.data as PageData;
   const rawImage = data.socialImage;
   const socialImage =

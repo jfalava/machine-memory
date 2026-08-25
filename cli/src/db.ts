@@ -95,6 +95,7 @@ function isBusyError(err: Error): boolean {
 }
 
 function getUserVersion(database: Database): number {
+  // SAFETY: PRAGMA user_version yields one row with user_version, or no row when unset.
   const row = getWithRetry(database, "PRAGMA user_version") as
     | { user_version?: unknown }
     | undefined;

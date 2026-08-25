@@ -363,6 +363,7 @@ async function handleCallback(
     metadata: {
       label: user.name,
     },
+    // SAFETY: the literal sets every GitHubAuthProps field explicitly.
     props: {
       accessToken,
       email: user.email,

@@ -177,6 +177,7 @@ function initToc(root: HTMLElement): () => void {
   const spy = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
+        // SAFETY: only observed heading elements appear as IntersectionObserver targets.
         const i = indexOfEl.get(entry.target as HTMLElement);
         if (i === undefined) continue;
         if (entry.isIntersecting) inBand.add(i);
@@ -273,6 +274,7 @@ function initToc(root: HTMLElement): () => void {
         e.altKey
       )
         return;
+      // SAFETY: click targets inside the document are Elements; closest handles the rest.
       const link = (e.target as Element).closest<HTMLElement>(
         "[data-nb-toc-link]",
       );
