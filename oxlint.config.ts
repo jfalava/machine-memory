@@ -15,6 +15,22 @@ export const antiSlopJsPlugins = (specifierPrefix: string) => [
   },
 ];
 
+// Agent-tool directories can appear anywhere; never lint them as source.
+// Patterns resolve relative to each consuming config's directory.
+export const agentIgnores = [
+  ".agent/**",
+  ".agents/**",
+  ".claude/**",
+  ".codex/**",
+  ".continue/**",
+  ".cursor/**",
+  ".gemini/**",
+  ".opencode/**",
+  ".pi/**",
+  ".roo/**",
+  ".windsurf/**",
+];
+
 export const antiSlopRules: DummyRuleMap = {
   "anti-slop/no-chained-type-assertions": "error",
   "anti-slop/no-conditional-empty-object-spread": "error",
