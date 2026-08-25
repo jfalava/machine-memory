@@ -17,14 +17,14 @@
         "@types/bun": "1.4.0"
       },
       "build": {
-        "oxlint": "1.79.0",
+        "oxlint": "1.80.0",
         "oxlint-tsgolint": "7.0.2001",
         "typescript": "7.0.2",
         "wrangler": "4.124.0"
       },
       "maintenance": {
         "oxfmt": "0.64.0",
-        "oxlint": "1.79.0",
+        "oxlint": "1.80.0",
         "vitest": "4.1.11"
       }
     }
@@ -38,7 +38,7 @@
     "typecheck:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare typecheck"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.78.0",
+    "@oxlint/plugins": "1.80.0",
     "vite-tsconfig-paths": "6.1.1"
   },
   "packageManager": "bun@1.4.0"
