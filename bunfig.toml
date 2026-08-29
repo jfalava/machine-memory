@@ -1,2 +1,3 @@
 [install]
 minimunReleaseAge = 86400
+minimumReleaseAgeExcludes = ["@types/node", "@types/bun", "effect", "@effect/*"]
