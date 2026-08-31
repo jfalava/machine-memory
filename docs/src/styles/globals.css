@@ -18,50 +18,51 @@
  *     `shadow-lg`, etc. as color names — they collide with built-ins)
  * ============================================================ */
 
-/* ---- Light mode (default) ---- */
+/* ---- Light mode (default) ----
+ * Values mirror the shared JFA palette in common/src/styles.css. */
 :root {
   color-scheme: light;
 
   /* Surfaces (paired with foregrounds for contrast) */
-  --nb-background: oklch(0.99 0 0);
-  --nb-foreground: oklch(0.21 0 0);
+  --nb-background: oklch(100% 0 0);
+  --nb-foreground: oklch(20.5% 0 0);
 
-  --nb-card: oklch(1 0 0);
+  --nb-card: oklch(100% 0 0);
   --nb-card-foreground: var(--nb-foreground);
 
-  --nb-muted: oklch(0.967 0 0);
-  --nb-muted-foreground: oklch(0.556 0 0);
+  --nb-muted: oklch(97% 0 0);
+  --nb-muted-foreground: oklch(45% 0 0);
 
-  --nb-accent: oklch(0.967 0 0);
+  --nb-accent: oklch(97% 0 0);
   --nb-accent-foreground: var(--nb-foreground);
 
   /* Primary action / brand */
-  --nb-primary: oklch(0.145 0 0);
-  --nb-primary-foreground: oklch(0.97 0 0);
-  --nb-primary-hover: oklch(0.371 0 0);
+  --nb-primary: oklch(51.1% 0.262 276.966);
+  --nb-primary-foreground: oklch(98.5% 0 0);
+  --nb-primary-hover: color-mix(in oklch, var(--nb-primary) 80%, transparent);
 
   /* Borders / focus */
-  --nb-border: oklch(0.935 0 0);
-  --nb-border-strong: oklch(0.87 0 0);
-  --nb-selected: oklch(0.89 0 0);
-  --nb-ring: oklch(0.145 0 0 / 0.35);
+  --nb-border: oklch(92.5% 0 0);
+  --nb-border-strong: oklch(87.1% 0.006 286.286);
+  --nb-selected: color-mix(in oklch, var(--nb-primary) 10%, transparent);
+  --nb-ring: oklch(55% 0 0);
 
   /* Status colors — paired (saturated for text/border + muted for bg) */
-  --nb-info: oklch(0.45 0.18 255);
-  --nb-info-foreground: oklch(0.45 0.18 255);
-  --nb-info-muted: oklch(0.965 0.015 255);
+  --nb-info: var(--nb-primary);
+  --nb-info-foreground: var(--nb-primary);
+  --nb-info-muted: color-mix(in oklch, var(--nb-primary) 10%, transparent);
 
-  --nb-success: oklch(0.42 0.14 152);
-  --nb-success-foreground: oklch(0.42 0.14 152);
-  --nb-success-muted: oklch(0.965 0.015 152);
+  --nb-success: oklch(59.6% 0.145 163.225);
+  --nb-success-foreground: oklch(59.6% 0.145 163.225);
+  --nb-success-muted: color-mix(in oklch, var(--nb-success) 10%, transparent);
 
-  --nb-warning: oklch(0.48 0.15 65);
-  --nb-warning-foreground: oklch(0.48 0.15 65);
-  --nb-warning-muted: oklch(0.97 0.02 70);
+  --nb-warning: oklch(70% 0.18 85);
+  --nb-warning-foreground: oklch(55% 0.16 75);
+  --nb-warning-muted: color-mix(in oklch, var(--nb-warning) 12%, transparent);
 
-  --nb-danger: oklch(0.47 0.18 25);
-  --nb-danger-foreground: oklch(0.47 0.18 25);
-  --nb-danger-muted: oklch(0.965 0.015 25);
+  --nb-danger: oklch(57.7% 0.245 27.325);
+  --nb-danger-foreground: oklch(57.7% 0.245 27.325);
+  --nb-danger-muted: color-mix(in oklch, var(--nb-danger) 10%, transparent);
 
   /* Layout */
   --nb-sidebar-width: 18.75rem;
@@ -99,42 +100,42 @@
 [data-mode="dark"] {
   color-scheme: dark;
 
-  --nb-background: oklch(0.085 0 0);
-  --nb-foreground: oklch(0.97 0 0);
+  --nb-background: oklch(15% 0 0);
+  --nb-foreground: oklch(98.5% 0 0);
 
-  --nb-card: #0f0f0f;
+  --nb-card: oklch(18% 0 0);
   --nb-card-foreground: var(--nb-foreground);
 
-  --nb-muted: #060606;
-  --nb-muted-foreground: oklch(0.556 0 0);
+  --nb-muted: oklch(25% 0 0);
+  --nb-muted-foreground: oklch(70% 0 0);
 
-  --nb-accent: oklch(0.269 0 0);
+  --nb-accent: oklch(25% 0 0);
   --nb-accent-foreground: var(--nb-foreground);
 
-  --nb-primary: oklch(0.9 0 0);
-  --nb-primary-foreground: oklch(0.085 0 0);
-  --nb-primary-hover: oklch(0.7 0 0);
+  --nb-primary: oklch(67.3% 0.182 276.935);
+  --nb-primary-foreground: oklch(15% 0 0);
+  --nb-primary-hover: color-mix(in oklch, var(--nb-primary) 80%, transparent);
 
-  --nb-border: oklch(0.269 0 0);
-  --nb-border-strong: oklch(0.371 0 0);
-  --nb-selected: oklch(0.371 0 0);
-  --nb-ring: oklch(0.9 0 0 / 0.35);
+  --nb-border: oklch(100% 0 0 / 0.12);
+  --nb-border-strong: oklch(37% 0.013 285.805);
+  --nb-selected: color-mix(in oklch, var(--nb-primary) 20%, transparent);
+  --nb-ring: oklch(70% 0 0);
 
-  --nb-info: oklch(0.75 0.12 255);
-  --nb-info-foreground: oklch(0.75 0.12 255);
-  --nb-info-muted: oklch(0.17 0.03 260);
+  --nb-info: var(--nb-primary);
+  --nb-info-foreground: var(--nb-primary);
+  --nb-info-muted: color-mix(in oklch, var(--nb-primary) 20%, transparent);
 
-  --nb-success: oklch(0.72 0.12 150);
-  --nb-success-foreground: oklch(0.72 0.12 150);
-  --nb-success-muted: oklch(0.17 0.025 153);
+  --nb-success: oklch(69.6% 0.17 162.48);
+  --nb-success-foreground: oklch(69.6% 0.17 162.48);
+  --nb-success-muted: color-mix(in oklch, var(--nb-success) 20%, transparent);
 
-  --nb-warning: oklch(0.78 0.11 80);
-  --nb-warning-foreground: oklch(0.78 0.11 80);
-  --nb-warning-muted: oklch(0.19 0.03 70);
+  --nb-warning: oklch(78% 0.15 85);
+  --nb-warning-foreground: oklch(78% 0.15 85);
+  --nb-warning-muted: color-mix(in oklch, var(--nb-warning) 20%, transparent);
 
-  --nb-danger: oklch(0.72 0.14 25);
-  --nb-danger-foreground: oklch(0.72 0.14 25);
-  --nb-danger-muted: oklch(0.17 0.03 25);
+  --nb-danger: oklch(70.4% 0.191 22.216);
+  --nb-danger-foreground: oklch(70.4% 0.191 22.216);
+  --nb-danger-muted: color-mix(in oklch, var(--nb-danger) 20%, transparent);
 
   --nb-shadow-sm: 0 1px 2px oklch(0 0 0 / 0.2);
   --nb-shadow: 0 1px 3px oklch(0 0 0 / 0.3), 0 1px 2px oklch(0 0 0 / 0.2);
