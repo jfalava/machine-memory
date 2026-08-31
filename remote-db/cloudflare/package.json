@@ -15,15 +15,15 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.10.3",
-    "@cloudflare/workers-types": "5.20260820.1",
+    "@cloudflare/workers-types": "5.20260831.1",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
     "@effect/sql-d1": "catalog:effect",
     "@modelcontextprotocol/server": "2.0.0",
-    "agents": "0.21.0",
-    "alchemy": "2.0.0-beta.72",
+    "agents": "0.22.0",
+    "alchemy": "2.0.0-beta.76",
     "effect": "catalog:effect",
-    "zod": "4.4.3"
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "oxfmt": "catalog:maintenance",
