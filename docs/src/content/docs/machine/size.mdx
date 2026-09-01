@@ -12,10 +12,28 @@ machine-memory size <content> (--local|--remote)
 machine-memory size --from-file <path> (--local|--remote)
 ```
 
+## Embedding budget
+
 `size` reports whether a prospective memory would pass the embedding budget
 **without touching the database**. It composes the embedding text exactly like
 an `add` would (content plus tags/context lines plus fixed type/status/certainty
 lines) and reports both limits independently:
+
+Every memory's composed embedding text must stay **below 512 BGE tokens**, and
+its conservative byte estimate (**UTF-8 bytes + 2**) must be **at most 512**.
+Either limit rejects the write before anything is stored.
+
+Use these commands to preflight without writing:
+
+```sh
+machine-memory size "<text>" --remote
+machine-memory add "<text>" --dry-run --remote
+machine-memory update <id> "<text>" --dry-run --remote
+```
+
+Pass `--token-report` to a real `add` or `update` to include the per-part token
+breakdown. When a memory exceeds the budget, the error states the exact byte or
+token deficit and suggests a mechanical trim.
 
 ```json
 {
