@@ -1,0 +1,55 @@
+---
+title: Sandbox & credentials
+description: Keychain gaps, Amp/orbs, and .env-based remote access.
+audience: human
+sidebar:
+  order: 3
+---
+
+Sandboxes (Amp orbs, CI, locked-down Linux) often cannot use the OS keychain. MCP and CLI credentials are different paths.
+
+## MCP vs CLI credentials
+
+| Path               | Auth                            | Sandbox notes                                                                                                        |
+| ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **MCP** `/mcp`     | GitHub OAuth 2.1 in the browser | No `MACHINE_MEMORY_DB_TOKEN`. Client must complete OAuth; cookie signing uses `COOKIE_ENCRYPTION_KEY` on the Worker. |
+| **CLI** `--remote` | Worker URL + bearer token       | Needs keychain **or** repo-root `.env` (below).                                                                      |
+
+MCP clients never read your local keychain or `.env` token. If OAuth fails, see [MCP troubleshooting](/troubleshooting/mcp).
+
+## CLI remote without keychain
+
+When Bun Secrets / libsecret / macOS keychain is unavailable, put credentials in a **repository root** `.env` and run commands from that root:
+
+```dotenv
+MACHINE_MEMORY_DB_URL=https://your-worker.example
+MACHINE_MEMORY_DB_TOKEN=your-worker-token
+```
+
+- URL may be the Worker origin or `…/query`; the CLI normalizes to `/query`.
+- Keep `.env` out of version control.
+- Full notes: [Sandboxed keychain access](/human/remote/keychain-access).
+
+If the keychain is unreachable, the CLI suggests `.env` instead of forcing `remote setup` / `provision`.
+
+## Amp orbs and project secrets
+
+- Inject `MACHINE_MEMORY_DB_URL` and `MACHINE_MEMORY_DB_TOKEN` (and Cloudflare deploy secrets if you deploy from the orb) as **project/workspace secrets**, not only a laptop keychain.
+- After changing secrets, restart orb processes so children see the new env (`amp orb restart-processes` when applicable).
+- Trim whitespace on `CLOUDFLARE_ACCOUNT_ID` / tokens; a trailing space makes Wrangler reject the account id as invalid.
+
+## MCP-only in a sandbox
+
+1. Worker already [provisioned](/mcp/infrastructure) and [MCP enabled](/mcp/enable) from a machine that can deploy.
+2. In the sandbox, connect the MCP client to `https://<worker-url>/mcp` and finish browser OAuth (device must open the auth URL).
+3. Install agent instructions without the CLI:
+
+   ```sh
+   curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+   ```
+
+   See [MCP init](/mcp/init).
+
+## Interactive token prompts
+
+`Bun.prompt` echoes input and cannot mask secrets. The CLI’s interactive Worker token prompt uses a raw TTY reader (`*` per character). Prefer `--token` / env / `.env` in automation so nothing interactive runs.

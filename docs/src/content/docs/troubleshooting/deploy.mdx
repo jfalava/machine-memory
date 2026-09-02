@@ -1,0 +1,60 @@
+---
+title: Deploy
+description: Alchemy Worker deploy and docs site prerender gotchas.
+audience: human
+sidebar:
+  order: 4
+---
+
+## Alchemy: non-interactive Cloudflare auth
+
+**Symptom:** `AuthError: No credentials configured… set CI=1 to use environment-variable credentials.`
+
+**Fix:** Export `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then:
+
+```sh
+cd remote-db/cloudflare
+CI=1 bun run deploy
+# or
+CI=1 bunx alchemy deploy --yes
+```
+
+Trim trailing spaces on the account id (Wrangler rejects `"[id] "`).
+
+## Alchemy: resource exists but is not owned by this stack
+
+**Symptom:** `OwnedBySomeoneElse: Cannot adopt resource 'machine-memory-api'…`
+
+**Cause:** Fresh local Alchemy state against an account that already has the Worker/D1/Vectorize from a previous machine or stage.
+
+**Fix:**
+
+```sh
+CI=1 bunx alchemy deploy --yes --adopt
+```
+
+Only adopt when you intend this checkout to manage the existing production names.
+
+## Docs build: missing `@bruits/satteri-linux-x64-gnu`
+
+**Symptom:** Astro 7 prerender fails with `Cannot find native binding` / `Cannot find module '@bruits/satteri-linux-x64-gnu'` while Bun keeps `satteri` under the monorepo `.bun` store.
+
+**Fix (from `docs/`):**
+
+```sh
+NODE_PATH="../node_modules/.bun/satteri@0.9.5/node_modules:../node_modules/.bun/@bruits+satteri-linux-x64-gnu@0.9.5/node_modules" \
+  bun run build
+```
+
+Adjust versions to whatever `ls ../node_modules/.bun | rg satteri` shows. Then:
+
+```sh
+# with a clean CLOUDFLARE_ACCOUNT_ID (no trailing space)
+bunx wrangler deploy
+```
+
+`bun run deploy` runs `astro check && astro build` first; set `NODE_PATH` for that full script too if you use it.
+
+## MCP secrets after deploy
+
+Deploying without `GITHUB_*` / `COOKIE_ENCRYPTION_KEY` succeeds; MCP stays off until those secrets exist and you redeploy. See [Enable MCP](/mcp/enable) and [MCP 503](/troubleshooting/mcp#mcp-routes-return-503).

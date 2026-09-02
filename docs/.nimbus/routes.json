@@ -43,7 +43,12 @@
     "/mcp/enable",
     "/mcp/infrastructure",
     "/mcp/init",
-    "/mcp/tools"
+    "/mcp/tools",
+    "/troubleshooting",
+    "/troubleshooting/cli",
+    "/troubleshooting/deploy",
+    "/troubleshooting/mcp",
+    "/troubleshooting/sandbox"
   ],
   "opaqueNamespaces": []
 }

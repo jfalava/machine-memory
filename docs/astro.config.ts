@@ -63,6 +63,16 @@ const nimbusConfig = defineNimbusConfig({
         landing: "/mcp",
       },
       {
+        label: "Troubleshooting",
+        items: [
+          { label: "MCP", link: "/troubleshooting/mcp" },
+          { label: "Sandbox & credentials", link: "/troubleshooting/sandbox" },
+          { label: "Deploy", link: "/troubleshooting/deploy" },
+          { label: "CLI", link: "/troubleshooting/cli" },
+        ],
+        landing: "/troubleshooting",
+      },
+      {
         label: "Machine commands",
         items: [{ autogenerate: { directory: "machine" } }],
         landing: "/machine",

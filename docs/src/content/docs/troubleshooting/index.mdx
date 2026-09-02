@@ -1,0 +1,18 @@
+---
+title: Troubleshooting
+description: Known gotchas for MCP, sandboxes, deploys, and the CLI.
+audience: human
+sidebar:
+  order: 1
+---
+
+Hard-won failure modes and fixes. Start with the topic that matches the symptom.
+
+| Guide                                             | When you hit                                                                               |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| [MCP](/troubleshooting/mcp)                       | OAuth, cookie signing, `/mcp` 503s, auth 404/403, wrong slug, size rejects, Alchemy import |
+| [Sandbox & credentials](/troubleshooting/sandbox) | No OS keychain, Amp/orbs, `.env` remote access, account ID / token env quirks              |
+| [Deploy](/troubleshooting/deploy)                 | Alchemy `CI=1` / `--adopt`, docs prerender (`satteri`), Worker secrets                     |
+| [CLI](/troubleshooting/cli)                       | macOS `codesign`, `--local` ignored, masked token prompts                                  |
+
+Setup references: [MCP](/mcp), [remote](/human/remote), [Installation](/installation).

@@ -1,0 +1,86 @@
+---
+title: MCP
+description: OAuth, cookie signing, auth routing, and runtime gotchas for the MCP server.
+audience: human
+sidebar:
+  order: 2
+---
+
+Symptoms against `https://<worker-url>/mcp` and the OAuth flow. Enablement steps: [Enable MCP](/mcp/enable).
+
+## MCP routes return 503
+
+**Cause:** MCP is opt-in. Missing any of these Worker secrets disables OAuth/MCP only; REST keeps working:
+
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `COOKIE_ENCRYPTION_KEY`
+
+The 503 body lists which names are missing.
+
+**Fix:** Set all three, redeploy ([Enable MCP](/mcp/enable)). Generate the cookie key with `openssl rand -hex 32`.
+
+## Cookie / session signing failures
+
+**Cause:** `COOKIE_ENCRYPTION_KEY` signs OAuth cookies and related state. Wrong, rotated, or empty values break the browser leg of auth (callback, CSRF cookie mismatch, “invalid state”).
+
+**Fix:**
+
+1. Use a stable random secret (`openssl rand -hex 32`), not a placeholder.
+2. Keep the same value across deploys unless you intentionally force every client to re-authorize.
+3. After rotating the key, complete the OAuth flow again in the MCP client.
+4. Confirm the GitHub OAuth app callback is exactly `https://<worker-url>/callback` (no trailing path drift).
+
+## `/authorize` or `/callback` 404 (JSON) during MCP login
+
+**Symptom:** MCP client starts OAuth; browser or client gets a JSON 404 on `/authorize?…` or `/callback?…`.
+
+**Cause (fixed in tree):** Some request layers expose `url` as pathname **plus** query. Path checks like `url === "/authorize"` fail for `/authorize?client_id=…`, so the request fell through to REST and 404’d.
+
+**Fix:** Use a current Worker build. Matching must use the **pathname only** (strip `?…` first). Queryless paths (`/mcp`, `/token`, `/register`) were never affected.
+
+If you still see this on an old deploy, redeploy the Worker from current `master`.
+
+## GitHub `/user` 403 during callback
+
+**Symptom:** OAuth reaches GitHub, then fails with an administrative/forbidden style error fetching the user.
+
+**Cause:** `fetch()` from Workers sends **no `User-Agent` by default**. GitHub’s API rejects that on `/user`.
+
+**Fix (in tree):** GitHub fetches set `User-Agent` and `Accept: application/vnd.github+json`. Redeploy if your Worker predates that.
+
+**Note:** GitHub may return `email` / `name` as `null` without a public email; the Worker accepts nulls.
+
+## Alchemy deploy fails importing `cloudflare:workers` (OAuth provider)
+
+**Symptom:** `alchemy deploy` / `plan` dies resolving `cloudflare:workers` while loading the stack (often via `@cloudflare/workers-oauth-provider`).
+
+**Cause:** That package’s dist can **statically** import `cloudflare:workers`, which Bun cannot resolve at plan time.
+
+**Fix (in tree):** OAuth provider construction uses a **guarded dynamic import** with a fallback, and builds the provider at request time inside workerd (same idea as Alchemy’s own workers shim). Stay on current `remote-db/cloudflare` sources; don’t reintroduce a top-level static import of the provider package.
+
+## Wrong repository / silent empty reads
+
+**Cause:** Reads (`memory_query`, `memory_list`, `memory_get`) are **loose** — a wrong `owner/name` returns empty or not-found. Writes require an exact slug and echo `written_to` / `deleted_from`.
+
+**Fix:** Call `list_repositories` before writes. Confirm the slug matches `git remote` / GitHub. Treat empty search results as “wrong scope or empty project,” not “tool broken.”
+
+## Embedding size rejected on add/update
+
+**Symptom:** `Document text must be at most 512 tokens for embedding.` or `memory_size` with `within_budget: false`.
+
+**Cause:** Composed embedding text must satisfy UTF-8 **bytes + 2 ≤ 512** (Worker conservative bound; no BGE tokenizer in the Worker). Same budget as CLI `size` / `--dry-run` when the tokenizer is unavailable.
+
+**Fix:** Call `memory_size` before long writes; trim `content` / `context` / `tags`. See [Tools → Embedding size budget](/mcp/tools#embedding-size-budget).
+
+## MCP client still shows old tools
+
+**Symptom:** Deployed Worker has `memory_size` (or new schemas) but the agent client lists the previous tool set.
+
+**Cause:** Many hosts cache MCP tool schemas until reconnect.
+
+**Fix:** Disconnect/reconnect the MCP server in the client, or restart the host session. On-flight size rejection on `memory_add` / `memory_update` still applies even if `memory_size` is not listed yet.
+
+## Only GitHub OAuth
+
+No other IdP is supported. Clients must complete the GitHub browser flow against this Worker’s authorization server metadata.

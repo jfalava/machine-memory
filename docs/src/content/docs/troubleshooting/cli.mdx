@@ -1,0 +1,31 @@
+---
+title: CLI
+description: Binary signing, backend flags, and local credential quirks.
+audience: human
+sidebar:
+  order: 5
+---
+
+## macOS: `zsh: killed` after download or upgrade
+
+**Cause:** Ad-hoc code signature no longer matches the binary (common after `curl` install or `machine-memory upgrade`).
+
+**Fix:**
+
+```sh
+xattr -c machine-memory
+codesign --force --sign - machine-memory
+codesign -v --strict machine-memory
+```
+
+`chmod +x` alone does not fix this. Same steps after [upgrade](/human/upgrade).
+
+## `--local` ignored when remote credentials exist
+
+**Historical cause:** With keychain remote credentials present and `MACHINE_MEMORY_DB_PATH` unset, config could fall through to remote even when `--local` was passed.
+
+**Status:** Fixed — `--local` forces the local backend. Upgrade the CLI if an old build still mis-routes. Prefer an explicit `--local` or `--remote` on every database command.
+
+## Init / keychain on Linux
+
+`machine-memory init` and remote setup use Bun Secrets. Linux needs a working `libsecret` session. In headless sandboxes, skip keychain and use [`.env` remote credentials](/troubleshooting/sandbox#cli-remote-without-keychain) or [MCP-only init](/mcp/init).
