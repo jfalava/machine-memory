@@ -1,9 +1,9 @@
 ---
-title: MCP
+title: Overview
 description: Use machine-memory from LLM agents over the Model Context Protocol—no CLI required.
 audience: human
 sidebar:
-  order: 1
+  order: 0
 ---
 
 Machine Memory’s remote Worker can act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect with OAuth 2.1, then call tools to search and write project memories. Access is scoped by GitHub identity and repository slug, not a shared bearer token.
@@ -44,8 +44,8 @@ On first connect the browser opens authorization: the client registers, GitHub i
 
 ## Related CLI docs
 
-Remote CLI setup (keychain / `.env`) still lives under [remote](/human/remote). The CLI and MCP can share one provisioned stack.
+Remote CLI setup (keychain / `.env`) still lives under [remote](/human/remote/overview). The CLI and MCP can share one provisioned stack.
 
 ## Troubleshooting
 
-OAuth, cookie signing, sandbox credentials, and deploy gotchas: [Troubleshooting → MCP](/troubleshooting/mcp) and the rest of [Troubleshooting](/troubleshooting).
+OAuth, cookie signing, sandbox credentials, and deploy gotchas: [Troubleshooting → MCP](/troubleshooting/mcp).

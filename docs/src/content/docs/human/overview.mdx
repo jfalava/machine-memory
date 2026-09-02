@@ -1,5 +1,5 @@
 ---
-title: Human commands
+title: Overview
 description: Setup and maintenance commands intended to be run directly by a person.
 audience: human
 sidebar:
@@ -8,7 +8,7 @@ sidebar:
 
 These commands change local configuration, provision infrastructure, or update the instructions that agents read from `AGENTS.md`.
 
-For agent access **without** the CLI, see the top-level [MCP](/mcp) section (infrastructure, OAuth, init script, and tools).
+For agent access **without** the CLI, see the top-level [MCP](/mcp/overview) section (infrastructure, OAuth, init script, and tools).
 
 ## Commands
 
@@ -16,7 +16,7 @@ For agent access **without** the CLI, see the top-level [MCP](/mcp) section (inf
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | [`--pretty`](/human/pretty)                        | Render machine-command results as readable terminal output instead of JSON.                                      |
 | [`init`](/human/init)                              | Create or replace the managed memory block in `AGENTS.md` (`--local` / `--remote` / `--mcp`).                    |
-| [`local`](/human/local)                            | Use a repository-local SQLite database.                                                                          |
+| [`local`](/human/local/overview)                            | Use a repository-local SQLite database.                                                                          |
 | [`local export`](/human/local/export)              | Export local memories into remote D1.                                                                            |
 | [`remote setup`](/human/remote/setup)              | Save credentials for an existing authenticated Worker.                                                           |
 | [`remote provision`](/human/remote/provision)      | Deploy a new Alchemy D1 stack and save its credentials. Also used for [MCP infrastructure](/mcp/infrastructure). |

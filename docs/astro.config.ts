@@ -23,19 +23,20 @@ const nimbusConfig = defineNimbusConfig({
       {
         label: "Human commands",
         items: [
+          { label: "Overview", link: "/human/overview" },
           { label: "--pretty", link: "/human/pretty" },
           { label: "init", link: "/human/init" },
           {
             label: "local",
             items: [
-              { label: "Overview", link: "/human/local" },
+              { label: "Overview", link: "/human/local/overview" },
               { label: "Export", link: "/human/local/export" },
             ],
           },
           {
             label: "remote",
             items: [
-              { label: "Overview", link: "/human/remote" },
+              { label: "Overview", link: "/human/remote/overview" },
               { label: "setup", link: "/human/remote/setup" },
               {
                 label: "provision",
@@ -50,17 +51,16 @@ const nimbusConfig = defineNimbusConfig({
           { label: "upgrade", link: "/human/upgrade" },
           { label: "reindex", link: "/human/reindex" },
         ],
-        landing: "/human",
       },
       {
         label: "MCP",
         items: [
+          { label: "Overview", link: "/mcp/overview" },
           { label: "Infrastructure", link: "/mcp/infrastructure" },
           { label: "Enable MCP", link: "/mcp/enable" },
           { label: "Init", link: "/mcp/init" },
           { label: "Tools", link: "/mcp/tools" },
         ],
-        landing: "/mcp",
       },
       {
         label: "Troubleshooting",
@@ -70,12 +70,10 @@ const nimbusConfig = defineNimbusConfig({
           { label: "Deploy", link: "/troubleshooting/deploy" },
           { label: "CLI", link: "/troubleshooting/cli" },
         ],
-        landing: "/troubleshooting",
       },
       {
         label: "Machine commands",
         items: [{ autogenerate: { directory: "machine" } }],
-        landing: "/machine",
       },
     ],
   },
