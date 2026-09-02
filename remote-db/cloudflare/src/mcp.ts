@@ -359,9 +359,11 @@ function mcpInputSchema<A>(
     // SAFETY: tool input structs are pure sync decoders with no services.
     schema as Schema.Top & { readonly DecodingServices: never },
   );
+  // SAFETY: tool input structs are pure data schemas that satisfy Constraint for JSON Schema export.
   const json = Schema.toStandardJSONSchemaV1(
     schema as Schema.Top & Schema.Constraint,
   );
+  // SAFETY: MCP needs validate + jsonSchema on one ~standard object; both halves come from the same schema.
   return {
     "~standard": {
       version: 1,
@@ -480,6 +482,71 @@ const MemoryAddArgs = Schema.Struct({
 });
 type MemoryAddArgs = Schema.Schema.Type<typeof MemoryAddArgs>;
 const memoryAddInput = mcpInputSchema(MemoryAddArgs);
+
+async function addMemory(
+  bindings: McpBindings,
+  args: MemoryAddArgs,
+): Promise<{
+  written_to: string;
+  id: number;
+  memory: MemoryRow;
+  size: ReturnType<typeof embeddingSizeReport>;
+}> {
+  validateNamespace(args.repository);
+  const memory_type = args.memory_type ?? "convention";
+  const certainty = args.certainty ?? "inferred";
+  const status = args.status ?? "active";
+  if (args.expires_after_days !== undefined && memory_type !== "status") {
+    throw new Error("expires_after_days is only valid for status memories.");
+  }
+  const tags = args.tags ?? "";
+  const context = args.context ?? "";
+  const prospective = {
+    content: args.content,
+    tags,
+    context,
+    memory_type,
+    status,
+    certainty,
+  };
+  const size = assertMemoryEmbeddingBudget(prospective);
+  const id = await insertMemory(bindings.DB, {
+    repository: args.repository,
+    content: args.content,
+    tags,
+    context,
+    memory_type,
+    status,
+    certainty,
+    source_agent: "mcp",
+    refs: "[]",
+    expires_after_days: args.expires_after_days ?? null,
+  });
+  const row = await rowById(bindings.DB, args.repository, id);
+  if (row) {
+    await upsertVector(bindings, row).catch((cause) => {
+      console.error(
+        `memory ${id} saved but vector sync failed: ${String(cause)}`,
+      );
+    });
+  }
+  const created: MemoryRow = row ?? {
+    id,
+    repository: args.repository,
+    content: args.content,
+    tags,
+    context,
+    memory_type,
+    status,
+    certainty,
+  };
+  return {
+    written_to: args.repository,
+    id: created.id,
+    memory: created,
+    size,
+  };
+}
 
 const MemoryUpdateArgs = Schema.Struct({
   repository: repositoryOwnedField,
@@ -701,62 +768,7 @@ export function createMemoryServer(
     },
     async (args: MemoryAddArgs) => {
       try {
-        validateNamespace(args.repository);
-        const memory_type = args.memory_type ?? "convention";
-        const certainty = args.certainty ?? "inferred";
-        const status = args.status ?? "active";
-        if (args.expires_after_days !== undefined && memory_type !== "status") {
-          throw new Error(
-            "expires_after_days is only valid for status memories.",
-          );
-        }
-        const prospective = {
-          content: args.content,
-          tags: args.tags ?? "",
-          context: args.context ?? "",
-          memory_type,
-          status,
-          certainty,
-        };
-        const size = assertMemoryEmbeddingBudget(prospective);
-        const id = await insertMemory(bindings.DB, {
-          repository: args.repository,
-          content: args.content,
-          tags: args.tags ?? "",
-          context: args.context ?? "",
-          memory_type,
-          status,
-          certainty,
-          source_agent: "mcp",
-          refs: "[]",
-          expires_after_days: args.expires_after_days ?? null,
-        });
-        const row = await rowById(bindings.DB, args.repository, id);
-        if (row) {
-          await upsertVector(bindings, row).catch((cause) => {
-            console.error(
-              `memory ${id} saved but vector sync failed: ${String(cause)}`,
-            );
-          });
-        }
-        const created: MemoryRow = row ?? {
-          id,
-          repository: args.repository,
-          content: args.content,
-          tags: args.tags ?? "",
-          context: args.context ?? "",
-          memory_type,
-          status,
-          certainty,
-        };
-        return textResult([
-          {
-            written_to: args.repository,
-            id: created.id,
-            memory: created,
-            size,
-          },
-        ]);
+        return textResult([await addMemory(bindings, args)]);
       } catch (cause) {
         return errorResult(cause);
       }

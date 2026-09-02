@@ -80,6 +80,7 @@ function resolveInitBackend(
           message:
             "Choose exactly one init target: --local, --remote, or --mcp.",
           command: "init",
+          cause: undefined,
         }),
       );
     }

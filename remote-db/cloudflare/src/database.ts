@@ -7,7 +7,7 @@ import { databaseName, oauthKvName } from "./config";
  */
 export const Database = Cloudflare.D1.Database("machine-memory-db", {
   name: databaseName,
-  migrationsDir: "./migrations",
+  migrations: "./migrations",
 });
 
 /**
