@@ -1,0 +1,60 @@
+---
+title: Enable MCP
+description: Turn on the Worker’s MCP endpoint with GitHub OAuth.
+audience: human
+sidebar:
+  order: 3
+---
+
+The MCP endpoint is opt-in. Deploy [infrastructure](/mcp/infrastructure) first; then add GitHub OAuth secrets and redeploy.
+
+## 1. Create a GitHub OAuth app
+
+1. Open [GitHub Developer Settings → OAuth Apps](https://github.com/settings/developers).
+2. Create an app.
+3. Set the **Authorization callback URL** to:
+
+   ```text
+   https://<worker-url>/callback
+   ```
+
+   Use the real Worker host from provision (for example `https://machine-memory-api.example.workers.dev/callback`).
+
+4. Copy the client ID and generate a client secret.
+
+## 2. Set secrets for the stack
+
+When deploying (CLI provision env, `remote-db/cloudflare/.env`, or your CI secrets), set:
+
+```sh
+GITHUB_CLIENT_ID=your-github-oauth-app-client-id
+GITHUB_CLIENT_SECRET=your-github-oauth-app-client-secret
+COOKIE_ENCRYPTION_KEY=your-random-cookie-signing-secret
+```
+
+Generate the cookie signing key:
+
+```sh
+openssl rand -hex 32
+```
+
+These are bound on the Worker and read at startup. If any are missing, OAuth/MCP routes return `503` with the missing names listed. REST routes stay available.
+
+## 3. Redeploy
+
+```sh
+machine-memory remote provision
+```
+
+Or from the stack directory:
+
+```sh
+cd remote-db/cloudflare
+CI=1 bun run deploy
+```
+
+## 4. Connect
+
+Point an MCP client at `https://<worker-url>/mcp`. Complete the browser OAuth flow once. Tokens carry `mcp:read` and `mcp:write`.
+
+Next: [Init](/mcp/init) for agent instructions, then [Tools](/mcp/tools).

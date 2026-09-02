@@ -35,7 +35,7 @@ const nimbusConfig = defineNimbusConfig({
           {
             label: "remote",
             items: [
-                          { label: "Overview", link: "/human/remote" },
+              { label: "Overview", link: "/human/remote" },
               { label: "setup", link: "/human/remote/setup" },
               {
                 label: "provision",
@@ -47,18 +47,20 @@ const nimbusConfig = defineNimbusConfig({
               },
             ],
           },
-          {
-            label: "MCP server",
-            items: [
-              { label: "Overview", link: "/human/mcp" },
-              { label: "Enable the endpoint", link: "/human/mcp/enable" },
-              { label: "Tools", link: "/human/mcp/tools" },
-            ],
-          },
           { label: "upgrade", link: "/human/upgrade" },
           { label: "reindex", link: "/human/reindex" },
         ],
         landing: "/human",
+      },
+      {
+        label: "MCP",
+        items: [
+          { label: "Infrastructure", link: "/mcp/infrastructure" },
+          { label: "Enable MCP", link: "/mcp/enable" },
+          { label: "Init", link: "/mcp/init" },
+          { label: "Tools", link: "/mcp/tools" },
+        ],
+        landing: "/mcp",
       },
       {
         label: "Machine commands",

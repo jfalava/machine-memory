@@ -1,0 +1,81 @@
+---
+title: Init
+description: Install the managed MCP memory block into AGENTS.md without requiring the CLI.
+audience: human
+sidebar:
+  order: 4
+---
+
+Agents need a stable project instruction block so they scan and write memory the same way every session. For MCP-only setups that block talks about MCP tools, not `machine-memory` CLI flags.
+
+The managed section lives between HTML markers and can be replaced safely:
+
+```html
+<!-- machine-memory:start -->
+…
+<!-- machine-memory:end -->
+```
+
+Everything outside the markers is preserved.
+
+## Public script (no CLI)
+
+From the repository root:
+
+```sh
+curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+```
+
+This is the MCP counterpart to the [CLI install script](/installation). It:
+
+1. Creates `AGENTS.md` if missing, or updates the managed block in place
+2. Writes the MCP backend workflow (tool names, repository slug rules, size preflight, checklist)
+3. Prints the backend and a pointer at this docs section
+
+### Options
+
+| Variable                   | Effect                                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| `MACHINE_MEMORY_AGENTS_MD` | Path to write (default `AGENTS.md`). Absolute or relative to the current directory. |
+
+Examples:
+
+```sh
+# default ./AGENTS.md
+curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+
+# custom path
+MACHINE_MEMORY_AGENTS_MD=.agents/memory.md \
+  curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+```
+
+Requirements on the machine running the script: `bash`, `base64`, and `python3`.
+
+## CLI equivalent
+
+If the CLI is installed:
+
+```sh
+machine-memory init --mcp
+```
+
+Same managed block as the public script. Use `--local` or `--remote` when agents should follow CLI commands instead — see [init](/human/init).
+
+Exactly one of `--local`, `--remote`, or `--mcp` is required.
+
+## When to run it
+
+- First time enabling MCP-only memory for a repo
+- After changing the MCP workflow or tool surface you want agents to follow
+- Safe to re-run: the block is replaced, not duplicated
+
+## What agents get
+
+The MCP block tells agents to:
+
+- Use MCP tools only (`list_repositories`, `memory_query`, `memory_get`, `memory_list`, `memory_size`, `memory_add`, `memory_update`, `memory_delete`)
+- Pass an exact `owner/name` repository slug (no default); call `list_repositories` when unsure
+- Preflight long content with `memory_size`; respect on-flight size rejection on writes
+- Scan before edits and persist durable decisions at task end
+
+Full tool reference: [Tools](/mcp/tools).

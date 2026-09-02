@@ -100,9 +100,9 @@ export function helpPayload() {
       version: { usage: "version" },
       upgrade: { usage: "upgrade" },
       init: {
-        usage: "init (--local|--remote)",
+        usage: "init (--local|--remote|--mcp)",
         description:
-          "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file",
+          "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file (CLI local/remote or MCP-only)",
       },
       remote: {
         setup: {

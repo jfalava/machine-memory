@@ -87,7 +87,7 @@ function humanCommandErrorLines(error: CommandError): string[] {
     `  ${String(error.message)}`,
   ];
   if (error.command === "init") {
-    lines.push(`  ${pc.dim("Usage:")} machine-memory init (--local|--remote)`);
+    lines.push(`  ${pc.dim("Usage:")} machine-memory init (--local|--remote|--mcp)`);
   } else if (error.command === "remote setup") {
     lines.push(
       `  ${pc.dim("Next:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
@@ -110,7 +110,7 @@ function humanCommandHelp(command: string): string {
     case "upgrade":
       return "Usage: machine-memory upgrade";
     case "init":
-      return "Usage: machine-memory init (--local|--remote)";
+      return "Usage: machine-memory init (--local|--remote|--mcp)";
     case "remote setup":
       return "Usage: machine-memory remote setup [--url <worker-url>] [--token <worker-token>]";
     case "remote provision":

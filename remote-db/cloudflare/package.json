@@ -22,8 +22,7 @@
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.22.0",
     "alchemy": "2.0.0-beta.76",
-    "effect": "catalog:effect",
-    "zod": "4.5.4"
+    "effect": "catalog:effect"
   },
   "devDependencies": {
     "oxfmt": "catalog:maintenance",

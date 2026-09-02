@@ -392,8 +392,9 @@ const initCommand = effectCommand(
   {
     local: booleanFlag("local"),
     remote: booleanFlag("remote"),
+    mcp: booleanFlag("mcp"),
   },
-  [booleanSpec("local"), booleanSpec("remote")],
+  [booleanSpec("local"), booleanSpec("remote"), booleanSpec("mcp")],
   undefined,
   handleInitCommand,
 );

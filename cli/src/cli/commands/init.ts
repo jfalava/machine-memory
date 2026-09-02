@@ -19,10 +19,74 @@ import {
 export function handleInitCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
   return Effect.gen(function* () {
-    const backendFlags: DatabaseBackendFlags = {
-      local: commandCtx.args.includes("--local"),
-      remote: commandCtx.args.includes("--remote"),
-    };
+    const backend = yield* resolveInitBackend(commandCtx.args);
+    const agentsExists = yield* commandCtx.fileSystem.exists(agentsMdPath);
+    if (backend === "remote" || backend === "local") {
+      const backendFlags: DatabaseBackendFlags = {
+        local: backend === "local",
+        remote: backend === "remote",
+      };
+      yield* offerFirstRunSetup(commandCtx, agentsExists, backendFlags);
+    }
+    const existingContent = agentsExists
+      ? new TextDecoder().decode(
+          yield* commandCtx.fileSystem.readFile(agentsMdPath),
+        )
+      : "";
+    yield* commandCtx.fileSystem.writeFile(
+      agentsMdPath,
+      new TextEncoder().encode(replaceMemoryBlock(existingContent, backend)),
+    );
+    yield* Effect.sync(() => {
+      const action = agentsExists ? "Updated" : "Created";
+      const displayPath = relative(process.cwd(), agentsMdPath) || "AGENTS.md";
+      console.info();
+      console.info(pc.green(pc.bold(`✓ ${action} ${displayPath}`)));
+      console.info(
+        `${pc.dim("Backend")}  ${pc.cyan(backend)}${
+          backend === "mcp"
+            ? pc.dim(" (MCP tools; no CLI backend flag)")
+            : pc.dim(` (--${backend} required on memory commands)`)
+        }`,
+      );
+      if (backend === "mcp") {
+        console.info(
+          `${pc.dim("Next")}     connect an MCP client to your Worker ${pc.bold("/mcp")} endpoint, then ${pc.bold("list_repositories")}`,
+        );
+        console.info(
+          `${pc.dim("Script")}   ${pc.bold("curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash")}`,
+        );
+      } else {
+        console.info(
+          `${pc.dim("Next")}     ${pc.bold(`machine-memory list --${backend}`)}`,
+        );
+      }
+      console.info();
+    });
+  });
+}
+
+function resolveInitBackend(
+  args: readonly string[],
+): Effect.Effect<AgentsMemoryBackend, CommandError> {
+  return Effect.gen(function* () {
+    const local = args.includes("--local");
+    const remote = args.includes("--remote");
+    const mcp = args.includes("--mcp");
+    const selected = [local, remote, mcp].filter(Boolean).length;
+    if (selected !== 1) {
+      return yield* Effect.fail(
+        new CommandError({
+          message:
+            "Choose exactly one init target: --local, --remote, or --mcp.",
+          command: "init",
+        }),
+      );
+    }
+    if (mcp) {
+      return "mcp";
+    }
+    const backendFlags: DatabaseBackendFlags = { local, remote };
     yield* Effect.try({
       try: () => validateDatabaseBackendFlags(backendFlags, true),
       catch: (cause) =>
@@ -35,34 +99,7 @@ export function handleInitCommand(commandCtx: CommandContext) {
           cause,
         }),
     });
-    const agentsExists = yield* commandCtx.fileSystem.exists(agentsMdPath);
-    yield* offerFirstRunSetup(commandCtx, agentsExists, backendFlags);
-    const backend: AgentsMemoryBackend = backendFlags.remote
-      ? "remote"
-      : "local";
-    const existingContent = agentsExists
-      ? new TextDecoder().decode(
-          yield* commandCtx.fileSystem.readFile(agentsMdPath),
-        )
-      : "";
-    yield* commandCtx.fileSystem.writeFile(
-      agentsMdPath,
-      new TextEncoder().encode(replaceMemoryBlock(existingContent, backend)),
-    );
-    yield* Effect.sync(() => {
-      const action = agentsExists ? "Updated" : "Created";
-      const backendFlag = `--${backend}`;
-      const displayPath = relative(process.cwd(), agentsMdPath) || "AGENTS.md";
-      console.info();
-      console.info(pc.green(pc.bold(`✓ ${action} ${displayPath}`)));
-      console.info(
-        `${pc.dim("Backend")}  ${pc.cyan(backend)} ${pc.dim(`(${backendFlag} required on memory commands)`)}`,
-      );
-      console.info(
-        `${pc.dim("Next")}     ${pc.bold(`machine-memory list ${backendFlag}`)}`,
-      );
-      console.info();
-    });
+    return remote ? "remote" : "local";
   });
 }
 

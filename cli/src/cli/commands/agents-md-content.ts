@@ -1,7 +1,7 @@
 const MEMORY_BLOCK_START = "<!-- machine-memory:start -->";
 const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
 
-export type AgentsMemoryBackend = "local" | "remote";
+export type AgentsMemoryBackend = "local" | "remote" | "mcp";
 
 const AGENTS_MD_BACKEND_CONTENT = {
   local: [
@@ -17,21 +17,32 @@ const AGENTS_MD_BACKEND_CONTENT = {
     "When unsure, start with `--hybrid`; add `--explain-score` when ranking needs inspection. D1 records are canonical and Vectorize is only a retrieval index.",
     "After adding or updating a memory, its Vectorize embedding is synchronized automatically. Run `machine-memory reindex --remote` only after provisioning, changing the embedding index or model, or repairing missing vectors.",
   ],
+  mcp: [
+    "This project uses `machine-memory` through the remote MCP server (OAuth to the Worker `/mcp` endpoint). No local CLI or `machine-memory.db` is required.",
+    "All memory access goes through MCP tools: `list_repositories`, `memory_query`, `memory_get`, `memory_list`, `memory_size`, `memory_add`, `memory_update`, `memory_delete`.",
+    "Repository scope: every tool that mutates or reads a specific repo requires an exact `owner/name` slug. There is no default. Call `list_repositories` first when unsure; derive the slug from `git remote get-url origin` when it matches a known entry.",
+    'Search policy: use `memory_query` with `mode: "keyword"` for exact names, paths, commands, and identifiers; `mode: "semantic"` when the same concept may use different wording; `mode: "hybrid"` (default) for broad investigation. D1 records are canonical and Vectorize is only a retrieval index.',
+    "Writes (`memory_add`, `memory_update`, `memory_delete`) are permanent and echo `written_to` / `deleted_from`. Confirm the repository slug before every write.",
+  ],
 } satisfies Record<AgentsMemoryBackend, string[]>;
 
-export function agentsMdContent(backend: AgentsMemoryBackend): string {
-  const backendFlag = backend === "remote" ? "--remote" : "--local";
+function agentsMdSizeGuidance(backend: AgentsMemoryBackend): string {
+  if (backend === "mcp") {
+    return [
+      "Memory size: the composed embedding text must stay within the Worker's conservative byte+2 budget (UTF-8 bytes + 2 ≤ 512).",
+      "Preflight without writing: call `memory_size` with the prospective content/tags/context/type.",
+      "`memory_add` and `memory_update` reject on flight when over budget; oversize `memory_size` results set `isError` and include `over_by_bytes`.",
+    ].join(" ");
+  }
   return [
-    MEMORY_BLOCK_START,
-    "## Project memory",
-    "",
-    ...AGENTS_MD_BACKEND_CONTENT[backend],
-    "Memory size: the composed embedding text must stay below 512 BGE tokens AND within the embedding service's conservative byte+2 estimate (512 bytes). Preflight without writing: `machine-memory size \"<text>\"` or add/update `--dry-run` (both exit 1 when over budget); failures name the exact byte or token deficit. `--token-report` appends the per-part breakdown to real writes.",
-    "",
-    "⚠️ MANDATORY: Complete the memory scan BEFORE any code changes. Skipping it causes rework, regressions, and duplicated decisions.",
-    "",
-    "### Required pre-workflow (DO NOT SKIP)",
-    "",
+    "Memory size: the composed embedding text must stay below 512 BGE tokens AND within the embedding service's conservative byte+2 estimate (512 bytes).",
+    'Preflight without writing: `machine-memory size "<text>"` or add/update `--dry-run` (both exit 1 when over budget); failures name the exact byte or token deficit.',
+    "`--token-report` appends the per-part breakdown to real writes.",
+  ].join(" ");
+}
+
+function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
+  return [
     "Before touching code, complete this scan from the repository root. Every database command must include the backend flag shown below:",
     "",
     `- Known files: \`machine-memory suggest --files "path/a.ts,path/b.ts" ${backendFlag} --json-min\``,
@@ -45,9 +56,9 @@ export function agentsMdContent(backend: AgentsMemoryBackend): string {
     "1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.",
     `2. Verify uncertain context before acting. Use \`machine-memory verify <id> "<inferred fact>" ${backendFlag}\` or \`machine-memory diff <id> "<proposed updated wording>" ${backendFlag}\` when an inference may conflict with existing memory.`,
     `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended.`,
-    `4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.`,
+    "4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.",
     "5. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.",
-    `6. Capture third-party quirks. Always add a \`--type gotcha\` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.`,
+    "6. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.",
     "7. Keep status hygiene. Status memories are for transient progress, should include `--expires-after-days`, and should be updated rather than duplicated. Review `doctor` suggestions semantically before applying deprecations or updates.",
     "8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.",
     `9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need. Use \`machine-memory add ... ${backendFlag}\` or update the canonical record with \`machine-memory update ... ${backendFlag}\`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.`,
@@ -58,6 +69,55 @@ export function agentsMdContent(backend: AgentsMemoryBackend): string {
     "- [ ] I reviewed the returned memory IDs and fetched full records when relevant",
     "- [ ] I considered whether existing memories constrain the planned approach",
     "- [ ] I will document significant findings and decisions after completing the task",
+  ];
+}
+
+const AGENTS_MD_MCP_WORKFLOW = [
+  "Before touching code, complete this scan from the repository root via MCP tools:",
+  "",
+  '- Known topic: `memory_query` with `{ repository, query: "topic", mode: "hybrid" }`',
+  '- Broad audit: `memory_list` with `{ repository }` (optional `memory_type` / `status` filters) or `memory_query` with tag-oriented keywords',
+  "- Discover slug: `list_repositories` when the `owner/name` is not certain",
+  "",
+  "If results look relevant, fetch full records before editing: `memory_get` with `{ repository, id }`.",
+  "",
+  "### One-sweep workflow (use this every task)",
+  "",
+  "1. Scan relevant context fast. Run exactly one focused `memory_query` or `memory_list` before code changes; repeat only if the touched paths or scope materially changes.",
+  "2. Verify uncertain context before acting. Re-read with `memory_get`, then prefer `memory_update` on the canonical id when wording must change; do not create duplicates.",
+  '3. Maintain memory while implementing. Prefer `memory_update` on an existing id; if no reliable match exists, `memory_add` with clear tags (`area:…,topic:…,kind:…`). Call `memory_size` first when content may be long.',
+  "4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
+  "5. Use path-driven tags. Prefer scoped tags such as `area:cli,topic:backend,kind:decision`.",
+  '6. Capture third-party quirks. Always add a `memory_type: "gotcha"` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.',
+  '7. Keep status hygiene. Status memories are for transient progress, should set `expires_after_days`, and should be updated rather than duplicated.',
+  '8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.',
+  "9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need via `memory_add` / `memory_update`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.",
+  "",
+  "### Checklist (verify before proceeding)",
+  "",
+  "- [ ] I ran `memory_query` or `memory_list` (and `list_repositories` if the slug was uncertain) for the files or feature I will touch",
+  "- [ ] I reviewed the returned memory IDs and fetched full records with `memory_get` when relevant",
+  "- [ ] I considered whether existing memories constrain the planned approach",
+  "- [ ] I will document significant findings and decisions after completing the task",
+];
+
+export function agentsMdContent(backend: AgentsMemoryBackend): string {
+  const workflow =
+    backend === "mcp"
+      ? AGENTS_MD_MCP_WORKFLOW
+      : agentsMdCliWorkflow(backend === "remote" ? "--remote" : "--local");
+  return [
+    MEMORY_BLOCK_START,
+    "## Project memory",
+    "",
+    ...AGENTS_MD_BACKEND_CONTENT[backend],
+    agentsMdSizeGuidance(backend),
+    "",
+    "⚠️ MANDATORY: Complete the memory scan BEFORE any code changes. Skipping it causes rework, regressions, and duplicated decisions.",
+    "",
+    "### Required pre-workflow (DO NOT SKIP)",
+    "",
+    ...workflow,
     "",
     "Project preference: replace obsolete systems when practical; preserve backwards compatibility only when it is explicitly required.",
     MEMORY_BLOCK_END,
@@ -83,3 +143,9 @@ export function replaceMemoryBlock(
   }
   return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${managedContent}\n`;
 }
+
+/** Marker pair used by the public init-mcp script and CLI init --mcp. */
+export const AGENTS_MD_MARKERS = {
+  start: MEMORY_BLOCK_START,
+  end: MEMORY_BLOCK_END,
+} as const;

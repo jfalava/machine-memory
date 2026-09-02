@@ -1,0 +1,47 @@
+---
+title: MCP
+description: Use machine-memory from LLM agents over the Model Context Protocol—no CLI required.
+audience: human
+sidebar:
+  order: 1
+---
+
+Machine Memory’s remote Worker can act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect with OAuth 2.1, then call tools to search and write project memories. Access is scoped by GitHub identity and repository slug, not a shared bearer token.
+
+> Only GitHub OAuth is supported for now.
+
+## Who this is for
+
+| Path             | Use it when                                                       |
+| ---------------- | ----------------------------------------------------------------- |
+| **MCP-only**     | Agents talk to `/mcp` and never run the CLI.                      |
+| **CLI + remote** | You still want `machine-memory … --remote` for humans or scripts. |
+| **CLI + local**  | Single-machine SQLite; MCP does not apply.                        |
+
+MCP and the authenticated REST API share the same D1 + Vectorize stack. MCP is opt-in: without OAuth secrets the REST API keeps working and MCP routes return `503` listing the missing variables.
+
+## Setup path
+
+1. [Infrastructure](/mcp/infrastructure) — deploy the Alchemy stack (Worker, D1, Vectorize, Workers AI).
+2. [Enable MCP](/mcp/enable) — GitHub OAuth app + secrets, then redeploy.
+3. [Init](/mcp/init) — drop the managed MCP block into `AGENTS.md` (public script or `machine-memory init --mcp`).
+4. [Tools](/mcp/tools) — connect a client to `https://<worker-url>/mcp` and use the tool surface.
+
+## Connect a client
+
+Point an OAuth-capable MCP client at:
+
+```text
+https://<worker-url>/mcp
+```
+
+Discovery endpoints:
+
+- Authorization server: `https://<worker-url>/.well-known/oauth-authorization-server`
+- Protected resource: `https://<worker-url>/.well-known/oauth-protected-resource`
+
+On first connect the browser opens authorization: the client registers, GitHub identity is verified, and tokens carry `mcp:read` and `mcp:write`. After that, tools from [Tools](/mcp/tools) are available.
+
+## Related CLI docs
+
+Remote CLI setup (keychain / `.env`) still lives under [remote](/human/remote). The CLI and MCP can share one provisioned stack.

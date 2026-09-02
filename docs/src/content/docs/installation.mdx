@@ -55,3 +55,14 @@ codesign --force --sign - machine-memory
 ```
 
 `chmod +x` alone does not fix this.
+
+## MCP-only projects
+
+If agents use the remote MCP server and you do not need the CLI binary, skip the install above and:
+
+1. Follow [MCP setup](/mcp)
+2. Run the public init script to write `AGENTS.md`:
+
+```sh
+curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+```

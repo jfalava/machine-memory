@@ -15,7 +15,7 @@ While this is guaranteed on Windows and macOS machines, Linux users must have a 
 ## Usage
 
 ```sh
-machine-memory init (--local|--remote)
+machine-memory init (--local|--remote|--mcp)
 ```
 
 This command creates `AGENTS.md` when it does not exist, or replaces the content between the `machine-memory:start` and `machine-memory:end` markers when it already exists. Everything outside those markers is preserved.
@@ -23,8 +23,6 @@ This command creates `AGENTS.md` when it does not exist, or replaces the content
 The generated block tells future agents how to scan memory, which backend to use, and how to maintain durable project context. The selected backend is written into the block so its examples stay consistent with the command you ran.
 
 ## Backend selection
-
-`machine-memory` uses one of two backends to store the memories: a [local](/human/local) one or a [remote](/human/remote) one.
 
 Exactly one flag is required:
 
@@ -35,6 +33,24 @@ machine-memory init --local
 ```sh
 machine-memory init --remote
 ```
+
+```sh
+machine-memory init --mcp
+```
+
+| Flag       | Agents should use   | Notes                                      |
+| ---------- | ------------------- | ------------------------------------------ |
+| `--local`  | CLI with `--local`  | SQLite at `machine-memory.db`              |
+| `--remote` | CLI with `--remote` | Shared Worker; see [remote](/human/remote) |
+| `--mcp`    | MCP tools only      | No CLI required; see [MCP init](/mcp/init) |
+
+For MCP-only repos without the CLI installed, use the public script instead:
+
+```sh
+curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+```
+
+Details: [MCP → Init](/mcp/init).
 
 ## When to run it
 

@@ -8,9 +8,6 @@
     "/human/init",
     "/human/local",
     "/human/local/export",
-    "/human/mcp",
-    "/human/mcp/enable",
-    "/human/mcp/tools",
     "/human/pretty",
     "/human/reindex",
     "/human/remote",
@@ -41,7 +38,12 @@
     "/machine/tag-map",
     "/machine/update",
     "/machine/verify",
-    "/machine/version"
+    "/machine/version",
+    "/mcp",
+    "/mcp/enable",
+    "/mcp/infrastructure",
+    "/mcp/init",
+    "/mcp/tools"
   ],
   "opaqueNamespaces": []
 }

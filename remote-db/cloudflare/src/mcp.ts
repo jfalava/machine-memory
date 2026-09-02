@@ -1,6 +1,9 @@
-import { McpServer } from "@modelcontextprotocol/server";
+import {
+  McpServer,
+  type StandardSchemaWithJSON,
+} from "@modelcontextprotocol/server";
 import { Schema } from "effect";
-import { z } from "zod";
+import { embeddingSizeReport, validateEmbeddingText } from "./embedding";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5" as const;
 const EMBEDDING_DIMENSIONS = 768;
@@ -67,6 +70,29 @@ function embeddingText(input: {
   ]
     .filter((part): part is string => part !== undefined)
     .join("\n");
+}
+
+function assertMemoryEmbeddingBudget(input: {
+  content: string;
+  tags: string;
+  context: string;
+  memory_type: string;
+  status: string;
+  certainty: string;
+}): ReturnType<typeof embeddingSizeReport> {
+  const text = validateEmbeddingText(embeddingText(input), "Document text");
+  return embeddingSizeReport(text);
+}
+
+function measureMemoryEmbeddingBudget(input: {
+  content: string;
+  tags: string;
+  context: string;
+  memory_type: string;
+  status: string;
+  certainty: string;
+}): ReturnType<typeof embeddingSizeReport> {
+  return embeddingSizeReport(embeddingText(input));
 }
 
 function validateNamespace(repository: string): void {
@@ -321,25 +347,182 @@ function errorResult(cause: unknown): ErrorToolResult {
   };
 }
 
-const repositorySchema = z
-  .string()
-  .min(1)
-  .describe("The GitHub repository (owner/name) whose memories to operate on.");
+/**
+ * Bridge Effect Schema tool inputs into MCP's StandardSchemaWithJSON contract.
+ * Effect exposes validate and JSON Schema via separate converters; MCP needs both
+ * on the same `~standard` object.
+ */
+function mcpInputSchema<A>(
+  schema: Schema.Top & { readonly Type: A },
+): StandardSchemaWithJSON<A, A> {
+  const standard = Schema.toStandardSchemaV1(
+    // SAFETY: tool input structs are pure sync decoders with no services.
+    schema as Schema.Top & { readonly DecodingServices: never },
+  );
+  const json = Schema.toStandardJSONSchemaV1(
+    schema as Schema.Top & Schema.Constraint,
+  );
+  return {
+    "~standard": {
+      version: 1,
+      vendor: "effect",
+      validate: standard["~standard"].validate,
+      jsonSchema: json["~standard"].jsonSchema,
+    },
+  } as StandardSchemaWithJSON<A, A>;
+}
 
-const filtersSchema = {
-  status: z
-    .enum(MEMORY_STATUSES)
-    .optional()
-    .describe("Filter by memory status."),
-  memory_type: z
-    .enum(MEMORY_TYPES)
-    .optional()
-    .describe("Filter by memory type."),
-  certainty: z
-    .enum(CERTAINTY_LEVELS)
-    .optional()
-    .describe("Filter by certainty level."),
+function describedString(description: string) {
+  return Schema.NonEmptyString.annotate({ description });
+}
+
+function optionalString(description: string) {
+  return Schema.optionalKey(Schema.String.annotate({ description }));
+}
+
+function optionalEnum<const L extends ReadonlyArray<string>>(
+  literals: L,
+  description: string,
+) {
+  return Schema.optionalKey(
+    Schema.Literals(literals).annotate({ description }),
+  );
+}
+
+function positiveInt(description: string) {
+  return Schema.Int.check(Schema.isGreaterThan(0)).annotate({ description });
+}
+
+function searchLimitField(description: string) {
+  return Schema.optionalKey(
+    Schema.Int.check(
+      Schema.isBetween({ minimum: 1, maximum: MAX_SEARCH_LIMIT }),
+    ).annotate({ description }),
+  );
+}
+
+const repositoryField = describedString(
+  "The GitHub repository (owner/name) whose memories to operate on.",
+);
+
+const repositoryWriteField = describedString(
+  "The GitHub repository (owner/name) to write this memory to. Required — no default. Call list_repositories to enumerate valid slugs before writing.",
+);
+
+const repositoryOwnedField = describedString(
+  "The GitHub repository (owner/name) the memory belongs to. Required — no default. Call list_repositories to enumerate valid slugs before writing.",
+);
+
+const filterFields = {
+  status: optionalEnum(MEMORY_STATUSES, "Filter by memory status."),
+  memory_type: optionalEnum(MEMORY_TYPES, "Filter by memory type."),
+  certainty: optionalEnum(CERTAINTY_LEVELS, "Filter by certainty level."),
 };
+
+const ListRepositoriesArgs = Schema.Struct({
+  limit: searchLimitField("Maximum number of repository slugs to return."),
+});
+type ListRepositoriesArgs = Schema.Schema.Type<typeof ListRepositoriesArgs>;
+const listRepositoriesInput = mcpInputSchema(ListRepositoriesArgs);
+
+const MemoryQueryArgs = Schema.Struct({
+  repository: repositoryField,
+  query: describedString("The search query, e.g. 'deploy command'."),
+  limit: searchLimitField("Maximum number of results to return."),
+  mode: Schema.optionalKey(
+    Schema.Literals(["keyword", "semantic", "hybrid"] as const).annotate({
+      description: "Search mode; hybrid merges keyword and semantic results.",
+    }),
+  ),
+  ...filterFields,
+});
+type MemoryQueryArgs = Schema.Schema.Type<typeof MemoryQueryArgs>;
+const memoryQueryInput = mcpInputSchema(MemoryQueryArgs);
+
+const MemoryGetArgs = Schema.Struct({
+  repository: repositoryField,
+  id: positiveInt("The numeric memory id to fetch."),
+});
+type MemoryGetArgs = Schema.Schema.Type<typeof MemoryGetArgs>;
+const memoryGetInput = mcpInputSchema(MemoryGetArgs);
+
+const MemoryListArgs = Schema.Struct({
+  repository: repositoryField,
+  limit: searchLimitField("Maximum number of results to return."),
+  ...filterFields,
+});
+type MemoryListArgs = Schema.Schema.Type<typeof MemoryListArgs>;
+const memoryListInput = mcpInputSchema(MemoryListArgs);
+
+const MemoryAddArgs = Schema.Struct({
+  repository: repositoryWriteField,
+  content: describedString(
+    "The canonical memory content. Put commands, paths, keys, and exact identifiers in the first sentence for retrieval.",
+  ),
+  tags: optionalString("Comma-separated tags, e.g. 'area:cli,topic:backend'."),
+  context: optionalString("Supporting context for the memory."),
+  memory_type: Schema.optionalKey(
+    Schema.Literals(MEMORY_TYPES).annotate({ description: "Type of memory." }),
+  ),
+  certainty: Schema.optionalKey(
+    Schema.Literals(CERTAINTY_LEVELS).annotate({
+      description: "Certainty level.",
+    }),
+  ),
+  status: Schema.optionalKey(
+    Schema.Literals(MEMORY_STATUSES).annotate({
+      description: "Memory status.",
+    }),
+  ),
+  expires_after_days: Schema.optionalKey(
+    positiveInt("Expire this status memory after N days."),
+  ),
+});
+type MemoryAddArgs = Schema.Schema.Type<typeof MemoryAddArgs>;
+const memoryAddInput = mcpInputSchema(MemoryAddArgs);
+
+const MemoryUpdateArgs = Schema.Struct({
+  repository: repositoryOwnedField,
+  id: positiveInt("The numeric memory id to update."),
+  content: Schema.optionalKey(describedString("New canonical content.")),
+  tags: optionalString("New comma-separated tags."),
+  context: optionalString("New supporting context."),
+  memory_type: optionalEnum(MEMORY_TYPES, "New memory type."),
+  certainty: optionalEnum(CERTAINTY_LEVELS, "New certainty level."),
+  status: optionalEnum(MEMORY_STATUSES, "New status."),
+});
+type MemoryUpdateArgs = Schema.Schema.Type<typeof MemoryUpdateArgs>;
+const memoryUpdateInput = mcpInputSchema(MemoryUpdateArgs);
+
+const MemorySizeArgs = Schema.Struct({
+  content: describedString(
+    "The canonical memory content to measure. Put commands, paths, keys, and exact identifiers in the first sentence for retrieval.",
+  ),
+  tags: optionalString("Comma-separated tags, e.g. 'area:cli,topic:backend'."),
+  context: optionalString("Supporting context for the memory."),
+  memory_type: Schema.optionalKey(
+    Schema.Literals(MEMORY_TYPES).annotate({ description: "Type of memory." }),
+  ),
+  certainty: Schema.optionalKey(
+    Schema.Literals(CERTAINTY_LEVELS).annotate({
+      description: "Certainty level.",
+    }),
+  ),
+  status: Schema.optionalKey(
+    Schema.Literals(MEMORY_STATUSES).annotate({
+      description: "Memory status.",
+    }),
+  ),
+});
+type MemorySizeArgs = Schema.Schema.Type<typeof MemorySizeArgs>;
+const memorySizeInput = mcpInputSchema(MemorySizeArgs);
+
+const MemoryDeleteArgs = Schema.Struct({
+  repository: repositoryOwnedField,
+  id: positiveInt("The numeric memory id to delete."),
+});
+type MemoryDeleteArgs = Schema.Schema.Type<typeof MemoryDeleteArgs>;
+const memoryDeleteInput = mcpInputSchema(MemoryDeleteArgs);
 
 function searchInputFromArgs(args: {
   repository: string;
@@ -399,22 +582,15 @@ export function createMemoryServer(
     {
       description:
         "List all repository slugs (owner/name) that have at least one memory stored. Call this before any mutating tool (memory_add, memory_update, memory_delete) when you are not certain which repository slug to use. Reads (memory_query, memory_list, memory_get) can proceed loosely — a wrong slug returns empty results and nothing is lost. Writes against a wrong slug corrupt data, so always confirm the slug first.",
-      inputSchema: {
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(MAX_SEARCH_LIMIT)
-          .default(MAX_SEARCH_LIMIT)
-          .describe("Maximum number of repository slugs to return."),
-      },
+      inputSchema: listRepositoriesInput,
     },
-    async (args) => {
+    async (args: ListRepositoriesArgs) => {
       try {
+        const limit = args.limit ?? MAX_SEARCH_LIMIT;
         const result = await bindings.DB.prepare(
           `SELECT DISTINCT repository FROM memories ORDER BY repository LIMIT ?`,
         )
-          .bind(args.limit)
+          .bind(limit)
           .all<{ repository: string }>();
         const repos = (result.results ?? []).map((r) => r.repository);
         return textResult(repos);
@@ -429,34 +605,24 @@ export function createMemoryServer(
     {
       description:
         "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text) and semantic (embedding-based) search. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
-      inputSchema: {
-        repository: repositorySchema,
-        query: z
-          .string()
-          .min(1)
-          .describe("The search query, e.g. 'deploy command'."),
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(MAX_SEARCH_LIMIT)
-          .default(DEFAULT_SEARCH_LIMIT)
-          .describe("Maximum number of results to return."),
-        mode: z
-          .enum(["keyword", "semantic", "hybrid"])
-          .default("hybrid")
-          .describe("Search mode; hybrid merges keyword and semantic results."),
-        ...filtersSchema,
-      },
+      inputSchema: memoryQueryInput,
     },
-    async (args) => {
+    async (args: MemoryQueryArgs) => {
       try {
         validateNamespace(args.repository);
-        const input = searchInputFromArgs(args);
-        if (args.mode === "keyword") {
+        const mode = args.mode ?? "hybrid";
+        const input = searchInputFromArgs({
+          repository: args.repository,
+          query: args.query,
+          limit: args.limit ?? DEFAULT_SEARCH_LIMIT,
+          status: args.status,
+          memory_type: args.memory_type,
+          certainty: args.certainty,
+        });
+        if (mode === "keyword") {
           return textResult(await keywordSearch(bindings.DB, input));
         }
-        if (args.mode === "semantic") {
+        if (mode === "semantic") {
           return textResult(await semanticSearch(bindings, input));
         }
         return textResult(await hybridSearch(bindings, input));
@@ -471,21 +637,16 @@ export function createMemoryServer(
     {
       description:
         "Fetch a single memory by its numeric id from a repository's memory store. This is a read-only tool — a wrong repository slug returns 'No memory found'; nothing is lost.",
-      inputSchema: {
-        repository: repositorySchema,
-        id: z
-          .number()
-          .int()
-          .positive()
-          .describe("The numeric memory id to fetch."),
-      },
+      inputSchema: memoryGetInput,
     },
-    async (args) => {
+    async (args: MemoryGetArgs) => {
       try {
         validateNamespace(args.repository);
         const row = await rowById(bindings.DB, args.repository, args.id);
         if (!row) {
-          return textMessage(`No memory found with id ${args.id} in repository '${args.repository}'.`);
+          return textMessage(
+            `No memory found with id ${args.id} in repository '${args.repository}'.`,
+          );
         }
         return textResult([row]);
       } catch (cause) {
@@ -499,19 +660,9 @@ export function createMemoryServer(
     {
       description:
         "List memories for a repository, optionally filtered by status, memory type, or certainty. This is a read-only tool — a wrong repository slug returns an empty list; nothing is lost.",
-      inputSchema: {
-        repository: repositorySchema,
-        limit: z
-          .number()
-          .int()
-          .min(1)
-          .max(MAX_SEARCH_LIMIT)
-          .default(DEFAULT_SEARCH_LIMIT)
-          .describe("Maximum number of results to return."),
-        ...filtersSchema,
-      },
+      inputSchema: memoryListInput,
     },
-    async (args) => {
+    async (args: MemoryListArgs) => {
       try {
         validateNamespace(args.repository);
         const clauses = ["repository = ?"];
@@ -533,7 +684,7 @@ export function createMemoryServer(
            FROM memories WHERE ${clauses.join(" AND ")}
            ORDER BY updated_at DESC LIMIT ?`,
         )
-          .bind(...params, args.limit)
+          .bind(...params, args.limit ?? DEFAULT_SEARCH_LIMIT)
           .all<MemoryRow>();
         return textResult(result.results ?? []);
       } catch (cause) {
@@ -545,68 +696,37 @@ export function createMemoryServer(
   server.registerTool(
     "memory_add",
     {
-      description:
-        `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them.`,
-      inputSchema: {
-        repository: z
-          .string()
-          .min(1)
-          .describe(
-            "The GitHub repository (owner/name) to write this memory to. Required — no default. Call list_repositories to enumerate valid slugs before writing.",
-          ),
-        content: z
-          .string()
-          .min(1)
-          .describe(
-            "The canonical memory content. Put commands, paths, keys, and exact identifiers in the first sentence for retrieval.",
-          ),
-        tags: z
-          .string()
-          .optional()
-          .describe("Comma-separated tags, e.g. 'area:cli,topic:backend'."),
-        context: z
-          .string()
-          .optional()
-          .describe("Supporting context for the memory."),
-        memory_type: z
-          .enum(MEMORY_TYPES)
-          .default("convention")
-          .describe("Type of memory."),
-        certainty: z
-          .enum(CERTAINTY_LEVELS)
-          .default("inferred")
-          .describe("Certainty level."),
-        status: z
-          .enum(MEMORY_STATUSES)
-          .default("active")
-          .describe("Memory status."),
-        expires_after_days: z
-          .number()
-          .int()
-          .positive()
-          .optional()
-          .describe("Expire this status memory after N days."),
-      },
+      description: `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. Rejects on flight when the composed embedding text exceeds the 512 byte+2 budget (same as CLI size / Worker REST); call memory_size to preflight.`,
+      inputSchema: memoryAddInput,
     },
-    async (args) => {
+    async (args: MemoryAddArgs) => {
       try {
         validateNamespace(args.repository);
-        if (
-          args.expires_after_days !== undefined &&
-          args.memory_type !== "status"
-        ) {
+        const memory_type = args.memory_type ?? "convention";
+        const certainty = args.certainty ?? "inferred";
+        const status = args.status ?? "active";
+        if (args.expires_after_days !== undefined && memory_type !== "status") {
           throw new Error(
             "expires_after_days is only valid for status memories.",
           );
         }
+        const prospective = {
+          content: args.content,
+          tags: args.tags ?? "",
+          context: args.context ?? "",
+          memory_type,
+          status,
+          certainty,
+        };
+        const size = assertMemoryEmbeddingBudget(prospective);
         const id = await insertMemory(bindings.DB, {
           repository: args.repository,
           content: args.content,
           tags: args.tags ?? "",
           context: args.context ?? "",
-          memory_type: args.memory_type,
-          status: args.status,
-          certainty: args.certainty,
+          memory_type,
+          status,
+          certainty,
           source_agent: "mcp",
           refs: "[]",
           expires_after_days: args.expires_after_days ?? null,
@@ -625,12 +745,17 @@ export function createMemoryServer(
           content: args.content,
           tags: args.tags ?? "",
           context: args.context ?? "",
-          memory_type: args.memory_type,
-          status: args.status,
-          certainty: args.certainty,
+          memory_type,
+          status,
+          certainty,
         };
         return textResult([
-          { written_to: args.repository, id: created.id, memory: created },
+          {
+            written_to: args.repository,
+            id: created.id,
+            memory: created,
+            size,
+          },
         ]);
       } catch (cause) {
         return errorResult(cause);
@@ -641,48 +766,30 @@ export function createMemoryServer(
   server.registerTool(
     "memory_update",
     {
-      description:
-        `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Re-embeds the vector so future semantic searches reflect the change.`,
-      inputSchema: {
-        repository: z
-          .string()
-          .min(1)
-          .describe(
-            "The GitHub repository (owner/name) the memory belongs to. Required — no default. Call list_repositories to enumerate valid slugs before writing.",
-          ),
-        id: z
-          .number()
-          .int()
-          .positive()
-          .describe("The numeric memory id to update."),
-        content: z
-          .string()
-          .min(1)
-          .optional()
-          .describe("New canonical content."),
-        tags: z.string().optional().describe("New comma-separated tags."),
-        context: z.string().optional().describe("New supporting context."),
-        memory_type: z
-          .enum(MEMORY_TYPES)
-          .optional()
-          .describe("New memory type."),
-        certainty: z
-          .enum(CERTAINTY_LEVELS)
-          .optional()
-          .describe("New certainty level."),
-        status: z.enum(MEMORY_STATUSES).optional().describe("New status."),
-      },
+      description: `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Re-embeds the vector so future semantic searches reflect the change. Rejects on flight when the resulting composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
+      inputSchema: memoryUpdateInput,
     },
-    async (args) => {
+    async (args: MemoryUpdateArgs) => {
       try {
         validateNamespace(args.repository);
         const existing = await rowById(bindings.DB, args.repository, args.id);
         if (!existing) {
-          return textMessage(`No memory found with id ${args.id} in repository '${args.repository}'. Verify the repository slug with list_repositories before retrying.`);
+          return textMessage(
+            `No memory found with id ${args.id} in repository '${args.repository}'. Verify the repository slug with list_repositories before retrying.`,
+          );
         }
+        const prospective = {
+          content: args.content ?? existing.content,
+          tags: args.tags ?? existing.tags,
+          context: args.context ?? existing.context,
+          memory_type: args.memory_type ?? existing.memory_type,
+          status: args.status ?? existing.status,
+          certainty: args.certainty ?? existing.certainty,
+        };
+        const size = assertMemoryEmbeddingBudget(prospective);
         const update = updateClause(args);
         if (update === null) {
-          return textResult([existing]);
+          return textResult([{ ...existing, size }]);
         }
         await bindings.DB.prepare(
           `UPDATE memories SET ${update.sets.join(", ")} WHERE repository = ? AND id = ?`,
@@ -697,7 +804,42 @@ export function createMemoryServer(
             );
           });
         }
-        return textResult([row ?? existing]);
+        return textResult([{ ...(row ?? existing), size }]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_size",
+    {
+      description:
+        "Preflight the embedding budget for a prospective memory without writing. Uses the same conservative UTF-8 bytes+2 estimate the Worker enforces on every write (max 512). Mirrors CLI `machine-memory size` / add --dry-run size reporting. Call this before memory_add or memory_update when content may be long; oversize writes are rejected on flight.",
+      inputSchema: memorySizeInput,
+    },
+    async (args: MemorySizeArgs) => {
+      try {
+        const size = measureMemoryEmbeddingBudget({
+          content: args.content,
+          tags: args.tags ?? "",
+          context: args.context ?? "",
+          memory_type: args.memory_type ?? "convention",
+          status: args.status ?? "active",
+          certainty: args.certainty ?? "inferred",
+        });
+        if (!size.within_budget) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify([{ size }], null, 2),
+              },
+            ],
+            isError: true,
+          };
+        }
+        return textResult([{ size }]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -707,23 +849,10 @@ export function createMemoryServer(
   server.registerTool(
     "memory_delete",
     {
-      description:
-        `⚠️ WRITE OPERATION — deletion is permanent. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if unsure.${ownerHint} Also removes the vector embedding.`,
-      inputSchema: {
-        repository: z
-          .string()
-          .min(1)
-          .describe(
-            "The GitHub repository (owner/name) the memory belongs to. Required — no default. Call list_repositories to enumerate valid slugs before deleting.",
-          ),
-        id: z
-          .number()
-          .int()
-          .positive()
-          .describe("The numeric memory id to delete."),
-      },
+      description: `⚠️ WRITE OPERATION — deletion is permanent. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if unsure.${ownerHint} Also removes the vector embedding.`,
+      inputSchema: memoryDeleteInput,
     },
-    async (args) => {
+    async (args: MemoryDeleteArgs) => {
       try {
         validateNamespace(args.repository);
         const existing = await rowById(bindings.DB, args.repository, args.id);
