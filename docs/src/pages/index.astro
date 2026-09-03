@@ -1,6 +1,10 @@
 ---
 import DocsLayout from "../layouts/DocsLayout.astro";
-import { getBreadcrumbs, getPrevNext, getSidebar } from "@cloudflare/nimbus-docs";
+import {
+  getBreadcrumbs,
+  getPrevNext,
+  getSidebar,
+} from "@cloudflare/nimbus-docs";
 import { config } from "virtual:nimbus/config";
 
 const sidebar = await getSidebar("/", { collection: "docs" });
@@ -16,23 +20,22 @@ const prevNext = await getPrevNext("/", { sidebarTree: sidebar });
   breadcrumbs={breadcrumbs}
   prevNext={prevNext}
 >
-  <p>
-    Machine Memory gives LLM agents a persistent, project-scoped place to store
-    and retrieve facts, decisions, references, and short-lived status snapshots.
-  </p>
-
   <h2 id="overview">Overview</h2>
   <p>
-    The CLI records memories for the current repository and keeps the command
-    surface deliberately scriptable: database-backed commands return JSON,
-    while setup commands guide humans through configuration.
+    MACHINE-MEMORY records memories for the current repository and keeps the
+    command surface deliberately scriptable: database-backed commands return
+    JSON, while setup commands guide humans through configuration.
   </p>
 
   <h2 id="getting-started">Getting started</h2>
-  <p>Start with installation, or choose the command reference that matches how you are using Machine Memory:</p>
+  <p>
+    Start with installation, or choose the command reference that matches how
+    you are using Machine Memory:
+  </p>
   <ul>
     <li><a href="/installation">Installation</a></li>
     <li><a href="/human/overview">Human commands</a></li>
+    <li><a href="/mcp/overview/">MCP</a></li>
     <li><a href="/machine/overview">Machine commands</a></li>
   </ul>
 </DocsLayout>

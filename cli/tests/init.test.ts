@@ -35,6 +35,38 @@ describe("init templates", () => {
     expect(content).not.toContain("Ensure `machine-memory.db` is writable");
   });
 
+  it("generates MCP instructions matching the MCP tool surface", () => {
+    const content = agentsMdContent("mcp");
+
+    expect(content).toContain("<!-- machine-memory:start -->");
+    expect(content).toContain("<!-- machine-memory:end -->");
+    for (const tool of [
+      "list_repositories",
+      "memory_query",
+      "memory_get",
+      "memory_list",
+      "memory_size",
+      "memory_add",
+      "memory_update",
+      "memory_delete",
+    ]) {
+      expect(content).toContain(tool);
+    }
+    // Honest about tools MCP does not have, with manual equivalents.
+    expect(content).toContain("no `suggest` tool");
+    expect(content).toContain("no `verify` / `diff` tools");
+    expect(content).toContain("no match/upsert");
+    expect(content).toContain("no tag-map tool");
+    expect(content).toContain("memory_size");
+    expect(content).toContain("over_by_bytes");
+    expect(content).toContain("expires_after_days");
+    expect(content).toContain(
+      "No local CLI or `machine-memory.db` is required",
+    );
+    expect(content).not.toContain("--local");
+    expect(content).not.toContain("--remote");
+  });
+
   it("replaces an existing managed block without removing user content", () => {
     const content = replaceMemoryBlock(
       "# Local notes\n\n<!-- machine-memory:start -->\nold\n<!-- machine-memory:end -->\n",

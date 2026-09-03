@@ -20,9 +20,10 @@ const AGENTS_MD_BACKEND_CONTENT = {
   mcp: [
     "This project uses `machine-memory` through the remote MCP server (OAuth to the Worker `/mcp` endpoint). No local CLI or `machine-memory.db` is required.",
     "All memory access goes through MCP tools: `list_repositories`, `memory_query`, `memory_get`, `memory_list`, `memory_size`, `memory_add`, `memory_update`, `memory_delete`.",
-    "Repository scope: every tool that mutates or reads a specific repo requires an exact `owner/name` slug. There is no default. Call `list_repositories` first when unsure; derive the slug from `git remote get-url origin` when it matches a known entry.",
-    'Search policy: use `memory_query` with `mode: "keyword"` for exact names, paths, commands, and identifiers; `mode: "semantic"` when the same concept may use different wording; `mode: "hybrid"` (default) for broad investigation. D1 records are canonical and Vectorize is only a retrieval index.',
-    "Writes (`memory_add`, `memory_update`, `memory_delete`) are permanent and echo `written_to` / `deleted_from`. Confirm the repository slug before every write.",
+    "Repository scope: every tool that reads or writes a specific repo requires an exact `owner/name` slug. There is no default. Reads are loose — a wrong slug returns empty/not-found and nothing is lost. Writes are strict and permanent: confirm the slug with `list_repositories` before every write; derive it from `git remote get-url origin` when it matches a known entry.",
+    'Search policy: use `memory_query` with `mode: "keyword"` for exact names, paths, commands, and identifiers; `mode: "semantic"` when the same concept may use different wording; `mode: "hybrid"` (default) for broad investigation. Filter with `status` / `memory_type` / `certainty` and cap with `limit` (default 8, max 50). D1 records are canonical and Vectorize is only a retrieval index.',
+    "Writes (`memory_add`, `memory_update`, `memory_delete`) are permanent. `memory_add` echoes `written_to` plus the new `id`; `memory_delete` echoes `deleted_from` with `deleted` / `existed`. Embeddings re-sync to Vectorize automatically on add/update.",
+    "`memory_add` defaults to `memory_type: convention`, `certainty: inferred`, `status: active` — set them explicitly (`decision` / `reference` / `gotcha`; `verified` / `inferred`). `expires_after_days` is only valid for `status` memories and can only be set at creation.",
   ],
 } satisfies Record<AgentsMemoryBackend, string[]>;
 
@@ -30,7 +31,7 @@ function agentsMdSizeGuidance(backend: AgentsMemoryBackend): string {
   if (backend === "mcp") {
     return [
       "Memory size: the composed embedding text must stay within the Worker's conservative byte+2 budget (UTF-8 bytes + 2 ≤ 512).",
-      "Preflight without writing: call `memory_size` with the prospective content/tags/context/type.",
+      "Preflight without writing: call `memory_size` with the prospective content/tags/context/type. It takes no repository and uses the same defaults as `memory_add`, so pass the type/certainty/status you intend to write.",
       "`memory_add` and `memory_update` reject on flight when over budget; oversize `memory_size` results set `isError` and include `over_by_bytes`.",
     ].join(" ");
   }
@@ -73,24 +74,25 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
 }
 
 const AGENTS_MD_MCP_WORKFLOW = [
-  "Before touching code, complete this scan from the repository root via MCP tools:",
+  "Before touching code, complete this scan via MCP tools. There is no `suggest` tool — emulate file-scoped lookup with `memory_query` in `keyword` mode using paths and identifiers as keywords:",
   "",
+  '- Known files: `memory_query` with `{ repository, query: "path/a.ts identifier", mode: "keyword" }`',
   '- Known topic: `memory_query` with `{ repository, query: "topic", mode: "hybrid" }`',
-  '- Broad audit: `memory_list` with `{ repository }` (optional `memory_type` / `status` filters) or `memory_query` with tag-oriented keywords',
+  "- Broad audit: `memory_list` with `{ repository }` (filter by `memory_type` / `status` / `certainty`; it has no tags filter) or `memory_query` with tag-oriented keywords",
   "- Discover slug: `list_repositories` when the `owner/name` is not certain",
   "",
-  "If results look relevant, fetch full records before editing: `memory_get` with `{ repository, id }`.",
+  "If results look relevant, fetch full records before editing: `memory_get` with `{ repository, id }` (one id per call).",
   "",
   "### One-sweep workflow (use this every task)",
   "",
   "1. Scan relevant context fast. Run exactly one focused `memory_query` or `memory_list` before code changes; repeat only if the touched paths or scope materially changes.",
-  "2. Verify uncertain context before acting. Re-read with `memory_get`, then prefer `memory_update` on the canonical id when wording must change; do not create duplicates.",
-  '3. Maintain memory while implementing. Prefer `memory_update` on an existing id; if no reliable match exists, `memory_add` with clear tags (`area:…,topic:…,kind:…`). Call `memory_size` first when content may be long.',
+  "2. Verify uncertain context before acting. There are no `verify` / `diff` tools — re-read candidates with `memory_get` and compare against the code, then prefer `memory_update` on the canonical id when wording must change; do not create duplicates.",
+  "3. Maintain memory while implementing. Prefer `memory_update` with the exact `id` (there is no match/upsert — resolve the id via query first; only changed fields are needed). If no reliable match exists, `memory_add` with clear tags (`area:…,topic:…,kind:…`). Call `memory_size` first when content may be long.",
   "4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
-  "5. Use path-driven tags. Prefer scoped tags such as `area:cli,topic:backend,kind:decision`.",
+  "5. Use path-driven tags. There is no tag-map tool — tags are free-form comma-separated text, so use scoped tags such as `area:cli,topic:backend,kind:decision`. `memory_list` cannot filter by tags; audit tag usage via `memory_query`.",
   '6. Capture third-party quirks. Always add a `memory_type: "gotcha"` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.',
-  '7. Keep status hygiene. Status memories are for transient progress, should set `expires_after_days`, and should be updated rather than duplicated.',
-  '8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.',
+  "7. Keep status hygiene. Status memories are for transient progress, should set `expires_after_days` at creation, and should be updated rather than duplicated. (`memory_update` cannot set expiry.)",
+  "8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.",
   "9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need via `memory_add` / `memory_update`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.",
   "",
   "### Checklist (verify before proceeding)",
