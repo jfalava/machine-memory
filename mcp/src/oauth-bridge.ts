@@ -50,9 +50,9 @@ function resolveOAuthConfig(resources: OAuthResources): OAuthConfigResolution {
     cookieEncryptionKey === undefined
   ) {
     const missing = [
-      githubClientId === undefined ? "GITHUB_CLIENT_ID" : "",
-      githubClientSecret === undefined ? "GITHUB_CLIENT_SECRET" : "",
-      cookieEncryptionKey === undefined ? "COOKIE_ENCRYPTION_KEY" : "",
+      githubClientId === undefined ? "MACHINE_MEMORY_GITHUB_CLIENT_ID" : "",
+      githubClientSecret === undefined ? "MACHINE_MEMORY_GITHUB_CLIENT_SECRET" : "",
+      cookieEncryptionKey === undefined ? "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY" : "",
     ].filter((name) => name !== "");
     return { config: undefined, missing };
   }
@@ -93,9 +93,9 @@ export function handleOAuthPath(
       VECTORIZE: rawVectorize as Vectorize,
       AI: rawAi as Ai,
       OAUTH_KV: rawKv as KVNamespace,
-      GITHUB_CLIENT_ID: config.githubClientId,
-      GITHUB_CLIENT_SECRET: config.githubClientSecret,
-      COOKIE_ENCRYPTION_KEY: config.cookieEncryptionKey,
+      MACHINE_MEMORY_GITHUB_CLIENT_ID: config.githubClientId,
+      MACHINE_MEMORY_GITHUB_CLIENT_SECRET: config.githubClientSecret,
+      MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: config.cookieEncryptionKey,
     } satisfies OAuthEnv;
   });
 

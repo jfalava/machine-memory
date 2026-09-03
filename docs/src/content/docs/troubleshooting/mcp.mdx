@@ -12,9 +12,9 @@ Symptoms against `https://<worker-url>/mcp` and the OAuth flow. Enablement steps
 
 **Cause:** MCP is opt-in. Missing any of these Worker secrets disables OAuth/MCP only; REST keeps working:
 
-- `GITHUB_CLIENT_ID`
-- `GITHUB_CLIENT_SECRET`
-- `COOKIE_ENCRYPTION_KEY`
+- `MACHINE_MEMORY_GITHUB_CLIENT_ID`
+- `MACHINE_MEMORY_GITHUB_CLIENT_SECRET`
+- `MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY`
 
 The 503 body lists which names are missing.
 
@@ -22,7 +22,7 @@ The 503 body lists which names are missing.
 
 ## Cookie / session signing failures
 
-**Cause:** `COOKIE_ENCRYPTION_KEY` signs OAuth cookies and related state. Wrong, rotated, or empty values break the browser leg of auth (callback, CSRF cookie mismatch, “invalid state”).
+**Cause:** `MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY` signs OAuth cookies and related state. Wrong, rotated, or empty values break the browser leg of auth (callback, CSRF cookie mismatch, “invalid state”).
 
 **Fix:**
 

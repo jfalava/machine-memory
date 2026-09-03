@@ -12,7 +12,7 @@ Sandboxes (Amp orbs, CI, locked-down Linux) often cannot use the OS keychain. MC
 
 | Path               | Auth                            | Sandbox notes                                                                                                        |
 | ------------------ | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| **MCP** `/mcp`     | GitHub OAuth 2.1 in the browser | No `MACHINE_MEMORY_DB_TOKEN`. Client must complete OAuth; cookie signing uses `COOKIE_ENCRYPTION_KEY` on the Worker. |
+| **MCP** `/mcp`     | GitHub OAuth 2.1 in the browser | No `MACHINE_MEMORY_DB_TOKEN`. Client must complete OAuth; cookie signing uses `MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY` on the Worker. |
 | **CLI** `--remote` | Worker URL + bearer token       | Needs keychain **or** repo-root `.env` (below).                                                                      |
 
 MCP clients never read your local keychain or `.env` token. If OAuth fails, see [MCP troubleshooting](/troubleshooting/mcp).

@@ -19,9 +19,9 @@ export const CLIENT_REGISTRATION_ENDPOINT = "/register";
  */
 export type OAuthEnv = McpBindings & {
   readonly OAUTH_KV: KVNamespace;
-  readonly GITHUB_CLIENT_ID: string;
-  readonly GITHUB_CLIENT_SECRET: string;
-  readonly COOKIE_ENCRYPTION_KEY: string;
+  readonly MACHINE_MEMORY_GITHUB_CLIENT_ID: string;
+  readonly MACHINE_MEMORY_GITHUB_CLIENT_SECRET: string;
+  readonly MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: string;
   readonly OAUTH_PROVIDER?: OAuthHelpers;
 };
 

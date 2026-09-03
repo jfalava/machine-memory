@@ -30,11 +30,11 @@ export default Cloudflare.Worker<{}>()(
     const ai = yield* Cloudflare.Workers.AI();
     const oauthKv = yield* Cloudflare.KV.ReadWriteNamespace(OAuthKv);
     const oauthConfig = yield* Effect.all({
-      githubClientId: Config.string("GITHUB_CLIENT_ID").pipe(Effect.option),
-      githubClientSecret: Config.redacted("GITHUB_CLIENT_SECRET").pipe(
+      githubClientId: Config.string("MACHINE_MEMORY_GITHUB_CLIENT_ID").pipe(Effect.option),
+      githubClientSecret: Config.redacted("MACHINE_MEMORY_GITHUB_CLIENT_SECRET").pipe(
         Effect.option,
       ),
-      cookieEncryptionKey: Config.redacted("COOKIE_ENCRYPTION_KEY").pipe(
+      cookieEncryptionKey: Config.redacted("MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY").pipe(
         Effect.option,
       ),
     });

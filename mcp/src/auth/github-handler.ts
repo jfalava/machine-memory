@@ -148,7 +148,7 @@ function redirectToGithub(
     headers: {
       ...headers,
       location: upstreamAuthorizeUrl({
-        client_id: env.GITHUB_CLIENT_ID,
+        client_id: env.MACHINE_MEMORY_GITHUB_CLIENT_ID,
         redirect_uri: new URL("/callback", request.url).href,
         scope: "read:user user:email",
         state: stateToken,
@@ -191,7 +191,7 @@ async function handleAuthorizeGet(
     return new Response("Invalid request", { status: 400 });
   }
 
-  if (await isClientApproved(request, clientId, env.COOKIE_ENCRYPTION_KEY)) {
+  if (await isClientApproved(request, clientId, env.MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY)) {
     return redirectToGithubFromState(request, env, oauthReqInfo, clientId);
   }
 
@@ -239,7 +239,7 @@ async function handleAuthorizePost(
     const approvedClientCookie = await addApprovedClient(
       request,
       oauthReqInfo.clientId,
-      env.COOKIE_ENCRYPTION_KEY,
+      env.MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY,
     );
 
     const { stateToken } = await createOAuthState(oauthReqInfo, env.OAUTH_KV);
@@ -321,8 +321,8 @@ async function exchangeCodeForUser(
   const url = new URL(request.url);
   const redirectUri = new URL("/callback", request.url).href;
   const [accessToken, errResponse] = await exchangeGithubCode({
-    client_id: env.GITHUB_CLIENT_ID,
-    client_secret: env.GITHUB_CLIENT_SECRET,
+    client_id: env.MACHINE_MEMORY_GITHUB_CLIENT_ID,
+    client_secret: env.MACHINE_MEMORY_GITHUB_CLIENT_SECRET,
     code: url.searchParams.get("code") ?? undefined,
     redirect_uri: redirectUri,
   });
