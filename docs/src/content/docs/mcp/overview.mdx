@@ -1,6 +1,6 @@
 ---
 title: Overview
-description: Use machine-memory from LLM agents over the Model Context Protocol—no CLI required.
+description: Use machine-memory via the Model Context Protocol when the CLI is not available
 audience: human
 sidebar:
   order: 0
@@ -12,13 +12,7 @@ Machine Memory’s remote Worker can act as a [Model Context Protocol](https://m
 
 ## Who this is for
 
-| Path             | Use it when                                                       |
-| ---------------- | ----------------------------------------------------------------- |
-| **MCP-only**     | Agents talk to `/mcp` and never run the CLI.                      |
-| **CLI + remote** | You still want `machine-memory … --remote` for humans or scripts. |
-| **CLI + local**  | Single-machine SQLite; MCP does not apply.                        |
-
-MCP and the authenticated REST API share the same D1 + Vectorize stack. MCP is opt-in: without OAuth secrets the REST API keeps working and MCP routes return `503` listing the missing variables.
+This is made for any users of any primitive that doesn't allow or discourages persistent environments, such as [Amp's Orbs](https://ampcode.com/what-are-orbs) or chatbot-exclusive environments, where there is not a possibility to access such a tool.
 
 ## Setup path
 
@@ -42,10 +36,6 @@ Discovery endpoints:
 
 On first connect the browser opens authorization: the client registers, GitHub identity is verified, and tokens carry `mcp:read` and `mcp:write`. After that, tools from [Tools](/mcp/tools) are available.
 
-## Related CLI docs
-
-Remote CLI setup (keychain / `.env`) still lives under [remote](/human/remote/overview). The CLI and MCP can share one provisioned stack.
-
 ## Troubleshooting
 
-OAuth, cookie signing, sandbox credentials, and deploy gotchas: [Troubleshooting → MCP](/troubleshooting/mcp).
+OAuth, cookie signing, sandbox credentials, and deploy gotchas: [Troubleshooting: MCP](/troubleshooting/mcp).

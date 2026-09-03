@@ -22,8 +22,16 @@ Everything outside the markers is preserved.
 
 From the repository root:
 
+### macOS and Linux
+
 ```sh
 curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+```
+
+### Windows
+
+```powershell
+irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex
 ```
 
 This is the MCP counterpart to the [CLI install script](/installation). It:
@@ -49,7 +57,16 @@ MACHINE_MEMORY_AGENTS_MD=.agents/memory.md \
   curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
 ```
 
-Requirements on the machine running the script: `bash`, `base64`, and `python3`.
+```powershell
+# default ./AGENTS.md
+irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex
+
+# custom path
+$env:MACHINE_MEMORY_AGENTS_MD = ".agents/memory.md"
+irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex
+```
+
+Requirements: on macOS/Linux the `init-mcp` script needs `bash`, `base64`, and `python3`. The Windows `init-mcp.ps1` script needs PowerShell 5.1+ only (no extra dependencies).
 
 ## CLI equivalent
 

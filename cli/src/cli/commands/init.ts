@@ -56,6 +56,9 @@ export function handleInitCommand(commandCtx: CommandContext) {
         console.info(
           `${pc.dim("Script")}   ${pc.bold("curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash")}`,
         );
+        console.info(
+          `${pc.dim("Script")}   ${pc.bold("irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex")} ${pc.dim("(Windows PowerShell)")}`,
+        );
       } else {
         console.info(
           `${pc.dim("Next")}     ${pc.bold(`machine-memory list --${backend}`)}`,

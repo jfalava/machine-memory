@@ -8,12 +8,7 @@ audience: human
 
 Download the binary for your platform from the [latest GitHub release](https://github.com/jfalava/machine-memory/releases/latest):
 
-| Platform            | Release asset                     |
-| ------------------- | --------------------------------- |
-| macOS Apple Silicon | `machine-memory-darwin-arm64.zip` |
-| Linux x64           | `machine-memory-linux-x64.zip`    |
-| Linux arm64         | `machine-memory-linux-arm64.zip`  |
-| Windows x64         | `machine-memory-windows-x64.zip`  |
+> Binaries are not signed; OS that do require it will reject its execution
 
 ## Quick install
 
@@ -45,16 +40,7 @@ Extract the release archive for your platform. Put the executable inside anywher
 chmod +x machine-memory
 ```
 
-## macOS troubleshooting
-
-If a freshly downloaded binary dies with `zsh: killed`, macOS rejected its embedded ad-hoc signature because the code no longer matches it. Confirm with `codesign -v --strict machine-memory` (it reports `invalid signature`), then re-sign locally:
-
-```sh
-xattr -c machine-memory
-codesign --force --sign - machine-memory
-```
-
-`chmod +x` alone does not fix this. More CLI gotchas: [Troubleshooting → CLI](/troubleshooting/cli).
+Check [Troubleshooting](/troubleshooting/cli/#macos-zsh-killed-after-download-or-upgrade) for solutions to common problems.
 
 ## MCP-only projects
 
@@ -63,6 +49,12 @@ If agents use the remote MCP server and you do not need the CLI binary, skip the
 1. Follow [MCP setup](/mcp/overview)
 2. Run the public init script to write `AGENTS.md`:
 
-```sh
-curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
-```
+   ```sh
+   curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
+   ```
+
+   On Windows:
+
+   ```powershell
+   irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex
+   ```

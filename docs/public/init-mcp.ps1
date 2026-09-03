@@ -1,0 +1,156 @@
+# This file is published as a static asset at:
+#   https://machine-memory.jfa.dev/init-mcp.ps1
+#
+# MCP-only counterpart to `machine-memory init --mcp`.
+# Creates or replaces the managed machine-memory block in ./AGENTS.md so agents
+# that only have the remote MCP server (no CLI) follow the same workflow.
+#
+# Usage:
+#   irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex
+#
+# Environment:
+#   MACHINE_MEMORY_AGENTS_MD  Path to write (default AGENTS.md).
+#                             Absolute or relative to the current directory.
+
+$ErrorActionPreference = "Stop"
+
+$target = if ($env:MACHINE_MEMORY_AGENTS_MD) { $env:MACHINE_MEMORY_AGENTS_MD } else { "AGENTS.md" }
+if ([System.IO.Path]::IsPathRooted($target)) {
+  $agentsMd = $target
+} else {
+  $agentsMd = Join-Path (Get-Location) $target
+}
+
+# Managed block must stay in sync with agentsMdContent("mcp") in
+# cli/src/cli/commands/agents-md-content.ts (base64 payload below).
+$memoryBlockB64 = @'
+PCEtLSBtYWNoaW5lLW1lbW9yeTpzdGFydCAtLT4KIyMgUHJvamVjdCBtZW1vcnkKClRoaXMgcHJv
+amVjdCB1c2VzIGBtYWNoaW5lLW1lbW9yeWAgdGhyb3VnaCB0aGUgcmVtb3RlIE1DUCBzZXJ2ZXIg
+KE9BdXRoIHRvIHRoZSBXb3JrZXIgYC9tY3BgIGVuZHBvaW50KS4gTm8gbG9jYWwgQ0xJIG9yIGBt
+YWNoaW5lLW1lbW9yeS5kYmAgaXMgcmVxdWlyZWQuCkFsbCBtZW1vcnkgYWNjZXNzIGdvZXMgdGhy
+b3VnaCBNQ1AgdG9vbHM6IGBsaXN0X3JlcG9zaXRvcmllc2AsIGBtZW1vcnlfcXVlcnlgLCBgbWVt
+b3J5X2dldGAsIGBtZW1vcnlfbGlzdGAsIGBtZW1vcnlfc2l6ZWAsIGBtZW1vcnlfYWRkYCwgYG1l
+bW9yeV91cGRhdGVgLCBgbWVtb3J5X2RlbGV0ZWAuClJlcG9zaXRvcnkgc2NvcGU6IGV2ZXJ5IHRv
+b2wgdGhhdCBtdXRhdGVzIG9yIHJlYWRzIGEgc3BlY2lmaWMgcmVwbyByZXF1aXJlcyBhbiBleGFj
+dCBgb3duZXIvbmFtZWAgc2x1Zy4gVGhlcmUgaXMgbm8gZGVmYXVsdC4gQ2FsbCBgbGlzdF9yZXBv
+c2l0b3JpZXNgIGZpcnN0IHdoZW4gdW5zdXJlOyBkZXJpdmUgdGhlIHNsdWcgZnJvbSBgZ2l0IHJl
+bW90ZSBnZXQtdXJsIG9yaWdpbmAgd2hlbiBpdCBtYXRjaGVzIGEga25vd24gZW50cnkuClNlYXJj
+aCBwb2xpY3k6IHVzZSBgbWVtb3J5X3F1ZXJ5YCB3aXRoIGBtb2RlOiAia2V5d29yZCJgIGZvciBl
+eGFjdCBuYW1lcywgcGF0aHMsIGNvbW1hbmRzLCBhbmQgaWRlbnRpZmllcnM7IGBtb2RlOiAic2Vt
+YW50aWMiYCB3aGVuIHRoZSBzYW1lIGNvbmNlcHQgbWF5IHVzZSBkaWZmZXJlbnQgd29yZGluZzsg
+YG1vZGU6ICJoeWJyaWQiYCAoZGVmYXVsdCkgZm9yIGJyb2FkIGludmVzdGlnYXRpb24uIEQxIHJl
+Y29yZHMgYXJlIGNhbm9uaWNhbCBhbmQgVmVjdG9yaXplIGlzIG9ubHkgYSByZXRyaWV2YWwgaW5k
+ZXguCldyaXRlcyAoYG1lbW9yeV9hZGRgLCBgbWVtb3J5X3VwZGF0ZWAsIGBtZW1vcnlfZGVsZXRl
+YCkgYXJlIHBlcm1hbmVudCBhbmQgZWNobyBgd3JpdHRlbl90b2AgLyBgZGVsZXRlZF9mcm9tYC4g
+Q29uZmlybSB0aGUgcmVwb3NpdG9yeSBzbHVnIGJlZm9yZSBldmVyeSB3cml0ZS4KTWVtb3J5IHNp
+emU6IHRoZSBjb21wb3NlZCBlbWJlZGRpbmcgdGV4dCBtdXN0IHN0YXkgd2l0aGluIHRoZSBXb3Jr
+ZXIncyBjb25zZXJ2YXRpdmUgYnl0ZSsyIGJ1ZGdldCAoVVRGLTggYnl0ZXMgKyAyIOKJpCA1MTIp
+LiBQcmVmbGlnaHQgd2l0aG91dCB3cml0aW5nOiBjYWxsIGBtZW1vcnlfc2l6ZWAgd2l0aCB0aGUg
+cHJvc3BlY3RpdmUgY29udGVudC90YWdzL2NvbnRleHQvdHlwZS4gYG1lbW9yeV9hZGRgIGFuZCBg
+bWVtb3J5X3VwZGF0ZWAgcmVqZWN0IG9uIGZsaWdodCB3aGVuIG92ZXIgYnVkZ2V0OyBvdmVyc2l6
+ZSBgbWVtb3J5X3NpemVgIHJlc3VsdHMgc2V0IGBpc0Vycm9yYCBhbmQgaW5jbHVkZSBgb3Zlcl9i
+eV9ieXRlc2AuCgrimqDvuI8gTUFOREFUT1JZOiBDb21wbGV0ZSB0aGUgbWVtb3J5IHNjYW4gQkVG
+T1JFIGFueSBjb2RlIGNoYW5nZXMuIFNraXBwaW5nIGl0IGNhdXNlcyByZXdvcmssIHJlZ3Jlc3Np
+b25zLCBhbmQgZHVwbGljYXRlZCBkZWNpc2lvbnMuCgojIyMgUmVxdWlyZWQgcHJlLXdvcmtmbG93
+IChETyBOT1QgU0tJUCkKCkJlZm9yZSB0b3VjaGluZyBjb2RlLCBjb21wbGV0ZSB0aGlzIHNjYW4g
+ZnJvbSB0aGUgcmVwb3NpdG9yeSByb290IHZpYSBNQ1AgdG9vbHM6CgotIEtub3duIHRvcGljOiBg
+bWVtb3J5X3F1ZXJ5YCB3aXRoIGB7IHJlcG9zaXRvcnksIHF1ZXJ5OiAidG9waWMiLCBtb2RlOiAi
+aHlicmlkIiB9YAotIEJyb2FkIGF1ZGl0OiBgbWVtb3J5X2xpc3RgIHdpdGggYHsgcmVwb3NpdG9y
+eSB9YCAob3B0aW9uYWwgYG1lbW9yeV90eXBlYCAvIGBzdGF0dXNgIGZpbHRlcnMpIG9yIGBtZW1v
+cnlfcXVlcnlgIHdpdGggdGFnLW9yaWVudGVkIGtleXdvcmRzCi0gRGlzY292ZXIgc2x1ZzogYGxp
+c3RfcmVwb3NpdG9yaWVzYCB3aGVuIHRoZSBgb3duZXIvbmFtZWAgaXMgbm90IGNlcnRhaW4KCklm
+IHJlc3VsdHMgbG9vayByZWxldmFudCwgZmV0Y2ggZnVsbCByZWNvcmRzIGJlZm9yZSBlZGl0aW5n
+OiBgbWVtb3J5X2dldGAgd2l0aCBgeyByZXBvc2l0b3J5LCBpZCB9YC4KCiMjIyBPbmUtc3dlZXAg
+d29ya2Zsb3cgKHVzZSB0aGlzIGV2ZXJ5IHRhc2spCgoxLiBTY2FuIHJlbGV2YW50IGNvbnRleHQg
+ZmFzdC4gUnVuIGV4YWN0bHkgb25lIGZvY3VzZWQgYG1lbW9yeV9xdWVyeWAgb3IgYG1lbW9yeV9s
+aXN0YCBiZWZvcmUgY29kZSBjaGFuZ2VzOyByZXBlYXQgb25seSBpZiB0aGUgdG91Y2hlZCBwYXRo
+cyBvciBzY29wZSBtYXRlcmlhbGx5IGNoYW5nZXMuCjIuIFZlcmlmeSB1bmNlcnRhaW4gY29udGV4
+dCBiZWZvcmUgYWN0aW5nLiBSZS1yZWFkIHdpdGggYG1lbW9yeV9nZXRgLCB0aGVuIHByZWZlciBg
+bWVtb3J5X3VwZGF0ZWAgb24gdGhlIGNhbm9uaWNhbCBpZCB3aGVuIHdvcmRpbmcgbXVzdCBjaGFu
+Z2U7IGRvIG5vdCBjcmVhdGUgZHVwbGljYXRlcy4KMy4gTWFpbnRhaW4gbWVtb3J5IHdoaWxlIGlt
+cGxlbWVudGluZy4gUHJlZmVyIGBtZW1vcnlfdXBkYXRlYCBvbiBhbiBleGlzdGluZyBpZDsgaWYg
+bm8gcmVsaWFibGUgbWF0Y2ggZXhpc3RzLCBgbWVtb3J5X2FkZGAgd2l0aCBjbGVhciB0YWdzIChg
+YXJlYTrigKYsdG9waWM64oCmLGtpbmQ64oCmYCkuIENhbGwgYG1lbW9yeV9zaXplYCBmaXJzdCB3
+aGVuIGNvbnRlbnQgbWF5IGJlIGxvbmcuCjQuIFdyaXRlIGZvciByZXRyaWV2YWwuIFB1dCBjb21t
+YW5kcywgQVBJIHBhdGhzLCBmaWxlIHBhdGhzLCBrZXlzLCByb3V0ZXMsIHRocmVzaG9sZHMsIGFu
+ZCBleGFjdCBmZWF0dXJlIGtleXdvcmRzIGluIHRoZSBmaXJzdCBzZW50ZW5jZSBvZiBgY29udGVu
+dGAuCjUuIFVzZSBwYXRoLWRyaXZlbiB0YWdzLiBQcmVmZXIgc2NvcGVkIHRhZ3Mgc3VjaCBhcyBg
+YXJlYTpjbGksdG9waWM6YmFja2VuZCxraW5kOmRlY2lzaW9uYC4KNi4gQ2FwdHVyZSB0aGlyZC1w
+YXJ0eSBxdWlya3MuIEFsd2F5cyBhZGQgYSBgbWVtb3J5X3R5cGU6ICJnb3RjaGEiYCBtZW1vcnkg
+Zm9yIHN1cnByaXNpbmcgbGlicmFyeSBvciB0b29sIGJlaGF2aW9yLCBsZWFkaW5nIHdpdGggdGhl
+IGxpYnJhcnkgbmFtZSwgYmVoYXZpb3IsIGFuZCBmaXguCjcuIEtlZXAgc3RhdHVzIGh5Z2llbmUu
+IFN0YXR1cyBtZW1vcmllcyBhcmUgZm9yIHRyYW5zaWVudCBwcm9ncmVzcywgc2hvdWxkIHNldCBg
+ZXhwaXJlc19hZnRlcl9kYXlzYCwgYW5kIHNob3VsZCBiZSB1cGRhdGVkIHJhdGhlciB0aGFuIGR1
+cGxpY2F0ZWQuCjguIFNlcGFyYXRlIGR1cmFibGUgYW5kIHRyYW5zaWVudCBmYWN0cy4gVXNlIGBk
+ZWNpc2lvbmAsIGByZWZlcmVuY2VgLCBvciBgZ290Y2hhYCBmb3IgcmV1c2FibGUga25vd2xlZGdl
+OyB1c2UgYHN0YXR1c2Agb25seSBmb3Igc2hvcnQtbGl2ZWQgc25hcHNob3RzLgo5LiBBdCB0YXNr
+IGVuZCwgcGVyc2lzdCBldmVyeSBkdXJhYmxlIGRlY2lzaW9uLCBjb25zdHJhaW50LCBwcmVmZXJl
+bmNlLCBub24tb2J2aW91cyBnb3RjaGEsIGFuZCB2ZXJpZmllZCBzdGF0dXMgZnV0dXJlIHNlc3Np
+b25zIG5lZWQgdmlhIGBtZW1vcnlfYWRkYCAvIGBtZW1vcnlfdXBkYXRlYC4gRG8gbm90IHN0b3Jl
+IG9idmlvdXMgY29kZSBmYWN0cywgcm91dGluZSB0ZXN0IHJlc3VsdHMsIHRlbXBvcmFyeSBwcm9n
+cmVzcywgb3IgZHVwbGljYXRlcy4KCiMjIyBDaGVja2xpc3QgKHZlcmlmeSBiZWZvcmUgcHJvY2Vl
+ZGluZykKCi0gWyBdIEkgcmFuIGBtZW1vcnlfcXVlcnlgIG9yIGBtZW1vcnlfbGlzdGAgKGFuZCBg
+bGlzdF9yZXBvc2l0b3JpZXNgIGlmIHRoZSBzbHVnIHdhcyB1bmNlcnRhaW4pIGZvciB0aGUgZmls
+ZXMgb3IgZmVhdHVyZSBJIHdpbGwgdG91Y2gKLSBbIF0gSSByZXZpZXdlZCB0aGUgcmV0dXJuZWQg
+bWVtb3J5IElEcyBhbmQgZmV0Y2hlZCBmdWxsIHJlY29yZHMgd2l0aCBgbWVtb3J5X2dldGAgd2hl
+biByZWxldmFudAotIFsgXSBJIGNvbnNpZGVyZWQgd2hldGhlciBleGlzdGluZyBtZW1vcmllcyBj
+b25zdHJhaW4gdGhlIHBsYW5uZWQgYXBwcm9hY2gKLSBbIF0gSSB3aWxsIGRvY3VtZW50IHNpZ25p
+ZmljYW50IGZpbmRpbmdzIGFuZCBkZWNpc2lvbnMgYWZ0ZXIgY29tcGxldGluZyB0aGUgdGFzawoK
+UHJvamVjdCBwcmVmZXJlbmNlOiByZXBsYWNlIG9ic29sZXRlIHN5c3RlbXMgd2hlbiBwcmFjdGlj
+YWw7IHByZXNlcnZlIGJhY2t3YXJkcyBjb21wYXRpYmlsaXR5IG9ubHkgd2hlbiBpdCBpcyBleHBs
+aWNpdGx5IHJlcXVpcmVkLgo8IS0tIG1hY2hpbmUtbWVtb3J5OmVuZCAtLT4=
+'@
+
+$cleanB64 = $memoryBlockB64 -replace '\s', ''
+try {
+  $managedBlock = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanB64))
+} catch {
+  throw "machine-memory init-mcp: could not decode managed AGENTS.md block. $_"
+}
+if (-not $managedBlock.EndsWith("`n")) {
+  $managedBlock += "`n"
+}
+
+$startMarker = '<!-- machine-memory:start -->'
+$endMarker = '<!-- machine-memory:end -->'
+
+if (Test-Path -LiteralPath $agentsMd -PathType Leaf) {
+  $existing = [System.IO.File]::ReadAllText($agentsMd)
+  $action = 'Updated'
+} else {
+  $existing = ''
+  $action = 'Created'
+  $parentDir = Split-Path -Parent $agentsMd
+  if ($parentDir -and -not (Test-Path -LiteralPath $parentDir)) {
+    New-Item -ItemType Directory -Force -Path $parentDir | Out-Null
+  }
+}
+
+$s = $existing.IndexOf($startMarker)
+$e = if ($s -ge 0) { $existing.IndexOf($endMarker, $s) } else { -1 }
+if ($s -ge 0 -and $e -ge 0) {
+  $after = $existing.Substring($e + $endMarker.Length)
+  $out = $existing.Substring(0, $s) + $managedBlock.TrimEnd("`r", "`n") + "`n"
+  if ($after) {
+    $out += $after.TrimStart("`r", "`n")
+    if (-not $out.EndsWith("`n")) {
+      $out += "`n"
+    }
+  }
+} else {
+  $body = $existing.TrimEnd()
+  $managedTrimmed = $managedBlock.TrimEnd("`r", "`n")
+  if ($body) {
+    $out = "$body`n`n$managedTrimmed`n"
+  } else {
+    $out = "$managedTrimmed`n"
+  }
+}
+
+$utf8NoBom = New-Object System.Text.UTF8Encoding $false
+[System.IO.File]::WriteAllText($agentsMd, $out, $utf8NoBom)
+
+Write-Host "$action $agentsMd"
+Write-Host "Backend  mcp (MCP tools; no CLI)"
+Write-Host "Next     connect an OAuth MCP client to https://<worker-url>/mcp"
+Write-Host "Docs     https://machine-memory.jfa.dev/mcp/init"

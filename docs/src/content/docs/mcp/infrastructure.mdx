@@ -88,7 +88,3 @@ MCP OAuth secrets are optional at this stage. Without them the Worker still serv
 ## Already have a Worker?
 
 Point the CLI at it with [`remote setup`](/human/remote/setup). MCP still needs the OAuth secrets on that same Worker deployment.
-
-## Sandboxed / no keychain
-
-For CLI remote access without OS keychain, put credentials in a repo-root `.env` — see [Sandboxed keychain access](/human/remote/keychain-access). MCP clients do not use that token; they use OAuth to `/mcp`.
