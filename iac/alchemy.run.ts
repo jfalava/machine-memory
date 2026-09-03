@@ -45,7 +45,7 @@ export default Alchemy.Stack(
       ? yield* Cloudflare.Website.StaticSite("machine-memory-docs", {
           name: docsWorkerName,
           cwd: "../docs",
-          command: "bun run build",
+          command: "bash ./scripts/build-cf.sh",
           outdir: "dist",
           main: "./src/docs-worker.ts",
           workersDev: false,

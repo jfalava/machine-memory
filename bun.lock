@@ -87,7 +87,7 @@
       "name": "@machine-memory/iac",
       "version": "0.15.0",
       "dependencies": {
-        "@cloudflare/workers-types": "5.20260831.1",
+        "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
         "@effect/sql-d1": "catalog:effect",
@@ -160,6 +160,7 @@
       "vitest": "4.1.11",
     },
     "types": {
+      "@cloudflare/workers-types": "5.20260831.1",
       "@types/bun": "1.4.0",
     },
   },

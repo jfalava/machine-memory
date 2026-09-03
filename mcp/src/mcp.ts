@@ -4,6 +4,10 @@ import {
 } from "@modelcontextprotocol/server";
 import { Schema } from "effect";
 import { embeddingSizeReport, validateEmbeddingText } from "./embedding";
+import pkg from "../package.json";
+
+/** Same version as the monorepo CLI / package.json (not a separate MCP protocol number). */
+export const MCP_SERVER_VERSION: string = pkg.version;
 
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5" as const;
 const EMBEDDING_DIMENSIONS = 768;
@@ -1542,7 +1546,7 @@ export function createMemoryServer(
 ): McpServer {
   const server = new McpServer({
     name: "machine-memory",
-    version: "1.0.0",
+    version: MCP_SERVER_VERSION,
   });
 
   const ownerHint = authenticatedLogin
