@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "5.20260831.1",
-    "hono": "4.11.4"
+    "hono": "4.12.34"
   },
   "devDependencies": {
     "@types/bun": "catalog:types",
