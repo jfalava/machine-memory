@@ -18,7 +18,7 @@ import { createVectorMetadataIndexes, VectorIndex } from "./src/vectorize";
  * Multi-worker stack (manifold pattern):
  * - API: authenticated REST (/query, /migrate, /vectorize/*)
  * - MCP: OAuth + /mcp tools
- * - Docs (optional): static site behind the router catch-all
+ * - Docs (optional): static site behind explicit docs mounts on the router
  * - Router: sole public entry (custom domain or workers.dev)
  *
  * Worker sources live in ../api, ../mcp, ../router. This package owns IaC only.

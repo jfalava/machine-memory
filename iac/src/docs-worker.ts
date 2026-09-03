@@ -1,7 +1,7 @@
 /**
  * Thin docs worker in front of StaticSite assets.
  * Alchemy injects the ASSETS binding; public traffic reaches this only
- * through the edge router catch-all (DOCS_WORKER service binding).
+ * through the edge router docs mounts (DOCS_WORKER service binding).
  */
 export interface Env {
   readonly ASSETS: {

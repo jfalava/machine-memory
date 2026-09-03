@@ -136,6 +136,7 @@
         "oxlint": "catalog:maintenance",
         "oxlint-tsgolint": "catalog:build",
         "typescript": "catalog:build",
+        "vitest": "catalog:maintenance",
       },
     },
   },
