@@ -1,24 +1,30 @@
 ---
 title: Installation
-description: Download and install the standalone machine-memory CLI binary.
+description: Install the machine-memory CLI, or set up MCP-only agent access without a binary.
 audience: human
 ---
 
-## Download
+Choose the path that matches how you use Machine Memory.
+
+## CLI
+
+Install the standalone `machine-memory` binary when you want local setup, remote provision, or agent commands from the terminal.
+
+### Download
 
 Download the binary for your platform from the [latest GitHub release](https://github.com/jfalava/machine-memory/releases/latest):
 
 > Binaries are not signed; OS that do require it will reject its execution
 
-## Quick install
+### Quick install
 
-### macOS and Linux
+#### macOS and Linux
 
 ```sh
 curl -fsSL https://machine-memory.jfa.dev/install | bash
 ```
 
-### Windows PowerShell
+#### Windows PowerShell
 
 ```powershell
 irm https://machine-memory.jfa.dev/install.ps1 | iex
@@ -30,9 +36,9 @@ Add `$HOME/.local/bin` to `PATH` if it is not already there, then verify the ins
 machine-memory --version
 ```
 
-## Install
+### Manual install
 
-Extract the release archive for your platform. Put the executable inside anywhere on your `PATH`.
+Extract the release archive for your platform. Put the executable anywhere on your `PATH`.
 
 > For UNIX users, you may need to make it executable:
 
@@ -42,12 +48,20 @@ chmod +x machine-memory
 
 Check [Troubleshooting](/troubleshooting/cli/#macos-zsh-killed-after-download-or-upgrade) for solutions to common problems.
 
-## MCP-only projects
+### Next steps
 
-If agents use the remote MCP server and you do not need the CLI binary, skip the install above and:
+After the binary is on your `PATH`:
 
-1. Follow [MCP setup](/docs/mcp/overview)
-2. Run the public init script to write `AGENTS.md`:
+- [Human commands](/human/overview) — setup, local/remote backends, init, upgrade
+- [Machine commands](/machine/overview) — agent-facing JSON commands for memory CRUD and search
+
+## MCP
+
+Use this path when agents talk to the remote MCP server and you do not need the CLI binary.
+
+1. Deploy the stack if you do not already have one: [Infrastructure](/infrastructure/overview)
+2. Follow [MCP setup](/docs/mcp/overview) (enable OAuth, connect a client, tools)
+3. Run the public init script to write `AGENTS.md`:
 
    ```sh
    curl -fsSL https://machine-memory.jfa.dev/init-mcp | bash
@@ -58,3 +72,5 @@ If agents use the remote MCP server and you do not need the CLI binary, skip the
    ```powershell
    irm https://machine-memory.jfa.dev/init-mcp.ps1 | iex
    ```
+
+More detail: [MCP Init](/docs/mcp/init).

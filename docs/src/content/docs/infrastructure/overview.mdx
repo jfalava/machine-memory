@@ -1,0 +1,19 @@
+---
+title: Overview
+description: Deploy the Cloudflare Alchemy stack that backs remote memory and the MCP server.
+audience: human
+sidebar:
+  order: 0
+---
+
+Remote memory and MCP share one Cloudflare stack. Deploy it once, point the CLI at the router URL (or keep credentials from provision), then optionally [enable MCP OAuth](/docs/mcp/enable).
+
+| Guide | Use it for |
+| ----- | ---------- |
+| [Prerequisites](/infrastructure/prerequisites) | Account, credentials, and tools you need before deploy |
+| [What gets deployed](/infrastructure/what-gets-deployed) | Router, workers, D1, Vectorize, and related resources |
+| [Deployment options](/infrastructure/deployment) | CLI provision, clone + IaC, and deploy config |
+
+## Already have a stack?
+
+Point the CLI at the **router** base URL with [`remote setup`](/human/remote/setup). MCP still needs the OAuth secrets on the MCP worker.

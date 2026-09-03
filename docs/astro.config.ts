@@ -21,42 +21,50 @@ const nimbusConfig = defineNimbusConfig({
         link: "/installation",
       },
       {
-        label: "Human commands",
+        label: "CLI",
         items: [
-          { label: "Overview", link: "/human/overview" },
-          { label: "--pretty", link: "/human/pretty" },
-          { label: "init", link: "/human/init" },
           {
-            label: "local",
+            label: "Human commands",
             items: [
-              { label: "Overview", link: "/human/local/overview" },
-              { label: "Export", link: "/human/local/export" },
+              { label: "Overview", link: "/human/overview" },
+              { label: "--pretty", link: "/human/pretty" },
+              { label: "init", link: "/human/init" },
+              {
+                label: "local",
+                items: [
+                  { label: "Overview", link: "/human/local/overview" },
+                  { label: "Export", link: "/human/local/export" },
+                ],
+              },
+              {
+                label: "remote",
+                items: [
+                  { label: "Overview", link: "/human/remote/overview" },
+                  { label: "setup", link: "/human/remote/setup" },
+                  {
+                    label: "provision",
+                    link: "/human/remote/provision",
+                  },
+                  {
+                    label: "Keychain Access",
+                    link: "/human/remote/keychain-access",
+                  },
+                ],
+              },
+              { label: "upgrade", link: "/human/upgrade" },
+              { label: "reindex", link: "/human/reindex" },
             ],
           },
           {
-            label: "remote",
-            items: [
-              { label: "Overview", link: "/human/remote/overview" },
-              { label: "setup", link: "/human/remote/setup" },
-              {
-                label: "provision",
-                link: "/human/remote/provision",
-              },
-              {
-                label: "Keychain Access",
-                link: "/human/remote/keychain-access",
-              },
-            ],
+            label: "Machine commands",
+            items: [{ autogenerate: { directory: "machine" } }],
           },
-          { label: "upgrade", link: "/human/upgrade" },
-          { label: "reindex", link: "/human/reindex" },
         ],
       },
       {
         label: "MCP",
         items: [
           { label: "Overview", link: "/docs/mcp/overview" },
-          { label: "Infrastructure", link: "/docs/mcp/infrastructure" },
           { label: "Enable MCP", link: "/docs/mcp/enable" },
           { label: "Init", link: "/docs/mcp/init" },
           { label: "Tools", link: "/docs/mcp/tools" },
@@ -72,8 +80,16 @@ const nimbusConfig = defineNimbusConfig({
         ],
       },
       {
-        label: "Machine commands",
-        items: [{ autogenerate: { directory: "machine" } }],
+        label: "Infrastructure",
+        items: [
+          { label: "Overview", link: "/infrastructure/overview" },
+          { label: "Prerequisites", link: "/infrastructure/prerequisites" },
+          {
+            label: "What gets deployed",
+            link: "/infrastructure/what-gets-deployed",
+          },
+          { label: "Deployment options", link: "/infrastructure/deployment" },
+        ],
       },
     ],
   },

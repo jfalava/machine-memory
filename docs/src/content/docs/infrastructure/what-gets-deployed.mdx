@@ -1,0 +1,26 @@
+---
+title: What gets deployed
+description: Resources created by the Alchemy stack for remote memory and MCP.
+audience: human
+sidebar:
+  order: 2
+---
+
+The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/iac) uses a router plus private workers:
+
+| Resource        | Role                                                                 |
+| --------------- | -------------------------------------------------------------------- |
+| **Router**      | Sole public entry (custom domain or `workers.dev`). Dispatches paths |
+| **API worker**  | Authenticated REST (`/query`, `/migrate`, `/vectorize/*`)            |
+| **MCP worker**  | MCP tools at `/mcp` + OAuth (`/authorize`, `/callback`, …)           |
+| **Docs worker** | Optional static docs site (catch-all on the router)                  |
+| D1 database     | Canonical memory rows and FTS                                        |
+| Vectorize index | Semantic embeddings                                                  |
+| Workers AI      | BGE embeddings for writes and semantic search                        |
+| KV (OAuth)      | Authorization state and tokens when MCP is enabled                   |
+
+Public base URL is always the **router**. CLI and REST use `/query` on that host; MCP clients use `/mcp` on the same host after [Enable MCP](/docs/mcp/enable). Documentation pages live under `/docs/*` on the docs host (not under `/mcp`, which is reserved for the protocol).
+
+Source of truth: `iac/` (`alchemy.run.ts`, `src/deploy-config.ts`, `src/router/`).
+
+Next: [Deployment options](/infrastructure/deployment).

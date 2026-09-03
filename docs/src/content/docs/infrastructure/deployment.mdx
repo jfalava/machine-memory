@@ -1,0 +1,94 @@
+---
+title: Deployment options
+description: Deploy with the CLI provisioner or by cloning the repo and running Alchemy IaC.
+audience: human
+sidebar:
+  order: 3
+---
+
+Two supported paths: the CLI provisioner, or clone the monorepo and run IaC directly. Both use the same stack and optional [deploy config](#deploy-config-file).
+
+## CLI provision
+
+```sh
+machine-memory remote provision
+```
+
+That command:
+
+1. Loads optional `machine-memory.deploy.json` (see [deploy config](#deploy-config-file))
+2. Runs `alchemy deploy` for the multi-worker stack
+3. Generates or reuses a Worker token for the REST API
+4. Stores the **router** URL + token in the OS keychain (for CLI `--remote`)
+
+Command details: [`remote provision`](/human/remote/provision).
+
+### Self-host (no docs site)
+
+Most operators only need API + MCP. Skip the docs worker and set your own domain/names via a config file:
+
+```sh
+cp iac/machine-memory.deploy.example.json ./machine-memory.deploy.json
+# edit domain, worker names, set "docs": false
+machine-memory remote provision --config ./machine-memory.deploy.json
+```
+
+Or one-shot flags:
+
+```sh
+machine-memory remote provision --no-docs --domain memory.example.com
+```
+
+With no `domain`, the router is reachable at `https://<router-name>.<account>.workers.dev`.
+
+## Clone the repo and run IaC
+
+```sh
+git clone https://github.com/jfalava/machine-memory.git
+cd machine-memory/iac
+# optional: machine-memory.deploy.json in this directory or MACHINE_MEMORY_* env
+CI=1 bun run deploy
+# first time against an existing account resource set:
+# CI=1 bunx alchemy deploy --yes --adopt
+```
+
+MCP OAuth secrets are optional at this stage. Without them the API still serves REST; MCP routes return `503` until you [enable the endpoint](/docs/mcp/enable).
+
+After a direct IaC deploy, point the CLI at the **router** base URL with [`remote setup`](/human/remote/setup).
+
+## Deploy config file
+
+Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-memory/blob/master/iac/machine-memory.deploy.example.json):
+
+```json
+{
+  "domain": "memory.example.com",
+  "docs": false,
+  "stackName": "machine-memory-remote-db",
+  "database": "machine-memory-db",
+  "vectorIndex": "machine-memory-v1",
+  "oauthKv": "machine-memory-oauth-kv",
+  "workers": {
+    "router": "machine-memory-router",
+    "api": "machine-memory-api",
+    "mcp": "machine-memory-mcp",
+    "docs": "machine-memory-docs"
+  }
+}
+```
+
+**Precedence:** CLI flags → config file → `MACHINE_MEMORY_*` env → saved remote credentials → defaults.
+
+| Option / file field    | Environment variable               | Default                    |
+| ---------------------- | ---------------------------------- | -------------------------- |
+| `--config`             | `MACHINE_MEMORY_DEPLOY_CONFIG`     | (auto-discover)            |
+| `--domain` / `domain`  | `MACHINE_MEMORY_DOMAIN`            | (none → workers.dev)       |
+| `--docs` / `--no-docs` | `MACHINE_MEMORY_DEPLOY_DOCS`       | `true`                     |
+| `--stack-name`         | `MACHINE_MEMORY_STACK_NAME`        | `machine-memory-remote-db` |
+| `--database-name`      | `MACHINE_MEMORY_DB_NAME`           | `machine-memory-db`        |
+| `--router-name`        | `MACHINE_MEMORY_ROUTER_NAME`       | `machine-memory-router`    |
+| `--api-name`           | `MACHINE_MEMORY_API_NAME`          | `machine-memory-api`       |
+| `--mcp-name`           | `MACHINE_MEMORY_MCP_NAME`          | `machine-memory-mcp`       |
+| `--docs-name`          | `MACHINE_MEMORY_DOCS_NAME`         | `machine-memory-docs`      |
+| `--vector-index-name`  | `MACHINE_MEMORY_VECTOR_INDEX_NAME` | `machine-memory-v1`        |
+| `--oauth-kv-name`      | `MACHINE_MEMORY_OAUTH_KV_NAME`     | `machine-memory-oauth-kv`  |

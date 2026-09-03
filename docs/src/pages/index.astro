@@ -29,13 +29,68 @@ const prevNext = await getPrevNext("/", { sidebarTree: sidebar });
 
   <h2 id="getting-started">Getting started</h2>
   <p>
-    Start with installation, or choose the command reference that matches how
-    you are using Machine Memory:
+    Start with <a href="/installation">Installation</a>: install the CLI binary,
+    or set up MCP-only agent access without one.
+  </p>
+
+  <h3 id="cli">CLI</h3>
+  <p>
+    After the binary is on your <code>PATH</code>, use human setup commands or
+    machine-facing JSON commands:
   </p>
   <ul>
-    <li><a href="/installation">Installation</a></li>
-    <li><a href="/human/overview">Human commands</a></li>
-    <li><a href="/docs/mcp/overview/">MCP</a></li>
-    <li><a href="/machine/overview">Machine commands</a></li>
+    <li>
+      <a href="/human/overview">Human commands</a> — local/remote backends, init,
+      provision, upgrade
+    </li>
+    <li>
+      <a href="/machine/overview">Machine commands</a> — memory CRUD, search, and
+      maintenance as JSON
+    </li>
+  </ul>
+
+  <h3 id="mcp">MCP</h3>
+  <p>
+    Agents can use the remote Worker over the Model Context Protocol instead of
+    the CLI:
+  </p>
+  <ul>
+    <li><a href="/docs/mcp/overview">MCP overview</a> — setup path and clients</li>
+    <li><a href="/docs/mcp/enable">Enable MCP</a> — GitHub OAuth and secrets</li>
+    <li><a href="/docs/mcp/init">Init</a> — write the managed <code>AGENTS.md</code> block</li>
+    <li><a href="/docs/mcp/tools">Tools</a> — tool surface for agents</li>
+  </ul>
+
+  <h3 id="infrastructure">Infrastructure</h3>
+  <p>
+    Remote memory and MCP share one Cloudflare stack. Deploy it once, then point
+    the CLI or MCP clients at the router:
+  </p>
+  <ul>
+    <li>
+      <a href="/infrastructure/overview">Overview</a> — path through the section
+    </li>
+    <li>
+      <a href="/infrastructure/prerequisites">Prerequisites</a> — account,
+      credentials, Bun
+    </li>
+    <li>
+      <a href="/infrastructure/what-gets-deployed">What gets deployed</a> —
+      router, workers, D1, Vectorize
+    </li>
+    <li>
+      <a href="/infrastructure/deployment">Deployment options</a> — CLI provision
+      or clone + IaC
+    </li>
+  </ul>
+
+  <h3 id="troubleshooting">Troubleshooting</h3>
+  <ul>
+    <li><a href="/troubleshooting/mcp">MCP</a></li>
+    <li>
+      <a href="/troubleshooting/sandbox">Sandbox &amp; credentials</a>
+    </li>
+    <li><a href="/troubleshooting/deploy">Deploy</a></li>
+    <li><a href="/troubleshooting/cli">CLI</a></li>
   </ul>
 </DocsLayout>
