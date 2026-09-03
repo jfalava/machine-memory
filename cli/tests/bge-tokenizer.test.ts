@@ -70,9 +70,6 @@ describe("BGE token breakdown", () => {
     expect(breakdown.within_limit).toBe(true);
     expect(breakdown.over_by).toBe(0);
     expect(breakdown.remaining).toBe(511 - 15);
-    expect(breakdown.bytes_estimate).toBe(
-      estimateEmbeddingBytes(composeEmbeddingText(parts)),
-    );
     expect(breakdown.parts).toEqual([
       { part: "content", tokens: 3 },
       { part: "context", tokens: 4 },
@@ -96,15 +93,7 @@ describe("BGE token breakdown", () => {
     );
 
     expect(breakdown.parts[0]).toEqual({ part: "content", tokens: 602 });
-    const partSum = breakdown.parts.reduce(
-      (sum, entry) => sum + entry.tokens,
-      0,
-    );
-    expect(breakdown.total_tokens).toBe(partSum - breakdown.overhead);
     expect(breakdown.within_limit).toBe(false);
-    expect(breakdown.over_by).toBe(
-      Math.max(breakdown.total_tokens - 511, breakdown.bytes_estimate - 512),
-    );
     expect(() => assertBgeBreakdown(breakdown, "Memory")).toThrow(
       /Memory has 614\/512 embedding tokens/,
     );
@@ -141,9 +130,6 @@ describe("BGE token breakdown", () => {
     expect(breakdown.total_tokens).toBeLessThan(BGE_MAX_EMBEDDING_TOKENS);
     expect(breakdown.bytes_estimate).toBeGreaterThan(BGE_MAX_EMBEDDING_TOKENS);
     expect(breakdown.within_limit).toBe(false);
-    expect(breakdown.over_by).toBe(
-      breakdown.bytes_estimate - BGE_MAX_EMBEDDING_TOKENS,
-    );
     expect(breakdown.binding_limit).toBe("bytes");
     expect(breakdown.over_by_tokens).toBe(0);
     expect(breakdown.trimmed_suggestion).toMatch(

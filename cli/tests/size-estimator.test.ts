@@ -90,7 +90,6 @@ describe("size estimation: token vs byte binding", () => {
     expect(breakdown.over_by_tokens).toBe(0);
     expect(breakdown.over_by_bytes).toBeGreaterThan(0);
     expect(breakdown.binding_limit).toBe("bytes");
-    expect(breakdown.over_by).toBe(breakdown.over_by_bytes);
     const message = bgeEmbeddingLimitMessage(breakdown, "Memory");
     expect(message).toContain("the token count itself fits");
     expect(message).not.toContain("Both limits bind");

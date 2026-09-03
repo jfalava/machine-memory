@@ -1105,7 +1105,7 @@ describe("human command errors", () => {
       ],
       [
         ["init", "--bad"],
-        "Usage: machine-memory init (--local|--remote)",
+        "Usage: machine-memory init (--local|--remote|--mcp)",
         "✗ init failed",
       ],
       [

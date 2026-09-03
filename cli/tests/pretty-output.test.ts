@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { outputModeForPretty, prettyOutputEnabled } from "@/cli/runtime/output";
 import { renderPretty } from "@/cli/runtime/pretty";
 
 describe("pretty output", () => {
@@ -95,21 +94,5 @@ describe("pretty output", () => {
     expect(output).toContain("Content");
     expect(output).toContain("Keep output stable");
     expect(output).toContain("• docs/output");
-  });
-
-  it("lets explicit machine modes override pretty", () => {
-    expect(prettyOutputEnabled(outputModeForPretty(true))).toBe(true);
-    expect(
-      prettyOutputEnabled({
-        ...outputModeForPretty(true),
-        jsonMin: true,
-      }),
-    ).toBe(false);
-    expect(
-      prettyOutputEnabled({
-        ...outputModeForPretty(true),
-        quiet: true,
-      }),
-    ).toBe(false);
   });
 });

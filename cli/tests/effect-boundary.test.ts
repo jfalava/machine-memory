@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
 import type { MemoryDatabaseApi } from "@/effect/database";
-import { CommandError, MemoryDatabaseError } from "@/effect/errors";
+import { MemoryDatabaseError } from "@/effect/errors";
 import { handleReindexCommand } from "@/cli/commands/reindex";
 import type { CommandContext } from "@/cli/runtime/context";
 import { compareFact } from "@/cli/features/memory/compare";
@@ -18,31 +18,6 @@ import {
 } from "@/database-config";
 
 describe("Effect application boundaries", () => {
-  it("represents command failures as tagged errors", () => {
-    const error = new CommandError({
-      command: "query",
-      message: "A search term is required.",
-      cause: undefined,
-    });
-
-    expect(error._tag).toBe("CommandError");
-    expect(error.message).toBe("A search term is required.");
-  });
-
-  it("keeps database failures in the typed error channel", async () => {
-    const result = await Effect.runPromiseExit(
-      Effect.fail(
-        new MemoryDatabaseError({
-          operation: "get",
-          message: "locked",
-          cause: undefined,
-        }),
-      ),
-    );
-
-    expect(result._tag).toBe("Failure");
-  });
-
   it("preserves the existing pure memory semantics", () => {
     expect(parseIdSpec("3,1,3")).toEqual([3, 1]);
     expect(

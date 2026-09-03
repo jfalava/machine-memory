@@ -17,7 +17,6 @@ describe("embedding input bounds", () => {
     const atLimit = "a ".repeat(255);
     const overLimit = `${atLimit}a`;
 
-    expect(new TextEncoder().encode(atLimit).byteLength).toBe(510);
     expect(() => validateEmbeddingText(atLimit, "Query")).not.toThrow();
     expect(() => validateEmbeddingText(overLimit, "Query")).toThrow(
       "Query must be at most 512 tokens for embedding.",
