@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "0.10.3",
-    "@cloudflare/workers-types": "5.20260831.1",
+    "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
     "@effect/sql-d1": "catalog:effect",
