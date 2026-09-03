@@ -24,7 +24,7 @@ The MCP endpoint is opt-in. Deploy [infrastructure](/docs/mcp/infrastructure) fi
 
 ## 2. Set secrets for the stack
 
-When deploying (CLI provision env, `remote-db/cloudflare/.env`, or your CI secrets), set:
+When deploying (CLI provision env, `iac/.env`, or your CI secrets), set:
 
 ```sh
 GITHUB_CLIENT_ID=your-github-oauth-app-client-id
@@ -49,7 +49,7 @@ machine-memory remote provision
 Or from the stack directory:
 
 ```sh
-cd remote-db/cloudflare
+cd iac
 CI=1 bun run deploy
 ```
 

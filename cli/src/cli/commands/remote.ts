@@ -25,7 +25,7 @@ import {
   deployConfigToEnv,
   loadDeployConfig,
   type DeployConfig,
-} from "../../../../remote-db/cloudflare/src/deploy-config";
+} from "../../../../iac/src/deploy-config";
 
 
 function commandError(
@@ -418,15 +418,15 @@ function printRemoteSaved(url: string) {
 function remoteStackDirectory(): string {
   const candidates = [
     process.env["MACHINE_MEMORY_REMOTE_DB_DIR"],
-    resolve(process.cwd(), "remote-db", "cloudflare"),
-    resolve(import.meta.dir, "../../../../remote-db/cloudflare"),
+    resolve(process.cwd(), "iac"),
+    resolve(import.meta.dir, "../../../../iac"),
   ].filter((candidate): candidate is string => Boolean(candidate));
   const directory = candidates.find((candidate) =>
     existsSync(resolve(candidate, "alchemy.run.ts")),
   );
   if (!directory) {
     throw new Error(
-      "The Alchemy remote stack is unavailable. Set MACHINE_MEMORY_REMOTE_DB_DIR to the remote-db/cloudflare stack directory.",
+      "The Alchemy remote stack is unavailable. Set MACHINE_MEMORY_REMOTE_DB_DIR to the iac/ stack directory.",
     );
   }
   return directory;
@@ -543,7 +543,7 @@ export const remoteCommand = Command.make("remote", {}, () =>
       `${pc.dim("Provision:")} machine-memory remote provision [--config <file>] [--domain <host>] [--no-docs] [--stack-name <name>] [--api-name <name>] …`,
     );
     console.info(
-      `${pc.dim("Config:")} copy remote-db/cloudflare/machine-memory.deploy.example.json → machine-memory.deploy.json`,
+      `${pc.dim("Config:")} copy iac/machine-memory.deploy.example.json → machine-memory.deploy.json`,
     );
   }),
 ).pipe(Command.withSubcommands([remoteSetupCommand, remoteProvisionCommand]));

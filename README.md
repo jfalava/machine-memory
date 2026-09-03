@@ -14,4 +14,7 @@ This repository is a monorepo:
 
 - `docs/` — The documentation site, built with [Nimbus Docs](https://nimbus-docs.com/).
 - `cli/` — The `machine-memory` command-line interface for managing memories, built with [Effect](https://www.effect.website/)
-- `remote-db/cloudflare/` — The remote Cloudflare IaC, built with [Alchemy](https://alchemy.run/cloudflare/).
+- `api/` — Authenticated REST Worker (D1 / Vectorize).
+- `mcp/` — MCP + GitHub OAuth Worker.
+- `router/` — Public edge router (Hono).
+- `iac/` — Alchemy stack that wires the workers (D1, Vectorize, domain, deploy config).

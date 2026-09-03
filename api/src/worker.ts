@@ -5,10 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Database } from "./database";
-import { apiName } from "./config";
+import { Database } from "../../iac/src/database";
+import { apiName } from "../../iac/src/config";
 import { validateEmbeddingText } from "./embedding";
-import { VectorIndex } from "./vectorize";
+import { VectorIndex } from "../../iac/src/vectorize";
 import {
   isJsonArray,
   jsonNumber,

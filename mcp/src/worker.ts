@@ -5,10 +5,10 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Database, OAuthKv } from "./database";
-import { mcpName } from "./config";
+import { Database, OAuthKv } from "../../iac/src/database";
+import { mcpName } from "../../iac/src/config";
 import { handleOAuthPath, isOAuthPath } from "./oauth-bridge";
-import { VectorIndex } from "./vectorize";
+import { VectorIndex } from "../../iac/src/vectorize";
 
 const INTERNAL_ERROR = "Internal server error.";
 

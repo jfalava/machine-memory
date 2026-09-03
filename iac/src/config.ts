@@ -3,7 +3,7 @@ import { loadDeployConfig } from "./deploy-config";
 /**
  * Resolved once at module load for Alchemy stack import.
  * Prefer env (CLI injects via deployConfigToEnv). When running `alchemy deploy`
- * from remote-db/cloudflare with a sibling machine-memory.deploy.json, that file
+ * from iac/ with a sibling machine-memory.deploy.json, that file
  * is discovered from cwd.
  */
 export const deployConfig = loadDeployConfig();

@@ -10,7 +10,7 @@ MCP runs on the same remote stack as the CLI’s `--remote` backend. You deploy 
 
 ## Architecture
 
-The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare) follows a router + private workers layout (same idea as [manifold](https://github.com/jfalava/manifold)):
+The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/iac) follows a router + private workers layout (same idea as [manifold](https://github.com/jfalava/manifold)):
 
 | Resource        | Role                                                                 |
 | --------------- | -------------------------------------------------------------------- |
@@ -25,7 +25,7 @@ The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote
 
 Public base URL is always the **router**. CLI and REST use `/query` on that host; MCP clients use `/mcp` on the same host after [Enable MCP](/docs/mcp/enable). Documentation pages live under `/docs/mcp/*` (not under `/mcp`, which is reserved for the protocol).
 
-Source of truth: `remote-db/cloudflare/` (`alchemy.run.ts`, `src/deploy-config.ts`, `src/router/`).
+Source of truth: `iac/` (`alchemy.run.ts`, `src/deploy-config.ts`, `src/router/`).
 
 ## Prerequisites
 
@@ -51,7 +51,7 @@ That command:
 Most operators only need API + MCP. Skip the docs worker and set your own domain/names via a config file:
 
 ```sh
-cp remote-db/cloudflare/machine-memory.deploy.example.json ./machine-memory.deploy.json
+cp iac/machine-memory.deploy.example.json ./machine-memory.deploy.json
 # edit domain, worker names, set "docs": false
 machine-memory remote provision --config ./machine-memory.deploy.json
 ```
@@ -66,7 +66,7 @@ With no `domain`, the router is reachable at `https://<router-name>.<account>.wo
 
 ### Deploy config file
 
-Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-memory/blob/master/remote-db/cloudflare/machine-memory.deploy.example.json):
+Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-memory/blob/master/iac/machine-memory.deploy.example.json):
 
 ```json
 {
@@ -104,7 +104,7 @@ Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-m
 ## Deploy the stack directly
 
 ```sh
-cd remote-db/cloudflare
+cd iac
 # optional: machine-memory.deploy.json in this directory or MACHINE_MEMORY_* env
 CI=1 bun run deploy
 # first time against an existing account resource set:

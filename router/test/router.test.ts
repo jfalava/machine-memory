@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import router, { type Env, type ServiceFetcher } from "../src/router/index";
+import router, { type Env, type ServiceFetcher } from "../src/index";
 
 interface RecordedRequest {
   pathname: string;

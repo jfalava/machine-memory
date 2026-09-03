@@ -1,0 +1,33 @@
+{
+  "name": "@machine-memory/iac",
+  "version": "0.15.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "oxlint --fix",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "dev": "alchemy dev",
+    "format": "oxfmt",
+    "lint": "oxlint",
+    "plan": "alchemy deploy --dry-run",
+    "test": "bun test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "5.20260831.1",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
+    "@effect/sql-d1": "catalog:effect",
+    "alchemy": "2.0.0-beta.76",
+    "effect": "catalog:effect"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:types",
+    "oxfmt": "catalog:maintenance",
+    "oxlint": "catalog:maintenance",
+    "oxlint-tsgolint": "catalog:build",
+    "typescript": "catalog:build",
+    "wrangler": "catalog:build"
+  }
+}

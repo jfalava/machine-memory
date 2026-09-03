@@ -1,17 +1,12 @@
 {
-  "name": "@machine-memory/remote-db-cloudflare",
+  "name": "@machine-memory/mcp",
   "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "oxlint --fix",
-    "deploy": "alchemy deploy",
-    "destroy": "alchemy destroy",
-    "dev": "alchemy dev",
     "format": "oxfmt",
     "lint": "oxlint",
-    "plan": "alchemy deploy --dry-run",
-    "test": "bun test test/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -23,15 +18,13 @@
     "@modelcontextprotocol/server": "2.0.0",
     "agents": "0.22.0",
     "alchemy": "2.0.0-beta.76",
-    "effect": "catalog:effect",
-    "hono": "4.11.4"
+    "effect": "catalog:effect"
   },
   "devDependencies": {
     "@types/bun": "catalog:types",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
-    "typescript": "catalog:build",
-    "wrangler": "catalog:build"
+    "typescript": "catalog:build"
   }
 }

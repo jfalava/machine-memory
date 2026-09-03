@@ -242,7 +242,7 @@ export function composeEmbeddingText(
 
 /**
  * Conservative fallback mirroring the Worker's byte estimate
- * (remote-db/cloudflare/src/embedding.ts): UTF-8 bytes plus one [CLS]/[SEP]
+ * (api/src/embedding.ts): UTF-8 bytes plus one [CLS]/[SEP]
  * reserve. Used when the real tokenizer cannot be fetched so offline writes
  * stay safe without blocking on the network.
  */

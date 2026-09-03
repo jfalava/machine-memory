@@ -4,7 +4,10 @@
     "packages": [
       "cli",
       "docs",
-      "remote-db/*"
+      "api",
+      "mcp",
+      "router",
+      "iac"
     ],
     "catalogs": {
       "effect": {
@@ -32,10 +35,10 @@
   "type": "module",
   "scripts": {
     "format": "bunx oxfmt",
-    "check:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare check",
-    "lint:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare lint",
-    "format:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare format",
-    "typecheck:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/remote-db-cloudflare typecheck"
+    "check:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac check",
+    "lint:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac lint",
+    "format:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac format",
+    "typecheck:global": "bun run --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac typecheck"
   },
   "devDependencies": {
     "@oxlint/plugins": "1.80.0",

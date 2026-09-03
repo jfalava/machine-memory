@@ -57,7 +57,7 @@ If you still see this on an old deploy, redeploy the Worker from current `master
 
 **Cause:** That package’s dist can **statically** import `cloudflare:workers`, which Bun cannot resolve at plan time.
 
-**Fix (in tree):** OAuth provider construction uses a **guarded dynamic import** with a fallback, and builds the provider at request time inside workerd (same idea as Alchemy’s own workers shim). Stay on current `remote-db/cloudflare` sources; don’t reintroduce a top-level static import of the provider package.
+**Fix (in tree):** OAuth provider construction uses a **guarded dynamic import** with a fallback, and builds the provider at request time inside workerd (same idea as Alchemy’s own workers shim). Stay on current `iac` sources; don’t reintroduce a top-level static import of the provider package.
 
 ## Wrong repository / silent empty reads
 

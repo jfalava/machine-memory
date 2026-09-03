@@ -3,7 +3,7 @@ import { defineConfig, type DummyRuleMap } from "oxlint";
 // Oxlint rejects relative jsPlugins specifiers inside configs consumed via
 // `extends`, so the base exposes a factory and each workspace registers the
 // plugins itself with a path prefix relative to its own directory
-// (".." for workspace roots, "../.." for remote-db/cloudflare).
+// (".." for workspace roots, "../.." if nested).
 export const antiSlopJsPlugins = (specifierPrefix: string) => [
   {
     name: "anti-slop",

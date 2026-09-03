@@ -24,7 +24,7 @@ You need a Cloudflare account that can create:
 machine-memory remote provision
 ```
 
-Deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare):
+Deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/iac):
 
 1. Creates the edge **router** (public URL) plus private **API** and **MCP** workers
 2. Optionally builds and deploys the **docs** worker (`docs: true` in config, default for the upstream site)
@@ -34,7 +34,7 @@ Deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/maste
 ### Self-host without docs
 
 ```sh
-cp remote-db/cloudflare/machine-memory.deploy.example.json ./machine-memory.deploy.json
+cp iac/machine-memory.deploy.example.json ./machine-memory.deploy.json
 # set domain, worker names, "docs": false
 machine-memory remote provision --config ./machine-memory.deploy.json
 ```

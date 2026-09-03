@@ -3,7 +3,7 @@ import {
   estimateEmbeddingTokens,
   MAX_EMBEDDING_TOKENS,
   validateEmbeddingText,
-} from "../../remote-db/cloudflare/src/embedding";
+} from "../../api/src/embedding";
 
 describe("embedding input bounds", () => {
   it("includes special tokens in the exact conservative boundary", () => {

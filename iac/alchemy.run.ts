@@ -1,8 +1,8 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
-import Api from "./src/worker";
-import Mcp from "./src/mcp-worker";
+import Api from "../api/src/worker";
+import Mcp from "../mcp/src/worker";
 import {
   deployConfig,
   deployDocs,
@@ -20,6 +20,8 @@ import { createVectorMetadataIndexes, VectorIndex } from "./src/vectorize";
  * - MCP: OAuth + /mcp tools
  * - Docs (optional): static site behind the router catch-all
  * - Router: sole public entry (custom domain or workers.dev)
+ *
+ * Worker sources live in ../api, ../mcp, ../router. This package owns IaC only.
  */
 export default Alchemy.Stack(
   stackName,
@@ -42,11 +44,9 @@ export default Alchemy.Stack(
     const docsWorker = deployDocs
       ? yield* Cloudflare.Website.StaticSite("machine-memory-docs", {
           name: docsWorkerName,
-          // monorepo: stack lives at remote-db/cloudflare; docs at docs/
-          cwd: "../../docs",
+          cwd: "../docs",
           command: "bun run build",
           outdir: "dist",
-          // main is relative to the Alchemy stack package (this directory)
           main: "./src/docs-worker.ts",
           workersDev: false,
           assets: {
@@ -67,7 +67,7 @@ export default Alchemy.Stack(
 
     const routerBase = {
       name: routerName,
-      main: "./src/router-worker.ts",
+      main: "../router/src/index.ts",
       workersDev: deployDomain === undefined,
       env: routerEnv,
     };

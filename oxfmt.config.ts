@@ -20,6 +20,9 @@ export default defineConfig({
     "./cli/**",
     "./docs/**",
     "./node_modules/**",
-    "./remote-db/**",
+    "./api/**",
+    "./mcp/**",
+    "./router/**",
+    "./iac/**",
   ],
 });
