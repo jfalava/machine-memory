@@ -42,9 +42,12 @@ describe("init templates", () => {
     expect(content).toContain("<!-- machine-memory:end -->");
     for (const tool of [
       "list_repositories",
+      "memory_suggest",
       "memory_query",
       "memory_get",
       "memory_list",
+      "memory_verify",
+      "memory_diff",
       "memory_size",
       "memory_add",
       "memory_update",
@@ -52,11 +55,11 @@ describe("init templates", () => {
     ]) {
       expect(content).toContain(tool);
     }
-    // Honest about tools MCP does not have, with manual equivalents.
-    expect(content).toContain("no `suggest` tool");
-    expect(content).toContain("no `verify` / `diff` tools");
-    expect(content).toContain("no match/upsert");
-    expect(content).toContain("no tag-map tool");
+    // Parity workflows the MCP server supports.
+    expect(content).toContain("upsert_match");
+    expect(content).toContain("force: true");
+    expect(content).toContain("potential_conflicts");
+    expect(content).toContain("superseded_by");
     expect(content).toContain("memory_size");
     expect(content).toContain("over_by_bytes");
     expect(content).toContain("expires_after_days");

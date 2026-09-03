@@ -90,10 +90,10 @@ Exactly one of `--local`, `--remote`, or `--mcp` is required.
 
 The MCP block tells agents to:
 
-- Use MCP tools only (`list_repositories`, `memory_query`, `memory_get`, `memory_list`, `memory_size`, `memory_add`, `memory_update`, `memory_delete`)
+- Use MCP tools only (`list_repositories`, `memory_suggest`, `memory_query`, `memory_get`, `memory_list`, `memory_verify`, `memory_diff`, `memory_size`, `memory_add`, `memory_update`, `memory_delete`)
 - Pass an exact `owner/name` repository slug (no default); reads are loose (wrong slug returns empty, nothing lost) but writes are strict, so call `list_repositories` before every write when unsure
-- Emulate file-scoped lookup with `memory_query` in `keyword` mode (there is no `suggest` tool); verify by re-reading with `memory_get` (no `verify`/`diff` tools); update by exact `id` (no match/upsert)
-- Set `memory_type`/`certainty` explicitly (`memory_add` defaults to `convention`/`inferred`); `expires_after_days` works only for `status` memories at creation
+- Scan with `memory_suggest` for known files; verify with `memory_verify`/`memory_diff`; maintain with `memory_update` via `match` or `memory_add` via `upsert_match` (weak matches need `force: true`)
+- Set `memory_type`/`certainty` explicitly (`memory_add` defaults to `convention`/`inferred`); `expires_after_days` works only for `status` memories
 - Preflight long content with `memory_size`; respect on-flight size rejection on writes
 - Scan before edits and persist durable decisions at task end
 
