@@ -14,7 +14,7 @@ This repository is a monorepo:
 
 - `docs/` — The documentation site, built with [Nimbus Docs](https://nimbus-docs.com/).
 - `cli/` — The `machine-memory` command-line interface for managing memories, built with [Effect](https://www.effect.website/)
-- `api/` — Authenticated REST Worker (D1 / Vectorize).
-- `mcp/` — MCP + GitHub OAuth Worker.
-- `router/` — Public edge router (Hono).
-- `iac/` — Alchemy stack that wires the workers (D1, Vectorize, domain, deploy config).
+- `api/` — Authenticated REST Worker for interacting with the memories and embeddings database, built with [Effect](https://www.effect.website/).
+- `mcp/` — MCP + GitHub OAuth Worker, built with [Effect](https://www.effect.website/) and [Model Context Protocol](https://modelcontextprotocol.io/).
+- `router/` — Public edge router, built with [Hono](https://hono.dev/).
+- `iac/` — Infrastructure as Code stack for CI, built with [Alchemy](https://alchemy.run/).

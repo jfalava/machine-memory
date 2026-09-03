@@ -1,10 +1,12 @@
 {
   "name": "@machine-memory/iac",
-  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "bun run --filter @machine-memory/iac typecheck && bash ../docs/scripts/build-cf.sh",
     "check": "oxlint --fix",
+    "ci:build": "bun run build",
+    "ci:deploy": "alchemy deploy --yes --adopt",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "dev": "alchemy dev",
@@ -12,10 +14,7 @@
     "lint": "oxlint",
     "plan": "alchemy deploy --dry-run",
     "test": "bun test test/",
-    "typecheck": "tsc --noEmit",
-    "build": "bun run --filter @machine-memory/iac typecheck && bash ../docs/scripts/build-cf.sh",
-    "ci:build": "bun run build",
-    "ci:deploy": "alchemy deploy --yes --adopt"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cloudflare/workers-types": "catalog:types",

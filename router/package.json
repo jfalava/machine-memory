@@ -1,6 +1,5 @@
 {
   "name": "@machine-memory/router",
-  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {

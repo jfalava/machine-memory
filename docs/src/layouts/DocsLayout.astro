@@ -86,11 +86,11 @@ const hasPagination = Astro.slots.has("pagination");
       <div class="flex-1 mx-auto w-full">
         <div class="flex">
           {showSidebar && (
-            <aside id="desktop-sidebar" data-nb-desktop-sidebar class="hidden lg:flex w-(--nb-sidebar-width) shrink-0 border-r border-border bg-background sticky top-14 h-[calc(100vh-3.5rem)] flex-col overflow-y-auto overscroll-contain">
+            <aside id="desktop-sidebar" data-nb-desktop-sidebar class="hidden lg:flex w-(--nb-sidebar-width) shrink-0 border-r border-border bg-background sticky top-11 h-[calc(100vh-2.75rem)] flex-col overflow-y-auto overscroll-contain">
               {hasSidebar ? (
                 <slot name="sidebar" />
               ) : (
-                <nav class="px-4 pb-12 pt-5 flex-1">
+                <nav class="px-4 pb-12 pt-3 flex-1">
                   <SidebarFilter />
                   <Sidebar items={sidebar} persist />
                 </nav>
@@ -163,7 +163,7 @@ const hasPagination = Astro.slots.has("pagination");
           )}
 
           <main id="main-content" class="flex-1 min-w-0">
-            <div class="mx-auto max-w-(--nb-content-max) px-4 lg:px-6 pt-6 pb-12">
+            <div class="mx-auto max-w-(--nb-content-max) px-4 lg:px-6 pt-3 pb-12">
               {versionStatus?.isDeprecated && (
                 <Banner
                   variant="caution"
@@ -190,7 +190,7 @@ const hasPagination = Astro.slots.has("pagination");
                     )}
                     <PageActions markdownUrl={markdownUrl} lastUpdated={lastUpdated} class={description ? undefined : "mt-3"} />
                     {headings !== false && headings.length > 0 && (
-                      <div class="border-border bg-background/95 supports-backdrop-filter:bg-background/80 sticky top-14 z-20 -mx-4 mt-3 border-y px-4 py-2 backdrop-blur lg:-mx-6 lg:px-6 xl:hidden">
+                      <div class="border-border bg-background/95 supports-backdrop-filter:bg-background/80 sticky top-11 z-20 -mx-4 mt-3 border-y px-4 py-2 backdrop-blur lg:-mx-6 lg:px-6 xl:hidden">
                         <MobileTOC headings={headings} />
                       </div>
                     )}
@@ -227,8 +227,8 @@ const hasPagination = Astro.slots.has("pagination");
           </main>
 
           {headings !== false && (hasToc || headings.length > 0) && (
-            <aside data-nb-toc-scroll-host class="hidden xl:block w-(--nb-toc-width) shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] overflow-y-auto">
-              <div class="pt-6 pb-8 pl-8 pr-6">
+            <aside data-nb-toc-scroll-host class="hidden xl:block w-(--nb-toc-width) shrink-0 sticky top-11 h-[calc(100vh-2.75rem)] overflow-y-auto">
+              <div class="pt-3 pb-8 pl-8 pr-6">
                 {hasToc ? <slot name="toc" /> : <TOC headings={headings} />}
               </div>
             </aside>
