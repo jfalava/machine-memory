@@ -1,19 +1,20 @@
-type RuntimeGlobals = typeof globalThis & {
-  process?: {
-    env?: Record<string, string | undefined>;
-  };
-};
+import { loadDeployConfig } from "./deploy-config";
 
-// SAFETY: RuntimeGlobals only adds optional members, so the assertion cannot misstate existing globals.
-const environment = (globalThis as RuntimeGlobals).process?.env ?? {};
+/**
+ * Resolved once at module load for Alchemy stack import.
+ * Prefer env (CLI injects via deployConfigToEnv). When running `alchemy deploy`
+ * from remote-db/cloudflare with a sibling machine-memory.deploy.json, that file
+ * is discovered from cwd.
+ */
+export const deployConfig = loadDeployConfig();
 
-export const stackName =
-  environment.MACHINE_MEMORY_STACK_NAME ?? "machine-memory-remote-db";
-export const databaseName =
-  environment.MACHINE_MEMORY_DB_NAME ?? "machine-memory-db";
-export const apiName =
-  environment.MACHINE_MEMORY_API_NAME ?? "machine-memory-api";
-export const vectorIndexName =
-  environment.MACHINE_MEMORY_VECTOR_INDEX_NAME ?? "machine-memory-v1";
-export const oauthKvName =
-  environment.MACHINE_MEMORY_OAUTH_KV_NAME ?? "machine-memory-oauth-kv";
+export const stackName = deployConfig.stackName;
+export const databaseName = deployConfig.databaseName;
+export const apiName = deployConfig.workers.api;
+export const mcpName = deployConfig.workers.mcp;
+export const routerName = deployConfig.workers.router;
+export const docsWorkerName = deployConfig.workers.docs;
+export const vectorIndexName = deployConfig.vectorIndexName;
+export const oauthKvName = deployConfig.oauthKvName;
+export const deployDomain = deployConfig.domain;
+export const deployDocs = deployConfig.docs;

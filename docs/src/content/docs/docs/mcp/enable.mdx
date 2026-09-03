@@ -6,7 +6,7 @@ sidebar:
   order: 3
 ---
 
-The MCP endpoint is opt-in. Deploy [infrastructure](/mcp/infrastructure) first; then add GitHub OAuth secrets and redeploy.
+The MCP endpoint is opt-in. Deploy [infrastructure](/docs/mcp/infrastructure) first; then add GitHub OAuth secrets and redeploy.
 
 ## 1. Create a GitHub OAuth app
 
@@ -18,7 +18,7 @@ The MCP endpoint is opt-in. Deploy [infrastructure](/mcp/infrastructure) first; 
    https://<worker-url>/callback
    ```
 
-   Use the real Worker host from provision (for example `https://machine-memory-api.example.workers.dev/callback`).
+   Use the **router** host from provision (for example `https://machine-memory.jfa.dev/callback` or `https://<router>.workers.dev/callback`).
 
 4. Copy the client ID and generate a client secret.
 
@@ -55,9 +55,9 @@ CI=1 bun run deploy
 
 ## 4. Connect
 
-Point an MCP client at `https://<worker-url>/mcp`. Complete the browser OAuth flow once. Tokens carry `mcp:read` and `mcp:write`.
+Point an MCP client at `https://<router-url>/mcp`. Complete the browser OAuth flow once. Tokens carry `mcp:read` and `mcp:write`.
 
-Next: [Init](/mcp/init) for agent instructions, then [Tools](/mcp/tools).
+Next: [Init](/docs/mcp/init) for agent instructions, then [Tools](/docs/mcp/tools).
 
 ## If something fails
 

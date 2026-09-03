@@ -1,0 +1,118 @@
+---
+title: Infrastructure
+description: Deploy the Cloudflare Alchemy stack that backs remote memory and the MCP server.
+audience: human
+sidebar:
+  order: 2
+---
+
+MCP runs on the same remote stack as the CLI’s `--remote` backend. You deploy it once, then optionally enable MCP OAuth on top.
+
+## Architecture
+
+The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare) follows a router + private workers layout (same idea as [manifold](https://github.com/jfalava/manifold)):
+
+| Resource        | Role                                                                 |
+| --------------- | -------------------------------------------------------------------- |
+| **Router**      | Sole public entry (custom domain or `workers.dev`). Dispatches paths |
+| **API worker**  | Authenticated REST (`/query`, `/migrate`, `/vectorize/*`)            |
+| **MCP worker**  | MCP tools at `/mcp` + OAuth (`/authorize`, `/callback`, …)           |
+| **Docs worker** | Optional static docs site (catch-all on the router)                  |
+| D1 database     | Canonical memory rows and FTS                                        |
+| Vectorize index | Semantic embeddings                                                  |
+| Workers AI      | BGE embeddings for writes and semantic search                        |
+| KV (OAuth)      | Authorization state and tokens when MCP is enabled                   |
+
+Public base URL is always the **router**. CLI and REST use `/query` on that host; MCP clients use `/mcp` on the same host after [Enable MCP](/docs/mcp/enable). Documentation pages live under `/docs/mcp/*` (not under `/mcp`, which is reserved for the protocol).
+
+Source of truth: `remote-db/cloudflare/` (`alchemy.run.ts`, `src/deploy-config.ts`, `src/router/`).
+
+## Prerequisites
+
+- A Cloudflare account that can create Workers, D1, Vectorize, Workers AI, and KV
+- Cloudflare credentials available to the deploy process (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, or Alchemy login)
+- Bun, to run the stack from this monorepo or via the CLI provisioner
+
+## Deploy with the CLI
+
+```sh
+machine-memory remote provision
+```
+
+That command:
+
+1. Loads optional `machine-memory.deploy.json` (see below)
+2. Runs `alchemy deploy` for the multi-worker stack
+3. Generates or reuses a Worker token for the REST API
+4. Stores the **router** URL + token in the OS keychain (for CLI `--remote`)
+
+### Self-host (no docs site)
+
+Most operators only need API + MCP. Skip the docs worker and set your own domain/names via a config file:
+
+```sh
+cp remote-db/cloudflare/machine-memory.deploy.example.json ./machine-memory.deploy.json
+# edit domain, worker names, set "docs": false
+machine-memory remote provision --config ./machine-memory.deploy.json
+```
+
+Or one-shot flags:
+
+```sh
+machine-memory remote provision --no-docs --domain memory.example.com
+```
+
+With no `domain`, the router is reachable at `https://<router-name>.<account>.workers.dev`.
+
+### Deploy config file
+
+Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-memory/blob/master/remote-db/cloudflare/machine-memory.deploy.example.json):
+
+```json
+{
+  "domain": "memory.example.com",
+  "docs": false,
+  "stackName": "machine-memory-remote-db",
+  "database": "machine-memory-db",
+  "vectorIndex": "machine-memory-v1",
+  "oauthKv": "machine-memory-oauth-kv",
+  "workers": {
+    "router": "machine-memory-router",
+    "api": "machine-memory-api",
+    "mcp": "machine-memory-mcp",
+    "docs": "machine-memory-docs"
+  }
+}
+```
+
+**Precedence:** CLI flags → config file → `MACHINE_MEMORY_*` env → saved remote credentials → defaults.
+
+| Option / file field     | Environment variable              | Default                    |
+| ----------------------- | --------------------------------- | -------------------------- |
+| `--config`              | `MACHINE_MEMORY_DEPLOY_CONFIG`    | (auto-discover)            |
+| `--domain` / `domain`   | `MACHINE_MEMORY_DOMAIN`           | (none → workers.dev)       |
+| `--docs` / `--no-docs`  | `MACHINE_MEMORY_DEPLOY_DOCS`      | `true`                     |
+| `--stack-name`          | `MACHINE_MEMORY_STACK_NAME`       | `machine-memory-remote-db` |
+| `--database-name`       | `MACHINE_MEMORY_DB_NAME`          | `machine-memory-db`        |
+| `--router-name`         | `MACHINE_MEMORY_ROUTER_NAME`      | `machine-memory-router`    |
+| `--api-name`            | `MACHINE_MEMORY_API_NAME`         | `machine-memory-api`       |
+| `--mcp-name`            | `MACHINE_MEMORY_MCP_NAME`         | `machine-memory-mcp`       |
+| `--docs-name`           | `MACHINE_MEMORY_DOCS_NAME`        | `machine-memory-docs`      |
+| `--vector-index-name`   | `MACHINE_MEMORY_VECTOR_INDEX_NAME`| `machine-memory-v1`        |
+| `--oauth-kv-name`       | `MACHINE_MEMORY_OAUTH_KV_NAME`    | `machine-memory-oauth-kv`  |
+
+## Deploy the stack directly
+
+```sh
+cd remote-db/cloudflare
+# optional: machine-memory.deploy.json in this directory or MACHINE_MEMORY_* env
+CI=1 bun run deploy
+# first time against an existing account resource set:
+# CI=1 bunx alchemy deploy --yes --adopt
+```
+
+MCP OAuth secrets are optional at this stage. Without them the API still serves REST; MCP routes return `503` until you [enable the endpoint](/docs/mcp/enable).
+
+## Already have a stack?
+
+Point the CLI at the **router** base URL with [`remote setup`](/human/remote/setup). MCP still needs the OAuth secrets on the MCP worker.

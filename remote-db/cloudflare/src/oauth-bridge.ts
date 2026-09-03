@@ -28,8 +28,7 @@ export function isOAuthPath(url: string): boolean {
   return (
     OAUTH_PATHS.some(
       (path) => pathname === path || pathname.startsWith(`${path}/`),
-    ) ||
-    pathname.startsWith("/.well-known/oauth-")
+    ) || pathname.startsWith("/.well-known/oauth-")
   );
 }
 

@@ -6,7 +6,7 @@ sidebar:
   order: 2
 ---
 
-Symptoms against `https://<worker-url>/mcp` and the OAuth flow. Enablement steps: [Enable MCP](/mcp/enable).
+Symptoms against `https://<worker-url>/mcp` and the OAuth flow. Enablement steps: [Enable MCP](/docs/mcp/enable).
 
 ## MCP routes return 503
 
@@ -18,7 +18,7 @@ Symptoms against `https://<worker-url>/mcp` and the OAuth flow. Enablement steps
 
 The 503 body lists which names are missing.
 
-**Fix:** Set all three, redeploy ([Enable MCP](/mcp/enable)). Generate the cookie key with `openssl rand -hex 32`.
+**Fix:** Set all three, redeploy ([Enable MCP](/docs/mcp/enable)). Generate the cookie key with `openssl rand -hex 32`.
 
 ## Cookie / session signing failures
 
@@ -71,7 +71,7 @@ If you still see this on an old deploy, redeploy the Worker from current `master
 
 **Cause:** Composed embedding text must satisfy UTF-8 **bytes + 2 ≤ 512** (Worker conservative bound; no BGE tokenizer in the Worker). Same budget as CLI `size` / `--dry-run` when the tokenizer is unavailable.
 
-**Fix:** Call `memory_size` before long writes; trim `content` / `context` / `tags`. See [Tools → Embedding size budget](/mcp/tools#embedding-size-budget).
+**Fix:** Call `memory_size` before long writes; trim `content` / `context` / `tags`. See [Tools → Embedding size budget](/docs/mcp/tools#embedding-size-budget).
 
 ## MCP client still shows old tools
 

@@ -14,15 +14,19 @@ import {
 import { CommandError } from "../../effect/errors";
 import type { CommandContext } from "../runtime/context";
 import {
+  booleanFlag,
+  booleanSpec,
   effectCommand,
   positionalArgs,
   stringFlag,
   stringSpec,
 } from "../runtime/command";
+import {
+  deployConfigToEnv,
+  loadDeployConfig,
+  type DeployConfig,
+} from "../../../../remote-db/cloudflare/src/deploy-config";
 
-const DEFAULT_STACK_NAME = "machine-memory-remote-db";
-const DEFAULT_DATABASE_NAME = "machine-memory-db";
-const DEFAULT_API_NAME = "machine-memory-api";
 
 function commandError(
   message: string,
@@ -180,23 +184,6 @@ function cancelMaskedInput(options: {
   options.reject(commandError(`${options.label} input was cancelled.`));
 }
 
-function configuredName(
-  context: CommandContext,
-  options: {
-    flag: string;
-    environment: string;
-    label: string;
-    fallback: string;
-    current: string | undefined;
-  },
-): string {
-  return (
-    getFlagValue(context.args, options.flag) ??
-    process.env[options.environment]?.trim() ??
-    options.current ??
-    ask(options.label, options.fallback)
-  );
-}
 
 function loadCurrentRemote() {
   return Effect.tryPromise({
@@ -260,30 +247,112 @@ export function remoteSetup(context: CommandContext) {
   });
 }
 
+function docsFlagOverride(args: string[]): boolean | undefined {
+  const noDocs = args.includes("--no-docs");
+  const forceDocs = args.includes("--docs");
+  if (noDocs && forceDocs) {
+    throw commandError(
+      "Pass only one of --docs or --no-docs.",
+      undefined,
+      "remote provision",
+    );
+  }
+  if (noDocs) {
+    return false;
+  }
+  if (forceDocs) {
+    return true;
+  }
+  return undefined;
+}
+
+// Field-wise flag/env/credential merge for provision naming.
+// oxlint-disable-next-line complexity -- precedence matrix per field
+function resolveProvisionConfig(
+  args: string[],
+  currentRemote:
+    | { stackName?: string; databaseName?: string; apiName?: string }
+    | undefined,
+): DeployConfig {
+  const domainFlag = getFlagValue(args, "--domain");
+  const loaded = loadDeployConfig({
+    configPath: getFlagValue(args, "--config"),
+    overrides: {
+      domain: domainFlag,
+      docs: docsFlagOverride(args),
+      stackName: getFlagValue(args, "--stack-name"),
+      databaseName: getFlagValue(args, "--database-name"),
+      vectorIndexName: getFlagValue(args, "--vector-index-name"),
+      oauthKvName: getFlagValue(args, "--oauth-kv-name"),
+      workers: {
+        router: getFlagValue(args, "--router-name"),
+        api: getFlagValue(args, "--api-name"),
+        mcp: getFlagValue(args, "--mcp-name"),
+        docs: getFlagValue(args, "--docs-name"),
+      },
+    },
+  });
+  const stackName =
+    getFlagValue(args, "--stack-name") ??
+    process.env["MACHINE_MEMORY_STACK_NAME"]?.trim() ??
+    currentRemote?.stackName ??
+    loaded.stackName;
+  const databaseName =
+    getFlagValue(args, "--database-name") ??
+    process.env["MACHINE_MEMORY_DB_NAME"]?.trim() ??
+    currentRemote?.databaseName ??
+    loaded.databaseName;
+  const apiName =
+    getFlagValue(args, "--api-name") ??
+    process.env["MACHINE_MEMORY_API_NAME"]?.trim() ??
+    currentRemote?.apiName ??
+    loaded.workers.api;
+  return {
+    ...loaded,
+    stackName,
+    databaseName,
+    workers: { ...loaded.workers, api: apiName },
+  };
+}
+
+function printProvisioned(url: string, resolved: DeployConfig): void {
+  console.info();
+  console.info(pc.green(pc.bold("✓ Remote database provisioned")));
+  console.info(`${pc.dim("URL")}       ${pc.cyan(url)}`);
+  console.info(`${pc.dim("Stack")}     ${resolved.stackName}`);
+  console.info(`${pc.dim("Database")}  ${resolved.databaseName}`);
+  console.info(`${pc.dim("Router")}    ${resolved.workers.router}`);
+  console.info(`${pc.dim("API")}       ${resolved.workers.api}`);
+  console.info(`${pc.dim("MCP")}       ${resolved.workers.mcp}`);
+  console.info(
+    resolved.docs
+      ? `${pc.dim("Docs")}      ${resolved.workers.docs}`
+      : `${pc.dim("Docs")}      ${pc.dim("skipped")}`,
+  );
+  if (resolved.domain) {
+    console.info(`${pc.dim("Domain")}    ${resolved.domain}`);
+  }
+  if (resolved.configPath) {
+    console.info(`${pc.dim("Config")}    ${resolved.configPath}`);
+  }
+  console.info(`${pc.dim("Token")}     ${pc.dim("stored in the OS keychain")}`);
+  console.info();
+}
+
 export function remoteProvision(context: CommandContext) {
   return Effect.gen(function* () {
     const current = yield* loadCurrentRemote();
     const currentRemote = current.kind === "remote" ? current : undefined;
-    const stackName = configuredName(context, {
-      flag: "--stack-name",
-      environment: "MACHINE_MEMORY_STACK_NAME",
-      label: "Alchemy stack name",
-      fallback: DEFAULT_STACK_NAME,
-      current: currentRemote?.stackName,
-    });
-    const databaseName = configuredName(context, {
-      flag: "--database-name",
-      environment: "MACHINE_MEMORY_DB_NAME",
-      label: "D1 database name",
-      fallback: DEFAULT_DATABASE_NAME,
-      current: currentRemote?.databaseName,
-    });
-    const apiName = configuredName(context, {
-      flag: "--api-name",
-      environment: "MACHINE_MEMORY_API_NAME",
-      label: "Worker API name",
-      fallback: DEFAULT_API_NAME,
-      current: currentRemote?.apiName,
+    const resolved = yield* Effect.try({
+      try: () => resolveProvisionConfig(context.args, currentRemote),
+      catch: (cause) =>
+        cause instanceof CommandError
+          ? cause
+          : commandError(
+              cause instanceof Error ? cause.message : "Invalid provision flags.",
+              cause,
+              "remote provision",
+            ),
     });
     const workerToken =
       process.env["MACHINE_MEMORY_DB_TOKEN"]?.trim() ??
@@ -292,9 +361,7 @@ export function remoteProvision(context: CommandContext) {
     const deployment = yield* Effect.tryPromise({
       try: () =>
         runAlchemyDeploy({
-          stackName,
-          databaseName,
-          apiName,
+          deployConfig: resolved,
           workerToken,
         }),
       catch: (cause) =>
@@ -321,9 +388,9 @@ export function remoteProvision(context: CommandContext) {
         saveRemoteCredentials({
           url,
           token: workerToken,
-          stackName,
-          databaseName,
-          apiName,
+          stackName: resolved.stackName,
+          databaseName: resolved.databaseName,
+          apiName: resolved.workers.api,
         }),
       catch: (cause) =>
         commandError(
@@ -333,18 +400,7 @@ export function remoteProvision(context: CommandContext) {
         ),
     });
 
-    yield* Effect.sync(() => {
-      console.info();
-      console.info(pc.green(pc.bold("✓ Remote database provisioned")));
-      console.info(`${pc.dim("URL")}       ${pc.cyan(url)}`);
-      console.info(`${pc.dim("Stack")}     ${stackName}`);
-      console.info(`${pc.dim("Database")}  ${databaseName}`);
-      console.info(`${pc.dim("API")}       ${apiName}`);
-      console.info(
-        `${pc.dim("Token")}     ${pc.dim("stored in the OS keychain")}`,
-      );
-      console.info();
-    });
+    yield* Effect.sync(() => printProvisioned(url, resolved));
   });
 }
 
@@ -377,9 +433,7 @@ function remoteStackDirectory(): string {
 }
 
 async function runAlchemyDeploy(options: {
-  stackName: string;
-  databaseName: string;
-  apiName: string;
+  deployConfig: DeployConfig;
   workerToken: string;
 }): Promise<{ url: string }> {
   const directory = remoteStackDirectory();
@@ -392,9 +446,7 @@ async function runAlchemyDeploy(options: {
     cwd: directory,
     env: {
       ...environment,
-      MACHINE_MEMORY_STACK_NAME: options.stackName,
-      MACHINE_MEMORY_DB_NAME: options.databaseName,
-      MACHINE_MEMORY_API_NAME: options.apiName,
+      ...deployConfigToEnv(options.deployConfig),
       MACHINE_MEMORY_DB_TOKEN: options.workerToken,
     },
     stdin: "inherit",
@@ -448,14 +500,32 @@ const remoteProvisionCommand = effectCommand(
   "provision",
   {
     args: positionalArgs(),
+    config: stringFlag("config"),
+    domain: stringFlag("domain"),
+    docs: booleanFlag("docs"),
+    "no-docs": booleanFlag("no-docs"),
     "stack-name": stringFlag("stack-name"),
     "database-name": stringFlag("database-name"),
     "api-name": stringFlag("api-name"),
+    "router-name": stringFlag("router-name"),
+    "mcp-name": stringFlag("mcp-name"),
+    "docs-name": stringFlag("docs-name"),
+    "vector-index-name": stringFlag("vector-index-name"),
+    "oauth-kv-name": stringFlag("oauth-kv-name"),
   },
   [
+    stringSpec("config"),
+    stringSpec("domain"),
+    booleanSpec("docs"),
+    booleanSpec("no-docs"),
     stringSpec("stack-name"),
     stringSpec("database-name"),
     stringSpec("api-name"),
+    stringSpec("router-name"),
+    stringSpec("mcp-name"),
+    stringSpec("docs-name"),
+    stringSpec("vector-index-name"),
+    stringSpec("oauth-kv-name"),
   ],
   undefined,
   remoteProvision,
@@ -470,7 +540,10 @@ export const remoteCommand = Command.make("remote", {}, () =>
       `${pc.dim("Setup:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
     );
     console.info(
-      `${pc.dim("Provision:")} machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]`,
+      `${pc.dim("Provision:")} machine-memory remote provision [--config <file>] [--domain <host>] [--no-docs] [--stack-name <name>] [--api-name <name>] …`,
+    );
+    console.info(
+      `${pc.dim("Config:")} copy remote-db/cloudflare/machine-memory.deploy.example.json → machine-memory.deploy.json`,
     );
   }),
 ).pipe(Command.withSubcommands([remoteSetupCommand, remoteProvisionCommand]));

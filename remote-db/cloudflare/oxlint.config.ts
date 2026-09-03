@@ -7,5 +7,5 @@ import base, { agentIgnores, antiSlopJsPlugins } from "../../oxlint.config.ts";
 export default defineConfig({
   ...base,
   jsPlugins: antiSlopJsPlugins("../.."),
-  ignorePatterns: [...agentIgnores, "*.d.ts", "**/*.d.ts"],
+  ignorePatterns: [...agentIgnores, "*.d.ts", "**/*.d.ts", "test/**"],
 });

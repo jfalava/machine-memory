@@ -1,0 +1,14 @@
+{
+  "domain": "machine-memory.jfa.dev",
+  "docs": true,
+  "stackName": "machine-memory-remote-db",
+  "database": "machine-memory-db",
+  "vectorIndex": "machine-memory-v1",
+  "oauthKv": "machine-memory-oauth-kv",
+  "workers": {
+    "router": "machine-memory-router",
+    "api": "machine-memory-api",
+    "mcp": "machine-memory-mcp",
+    "docs": "machine-memory-docs"
+  }
+}

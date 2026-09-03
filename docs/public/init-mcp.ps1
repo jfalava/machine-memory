@@ -181,4 +181,4 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding $false
 Write-Host "$action $agentsMd"
 Write-Host "Backend  mcp (MCP tools; no CLI)"
 Write-Host "Next     connect an OAuth MCP client to https://<worker-url>/mcp"
-Write-Host "Docs     https://machine-memory.jfa.dev/mcp/init"
+Write-Host "Docs     https://machine-memory.jfa.dev/docs/mcp/init"

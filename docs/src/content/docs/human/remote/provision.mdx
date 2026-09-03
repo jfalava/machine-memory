@@ -8,16 +8,15 @@ sidebar:
 
 ## Prerequisites
 
-`provision` creates the necessary cloud infrastructure for the remote DB.
+`provision` creates the Cloudflare infrastructure for the remote DB (and optional MCP).
 
-Currently, it only supports Cloudflare as the remote memory provider.
+You need a Cloudflare account that can create:
 
-For the stack to be deployed, you need to have access to a Cloudflare account with permissions to deploy:
-
-- A Worker, that will be the API endpoint that interacts with the database via bindings.
-- A D1 database, where the memories will be stored.
-- A Vectorize index, where the memory embeddings will be stored for semantic search.
-- A Workers AI binding, used to generate embeddings for memories and queries.
+- Workers (router, API, MCP, and optionally docs)
+- A D1 database
+- A Vectorize index
+- Workers AI
+- A KV namespace (for MCP OAuth state)
 
 ## Usage
 
@@ -25,21 +24,43 @@ For the stack to be deployed, you need to have access to a Cloudflare account wi
 machine-memory remote provision
 ```
 
-This command deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare): a complete IaC solution that creates the necessary services for this tool to have a remote backend.
+Deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/remote-db/cloudflare):
 
-1. Creates the Worker API
-2. Generates or reuses a Worker token
-3. Saves the resulting URL and credentials in the operating system keychain
+1. Creates the edge **router** (public URL) plus private **API** and **MCP** workers
+2. Optionally builds and deploys the **docs** worker (`docs: true` in config, default for the upstream site)
+3. Generates or reuses a Worker token for REST
+4. Saves the router URL and credentials in the OS keychain
+
+### Self-host without docs
+
+```sh
+cp remote-db/cloudflare/machine-memory.deploy.example.json ./machine-memory.deploy.json
+# set domain, worker names, "docs": false
+machine-memory remote provision --config ./machine-memory.deploy.json
+```
+
+Or:
+
+```sh
+machine-memory remote provision --no-docs --domain memory.example.com
+```
+
+Full field reference: [MCP → Infrastructure](/docs/mcp/infrastructure).
 
 ## Names and defaults
 
-| Option            | Environment variable        | Default                    |
-| ----------------- | --------------------------- | -------------------------- |
-| `--stack-name`    | `MACHINE_MEMORY_STACK_NAME` | `machine-memory-remote-db` |
-| `--database-name` | `MACHINE_MEMORY_DB_NAME`    | `machine-memory-db`        |
-| `--api-name`      | `MACHINE_MEMORY_API_NAME`   | `machine-memory-api`       |
+| Option                  | Environment variable               | Default                    |
+| ----------------------- | ---------------------------------- | -------------------------- |
+| `--config`              | `MACHINE_MEMORY_DEPLOY_CONFIG`     | auto-discover              |
+| `--domain`              | `MACHINE_MEMORY_DOMAIN`            | (workers.dev router)       |
+| `--no-docs` / `--docs`  | `MACHINE_MEMORY_DEPLOY_DOCS`       | docs on                    |
+| `--stack-name`          | `MACHINE_MEMORY_STACK_NAME`        | `machine-memory-remote-db` |
+| `--database-name`       | `MACHINE_MEMORY_DB_NAME`           | `machine-memory-db`        |
+| `--router-name`         | `MACHINE_MEMORY_ROUTER_NAME`       | `machine-memory-router`    |
+| `--api-name`            | `MACHINE_MEMORY_API_NAME`          | `machine-memory-api`       |
+| `--mcp-name`            | `MACHINE_MEMORY_MCP_NAME`          | `machine-memory-mcp`       |
 
-Flags take precedence over environment variables. Existing names stored with remote credentials are used next, followed by the defaults above.
+Flags take precedence over the config file, then environment variables, then stored remote credentials, then defaults.
 
 ```sh
 machine-memory list --remote
@@ -47,4 +68,4 @@ machine-memory list --remote
 
 ## MCP on the same stack
 
-The provisioned Worker can also expose MCP. After the stack is up, follow [Enable MCP](/mcp/enable). Full MCP path (IaC overview, init script, tools): [MCP](/mcp/overview).
+After the stack is up, follow [Enable MCP](/docs/mcp/enable). Overview: [MCP](/docs/mcp/overview).

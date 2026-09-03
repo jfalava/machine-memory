@@ -16,10 +16,10 @@ This is made for any users of any primitive that doesn't allow or discourages pe
 
 ## Setup path
 
-1. [Infrastructure](/mcp/infrastructure) — deploy the Alchemy stack (Worker, D1, Vectorize, Workers AI).
-2. [Enable MCP](/mcp/enable) — GitHub OAuth app + secrets, then redeploy.
-3. [Init](/mcp/init) — drop the managed MCP block into `AGENTS.md` (public script or `machine-memory init --mcp`).
-4. [Tools](/mcp/tools) — connect a client to `https://<worker-url>/mcp` and use the tool surface.
+1. [Infrastructure](/docs/mcp/infrastructure) — deploy the Alchemy stack (Worker, D1, Vectorize, Workers AI).
+2. [Enable MCP](/docs/mcp/enable) — GitHub OAuth app + secrets, then redeploy.
+3. [Init](/docs/mcp/init) — drop the managed MCP block into `AGENTS.md` (public script or `machine-memory init --mcp`).
+4. [Tools](/docs/mcp/tools) — connect a client to `https://<worker-url>/mcp` and use the tool surface.
 
 ## Connect a client
 
@@ -34,7 +34,7 @@ Discovery endpoints:
 - Authorization server: `https://<worker-url>/.well-known/oauth-authorization-server`
 - Protected resource: `https://<worker-url>/.well-known/oauth-protected-resource`
 
-On first connect the browser opens authorization: the client registers, GitHub identity is verified, and tokens carry `mcp:read` and `mcp:write`. After that, tools from [Tools](/mcp/tools) are available.
+On first connect the browser opens authorization: the client registers, GitHub identity is verified, and tokens carry `mcp:read` and `mcp:write`. After that, tools from [Tools](/docs/mcp/tools) are available.
 
 ## Troubleshooting
 

@@ -5,11 +5,5 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "404-page"
-  },
-  "routes": [
-    {
-      "pattern": "machine-memory.jfa.dev",
-      "custom_domain": true
-    }
-  ]
+  }
 }

@@ -201,4 +201,4 @@ trap - EXIT
 printf '%s %s\n' "${action}" "${agents_md}"
 printf 'Backend  mcp (MCP tools; no CLI)\n'
 printf 'Next     connect an OAuth MCP client to https://<worker-url>/mcp\n'
-printf 'Docs     https://machine-memory.jfa.dev/mcp/init\n'
+printf 'Docs     https://machine-memory.jfa.dev/docs/mcp/init\n'

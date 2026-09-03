@@ -2,12 +2,10 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as SQL from "alchemy/SQL/D1";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
-import { Database, OAuthKv } from "./database";
+import { Database } from "./database";
 import { apiName } from "./config";
 import { validateEmbeddingText } from "./embedding";
 import { VectorIndex } from "./vectorize";
@@ -19,7 +17,6 @@ import {
   type JsonObject,
   type JsonValue,
 } from "./json";
-import { handleOAuthPath, isOAuthPath } from "./oauth-bridge";
 import { handleRestRequest, type RestHandlers } from "./rest-handlers";
 
 type QueryOperation = "run" | "get" | "all";
@@ -469,41 +466,16 @@ function parseQueryRequest(value: JsonValue): QueryRequest {
 
 export default Cloudflare.Worker<{}>()(
   "machine-memory-api",
-  { main: import.meta.url, name: apiName },
+  { main: import.meta.url, name: apiName, workersDev: false },
   Effect.gen(function* () {
     const vectorIndex = yield* VectorIndex;
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const sql = yield* SQL.D1(d1);
     const vectorize = yield* Cloudflare.Vectorize.SearchIndex(vectorIndex);
     const ai = yield* Cloudflare.Workers.AI();
-    const oauthKv = yield* Cloudflare.KV.ReadWriteNamespace(OAuthKv);
     const expectedToken = yield* Config.redacted(
       "MACHINE_MEMORY_DB_TOKEN",
     ).pipe(Effect.orDie);
-    const oauthConfig = yield* Effect.all({
-      githubClientId: Config.string("GITHUB_CLIENT_ID").pipe(Effect.option),
-      githubClientSecret: Config.redacted("GITHUB_CLIENT_SECRET").pipe(
-        Effect.option,
-      ),
-      cookieEncryptionKey: Config.redacted("COOKIE_ENCRYPTION_KEY").pipe(
-        Effect.option,
-      ),
-    });
-    const oauthResources = {
-      d1,
-      vectorize,
-      ai,
-      oauthKv,
-      githubClientId: Option.getOrUndefined(oauthConfig.githubClientId),
-      githubClientSecret: Option.map(
-        oauthConfig.githubClientSecret,
-        Redacted.value,
-      ).pipe(Option.getOrUndefined),
-      cookieEncryptionKey: Option.map(
-        oauthConfig.cookieEncryptionKey,
-        Redacted.value,
-      ).pipe(Option.getOrUndefined),
-    };
     const embed = (text: string) =>
       ai
         .run(EMBEDDING_MODEL, { text: [text] })
@@ -780,9 +752,6 @@ export default Cloudflare.Worker<{}>()(
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        if (isOAuthPath(request.url)) {
-          return yield* handleOAuthPath(oauthResources, request);
-        }
         return yield* handleRestRequest(restHandlers, request);
       }).pipe(
         Effect.catchCause(() =>
@@ -799,6 +768,5 @@ export default Cloudflare.Worker<{}>()(
     Effect.provide(Cloudflare.D1.QueryDatabaseBinding),
     Effect.provide(Cloudflare.Vectorize.SearchIndexBinding),
     Effect.provide(Cloudflare.Workers.AIBinding),
-    Effect.provide(Cloudflare.KV.ReadWriteNamespaceBinding),
   ),
 );

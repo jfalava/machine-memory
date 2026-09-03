@@ -55,11 +55,11 @@ const nimbusConfig = defineNimbusConfig({
       {
         label: "MCP",
         items: [
-          { label: "Overview", link: "/mcp/overview" },
-          { label: "Infrastructure", link: "/mcp/infrastructure" },
-          { label: "Enable MCP", link: "/mcp/enable" },
-          { label: "Init", link: "/mcp/init" },
-          { label: "Tools", link: "/mcp/tools" },
+          { label: "Overview", link: "/docs/mcp/overview" },
+          { label: "Infrastructure", link: "/docs/mcp/infrastructure" },
+          { label: "Enable MCP", link: "/docs/mcp/enable" },
+          { label: "Init", link: "/docs/mcp/init" },
+          { label: "Tools", link: "/docs/mcp/tools" },
         ],
       },
       {
