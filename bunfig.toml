@@ -6,4 +6,5 @@ minimumReleaseAgeExcludes = [
   "effect",
   "@effect/*",
   "alchemy",
+  "hono", ## CVE-2026-29045
 ]
