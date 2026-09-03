@@ -12,7 +12,10 @@
     "lint": "oxlint",
     "plan": "alchemy deploy --dry-run",
     "test": "bun test test/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "bun run --filter @machine-memory/iac typecheck && bash ../docs/scripts/build-cf.sh",
+    "ci:build": "bun run build",
+    "ci:deploy": "alchemy deploy --yes --adopt"
   },
   "dependencies": {
     "@cloudflare/workers-types": "catalog:types",
