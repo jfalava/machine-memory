@@ -19,6 +19,7 @@
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
         "@effect/sql-d1": "catalog:effect",
+        "@machine-memory/contract": "workspace:*",
         "alchemy": "2.0.0-beta.76",
         "effect": "catalog:effect",
       },
@@ -42,6 +43,21 @@
         "effect": "catalog:effect",
         "picocolors": "1.1.1",
         "table": "6.9.0",
+      },
+      "devDependencies": {
+        "@types/bun": "catalog:types",
+        "oxfmt": "catalog:maintenance",
+        "oxlint": "catalog:maintenance",
+        "oxlint-tsgolint": "catalog:build",
+        "typescript": "catalog:build",
+        "vitest": "catalog:maintenance",
+      },
+    },
+    "contract": {
+      "name": "@machine-memory/contract",
+      "version": "0.16.0",
+      "dependencies": {
+        "effect": "catalog:effect",
       },
       "devDependencies": {
         "@types/bun": "catalog:types",
@@ -607,6 +623,8 @@
     "@machine-memory/api": ["@machine-memory/api@workspace:api"],
 
     "@machine-memory/cli": ["@machine-memory/cli@workspace:cli"],
+
+    "@machine-memory/contract": ["@machine-memory/contract@workspace:contract"],
 
     "@machine-memory/docs": ["@machine-memory/docs@workspace:docs"],
 
