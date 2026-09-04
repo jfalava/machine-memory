@@ -16,6 +16,10 @@ machine-memory upgrade
 
 The request timeout defaults to 15 seconds and can be changed with `MACHINE_MEMORY_UPGRADE_TIMEOUT_MS`. `MACHINE_MEMORY_API_URL` overrides the GitHub API base, and `MACHINE_MEMORY_BIN_PATH` overrides the binary path used for replacement.
 
+### Checksum verification
+
+Before installing, `upgrade` verifies the downloaded archive's SHA-256 digest. The expected digest comes from the release asset's `sha256:<hex>` digest that GitHub computes on upload, falling back to the release `checksums.txt` asset. If neither source is available, or the digest does not match, the upgrade aborts without touching the installed binary.
+
 ### macOS troubleshooting
 
 Like the freshly downloaded binary, if the upgraded binary also dies with `zsh: killed`, macOS rejected its embedded ad-hoc signature because the code no longer matches it. Confirm with `codesign -v --strict machine-memory` (it reports `invalid signature`), then re-sign locally:

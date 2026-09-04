@@ -1,4 +1,5 @@
 import { Effect, FileSystem, PlatformError } from "effect";
+import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import { REPO, VERSION } from "./constants";
 import { jsonString, type JsonObject } from "./json";
@@ -6,6 +7,7 @@ import { jsonString, type JsonObject } from "./json";
 type ReleaseAsset = {
   name: string;
   browser_download_url: string;
+  digest?: string;
 };
 
 type Release = {
@@ -190,6 +192,113 @@ function selectAsset(
       );
 }
 
+const CHECKSUMS_ASSET_NAME = "checksums.txt";
+const SHA256_DIGEST_PREFIX = "sha256:";
+
+export function sha256Hex(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+/**
+ * Parse a `sha256sum`-style checksum manifest into asset names and digests.
+ *
+ * Accepts the standard `<hex>  <name>` format (including the `<hex> *<name>`
+ * binary-mode variant) and ignores blank or malformed lines.
+ */
+export function parseChecksums(content: string): Map<string, string> {
+  const checksums = new Map<string, string>();
+  for (const line of content.split(/\r?\n/)) {
+    const match = /^([0-9a-fA-F]{64})\s+\*?(.+)$/.exec(line.trim());
+    if (!match) {
+      continue;
+    }
+    const [, digest, name] = match;
+    if (digest && name) {
+      checksums.set(name.trim(), digest.toLowerCase());
+    }
+  }
+  return checksums;
+}
+
+/**
+ * Verify a downloaded release archive against its published checksum.
+ *
+ * The expected digest comes from the release asset's `sha256:<hex>` digest
+ * that GitHub computes on upload, falling back to the release `checksums.txt`
+ * asset for releases (or API mirrors) without one. Upgrades fail closed when
+ * neither source is available.
+ */
+export function verifyArchiveChecksum(
+  archive: Uint8Array,
+  release: Release,
+  asset: ReleaseAsset,
+): Effect.Effect<void, UpgradeError> {
+  return Effect.gen(function* () {
+    const actual = sha256Hex(archive);
+    const expected = yield* expectedChecksumFor(release, asset);
+    if (actual !== expected.toLowerCase()) {
+      return yield* Effect.fail(
+        new UpgradeError({
+          error: `Checksum mismatch for ${asset.name}: expected ${expected}, got ${actual}. The download may be corrupted or tampered with.`,
+        }),
+      );
+    }
+  });
+}
+
+function expectedChecksumFor(
+  release: Release,
+  asset: ReleaseAsset,
+): Effect.Effect<string, UpgradeError> {
+  const digest = asset.digest;
+  if (digest && digest.toLowerCase().startsWith(SHA256_DIGEST_PREFIX)) {
+    const hex = digest.slice(SHA256_DIGEST_PREFIX.length);
+    if (hex.length === 64) {
+      return Effect.succeed(hex);
+    }
+  }
+
+  const checksumsAsset = release.assets.find(
+    (candidate) => candidate.name === CHECKSUMS_ASSET_NAME,
+  );
+  if (checksumsAsset) {
+    return Effect.gen(function* () {
+      const timeoutMs = requestTimeoutMs();
+      const response = yield* fetchWithTimeout(
+        checksumsAsset.browser_download_url,
+        "Failed to fetch checksums",
+        timeoutMs,
+      );
+      if (!response.ok) {
+        return yield* Effect.fail(
+          new UpgradeError({
+            error: `Failed to fetch checksums: ${response.status}`,
+          }),
+        );
+      }
+      const content = yield* promiseEffect(
+        "Failed to decode checksums",
+        () => response.text(),
+      );
+      const expected = parseChecksums(content).get(asset.name);
+      if (!expected) {
+        return yield* Effect.fail(
+          new UpgradeError({
+            error: `No checksum for ${asset.name} in ${CHECKSUMS_ASSET_NAME}`,
+          }),
+        );
+      }
+      return expected;
+    });
+  }
+
+  return Effect.fail(
+    new UpgradeError({
+      error: `Unable to verify the checksum for ${asset.name}: the release asset has no sha256 digest and the release has no ${CHECKSUMS_ASSET_NAME} asset.`,
+    }),
+  );
+}
+
 type ZipDirectory = {
   entryCount: number;
   offset: number;
@@ -366,6 +475,7 @@ export function extractZipBinary(
 }
 
 function downloadToTemp(
+  release: Release,
   asset: ReleaseAsset,
   tempPath: string,
   timeoutMs: number,
@@ -389,6 +499,7 @@ function downloadToTemp(
     const archive = new Uint8Array(
       yield* promiseEffect("Download failed", () => response.arrayBuffer()),
     );
+    yield* verifyArchiveChecksum(archive, release, asset);
     const expectedBinary = binaryNameForPlatform(process.platform);
     if (!expectedBinary) {
       return yield* Effect.fail(
@@ -506,7 +617,7 @@ export function upgrade(
     const asset = yield* selectAsset(release);
     const tempPath = `${binaryPath()}.tmp`;
     options.onProgress?.({ phase: "downloading", assetName: asset.name });
-    yield* downloadToTemp(asset, tempPath, requestTimeoutMs());
+    yield* downloadToTemp(release, asset, tempPath, requestTimeoutMs());
     options.onProgress?.({ phase: "installing" });
     yield* replaceBinary(tempPath);
     return { message: "Upgraded", from: VERSION, to: latest };
