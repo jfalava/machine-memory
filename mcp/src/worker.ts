@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import ApiWorker from "../../api/src/worker";
 import { mcpName } from "../../iac/src/config";
 import { OAuthKv } from "../../iac/src/database";
 import { handleOAuthPath, isOAuthPath } from "./oauth-bridge";
@@ -17,21 +18,27 @@ const INTERNAL_ERROR = "Internal server error.";
  *
  * Holds no D1, Vectorize, or Workers AI bindings of its own: every MCP tool
  * POSTs to the API worker's `/product/*` routes over the `API` service
- * binding, authorized with the same bearer token the API enforces. Takes
- * the instantiated stack API worker (same object alchemy.run.ts deploys —
- * like the router's `env: { API: api }`), so no worker is deployed twice.
+ * binding, authorized with the same bearer token the API enforces. References
+ * the shared stack API resource (same module object alchemy.run.ts
+ * instantiates — the Database/OAuthKv module-scope pattern), so alchemy
+ * deploys a single API worker plus the `mcp/API` service binding.
  */
-export function createMcpWorker<
-  const A extends Cloudflare.WorkerBindingResource,
->(api: A) {
-  return Cloudflare.Worker<{ API: A }>()(
-    "machine-memory-mcp",
-    {
-      main: import.meta.url,
-      name: mcpName,
-      workersDev: false,
-      env: { API: api },
+export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
+  "machine-memory-mcp",
+  {
+    main: import.meta.url,
+    name: mcpName,
+    workersDev: false,
+    env: {
+      // SAFETY: alchemy yields worker resources referenced in env at deploy
+      // (bindWorker accepts classes and Effects, like Database in Init
+      // effects, deduped by ID — plans show a single [machine-memory-api]).
+      // The double assertion bridges Effect's invariant success type, which
+      // cannot express factory-yields-ResourceLike vs env-wants-Resource.
+      // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- justified above: alchemy worker-resource reference, not a domain type narrowing.
+      API: ApiWorker as unknown as Cloudflare.Worker,
     },
+  },
     Effect.gen(function* () {
       const env = yield* Cloudflare.WorkerEnvironment;
       // SAFETY: alchemy lowers env.API to a service binding for the API worker.
@@ -88,5 +95,4 @@ export function createMcpWorker<
         ),
       };
     }).pipe(Effect.provide(Cloudflare.KV.ReadWriteNamespaceBinding)),
-  );
-}
+);

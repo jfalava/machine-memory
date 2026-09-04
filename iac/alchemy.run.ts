@@ -2,7 +2,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import Api from "../api/src/worker";
-import { createMcpWorker } from "../mcp/src/worker";
+import Mcp from "../mcp/src/worker";
 import {
   deployConfig,
   deployDocs,
@@ -39,7 +39,7 @@ export default Alchemy.Stack(
     yield* metadataIndexes.certainty;
 
     const api = yield* Api;
-    const mcp = yield* createMcpWorker(api);
+    const mcp = yield* Mcp;
 
     const docsWorker = deployDocs
       ? yield* Cloudflare.Website.StaticSite("machine-memory-docs", {
