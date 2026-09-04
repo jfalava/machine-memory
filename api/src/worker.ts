@@ -531,7 +531,12 @@ export default Cloudflare.Worker<{}>()(
     const fetchRankedProductRows = (
       ftsQuery: string,
       repository: string,
-      filters: { status?: string; memory_type?: string; certainty?: string; tags?: string },
+      filters: {
+        status?: string;
+        memory_type?: string;
+        certainty?: string;
+        tags?: string;
+      },
       limit: number,
     ) =>
       Effect.gen(function* () {
@@ -618,7 +623,10 @@ export default Cloudflare.Worker<{}>()(
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
-        const row = yield* fetchProductRow(input.value.repository, input.value.id);
+        const row = yield* fetchProductRow(
+          input.value.repository,
+          input.value.id,
+        );
         if (!row) {
           return yield* HttpServerResponse.json(
             encodeResponse(ErrorBodySchema, {
@@ -691,7 +699,10 @@ export default Cloudflare.Worker<{}>()(
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
-        const row = yield* fetchProductRow(input.value.repository, input.value.id);
+        const row = yield* fetchProductRow(
+          input.value.repository,
+          input.value.id,
+        );
         if (!row) {
           return yield* notFoundProduct(input.value.id, input.value.repository);
         }
@@ -734,7 +745,10 @@ export default Cloudflare.Worker<{}>()(
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
-        const row = yield* fetchProductRow(input.value.repository, input.value.id);
+        const row = yield* fetchProductRow(
+          input.value.repository,
+          input.value.id,
+        );
         if (!row) {
           return yield* notFoundProduct(input.value.id, input.value.repository);
         }
@@ -795,13 +809,25 @@ export default Cloudflare.Worker<{}>()(
     const fetchKeywordScored = (
       ftsQuery: string,
       repository: string,
-      filters: { status?: string; memory_type?: string; certainty?: string; tags?: string },
+      filters: {
+        status?: string;
+        memory_type?: string;
+        certainty?: string;
+        tags?: string;
+      },
       limit: number,
       terms: string[],
     ) =>
       Effect.gen(function* () {
-        const rows = yield* fetchRankedProductRows(ftsQuery, repository, filters, 100);
-        return scoreMemoryRows(rows, terms).slice(0, limit).map(scoredResultRow);
+        const rows = yield* fetchRankedProductRows(
+          ftsQuery,
+          repository,
+          filters,
+          100,
+        );
+        return scoreMemoryRows(rows, terms)
+          .slice(0, limit)
+          .map(scoredResultRow);
       });
 
     const fetchSemanticScored = (
@@ -825,7 +851,9 @@ export default Cloudflare.Worker<{}>()(
         // SAFETY: vectorize.query expects Cloudflare VectorizeQueryOptions; shape matches.
         const matches = yield* vectorize.query(values, options as never);
         // SAFETY: Vectorize matches payload is opaque JSON with id/score entries.
-        const list = (matches as { matches?: Array<{ id: string; score: number }> }).matches ?? [];
+        const list =
+          (matches as { matches?: Array<{ id: string; score: number }> })
+            .matches ?? [];
         return yield* resolveSemanticRows(repository, list, tags);
       });
 
@@ -859,7 +887,10 @@ export default Cloudflare.Worker<{}>()(
         if (!row) {
           return undefined;
         }
-        if (tags !== undefined && !row.tags.toLowerCase().includes(tags.toLowerCase())) {
+        if (
+          tags !== undefined &&
+          !row.tags.toLowerCase().includes(tags.toLowerCase())
+        ) {
           return undefined;
         }
         return { ...row, score: match.score };
@@ -1015,12 +1046,22 @@ export default Cloudflare.Worker<{}>()(
 
     const fetchSuggestNeighborhood = (
       repository: string,
-      filters: { status?: string; memory_type?: string; certainty?: string; tags?: string },
+      filters: {
+        status?: string;
+        memory_type?: string;
+        certainty?: string;
+        tags?: string;
+      },
       tagHints: string[],
       pathHints: string[],
     ) =>
       Effect.gen(function* () {
-        const select = neighborhoodSelect({ repository, filters, tagHints, pathHints });
+        const select = neighborhoodSelect({
+          repository,
+          filters,
+          tagHints,
+          pathHints,
+        });
         if (select === undefined) {
           return [];
         }
@@ -1075,7 +1116,12 @@ export default Cloudflare.Worker<{}>()(
         const ftsRows =
           ftsQuery === undefined
             ? []
-            : yield* fetchRankedProductRows(ftsQuery, args.repository, filters, 100);
+            : yield* fetchRankedProductRows(
+                ftsQuery,
+                args.repository,
+                filters,
+                100,
+              );
         const neighborhoodRows = yield* fetchSuggestNeighborhood(
           args.repository,
           filters,
@@ -1104,7 +1150,10 @@ export default Cloudflare.Worker<{}>()(
     }) =>
       Effect.gen(function* () {
         const primary = scoreMemoryRows(input.ftsRows, input.scoreTerms);
-        const secondary = scoreMemoryRows(input.neighborhoodRows, input.scoreTerms);
+        const secondary = scoreMemoryRows(
+          input.neighborhoodRows,
+          input.scoreTerms,
+        );
         const results = mergeSuggestScored(primary, secondary)
           .slice(0, input.limit)
           .map(scoredResultRow);
@@ -1137,7 +1186,10 @@ export default Cloudflare.Worker<{}>()(
       for (const row of secondary) {
         const existing = byId.get(row.id);
         if (!existing) {
-          byId.set(row.id, { ...row, score: Number((row.score + 12).toFixed(3)) });
+          byId.set(row.id, {
+            ...row,
+            score: Number((row.score + 12).toFixed(3)),
+          });
           continue;
         }
         byId.set(row.id, {
@@ -1150,7 +1202,10 @@ export default Cloudflare.Worker<{}>()(
 
     const insertProductRow = (input: InsertInput) =>
       Effect.gen(function* () {
-        const result = yield* d1.prepare(INSERT_SQL).bind(...insertParams(input)).run();
+        const result = yield* d1
+          .prepare(INSERT_SQL)
+          .bind(...insertParams(input))
+          .run();
         const id = Number(result.meta.last_row_id);
         const row = yield* fetchProductRow(input.repository, id);
         const memory = row ?? {
@@ -1192,7 +1247,14 @@ export default Cloudflare.Worker<{}>()(
       content: string;
       tags: string;
       context: string;
-      memory_type: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+      memory_type:
+        | "convention"
+        | "decision"
+        | "gotcha"
+        | "preference"
+        | "constraint"
+        | "reference"
+        | "status";
       status: "active" | "deprecated" | "superseded_by";
       certainty: "verified" | "inferred" | "speculative";
       expires_after_days?: number;
@@ -1209,7 +1271,9 @@ export default Cloudflare.Worker<{}>()(
           }),
         );
         if (!size.within_budget) {
-          return yield* badRequest(`Document text must be at most 512 tokens for embedding.`);
+          return yield* badRequest(
+            `Document text must be at most 512 tokens for embedding.`,
+          );
         }
         const inserted = yield* insertProductRow({
           repository: args.repository,
@@ -1248,7 +1312,14 @@ export default Cloudflare.Worker<{}>()(
       content: string;
       tags?: string;
       context?: string;
-      memory_type: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+      memory_type:
+        | "convention"
+        | "decision"
+        | "gotcha"
+        | "preference"
+        | "constraint"
+        | "reference"
+        | "status";
       status: "active" | "deprecated" | "superseded_by";
       certainty: "verified" | "inferred" | "speculative";
       expires_after_days?: number;
@@ -1259,7 +1330,10 @@ export default Cloudflare.Worker<{}>()(
       Effect.gen(function* () {
         const tags = args.tags ?? "";
         const context = args.context ?? "";
-        const best = yield* findBestProductMatch(args.repository, args.upsertQuery);
+        const best = yield* findBestProductMatch(
+          args.repository,
+          args.upsertQuery,
+        );
         if (!best) {
           return yield* simpleProductAdd({ ...args, tags, context });
         }
@@ -1268,7 +1342,8 @@ export default Cloudflare.Worker<{}>()(
           [args.content, tags, context].join(" "),
         );
         const strong =
-          check.similarity >= UPSERT_MIN_SIMILARITY && best.score >= args.upsert_threshold;
+          check.similarity >= UPSERT_MIN_SIMILARITY &&
+          best.score >= args.upsert_threshold;
         const info = {
           id: best.row.id,
           score: best.score,
@@ -1292,14 +1367,28 @@ export default Cloudflare.Worker<{}>()(
       args: {
         repository: string;
         content: string;
-        memory_type: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+        memory_type:
+          | "convention"
+          | "decision"
+          | "gotcha"
+          | "preference"
+          | "constraint"
+          | "reference"
+          | "status";
         status: "active" | "deprecated" | "superseded_by";
         certainty: "verified" | "inferred" | "speculative";
         expires_after_days?: number;
       },
       tags: string,
       context: string,
-      info: { id: number; score: number; similarity: number; memory_type: string; status: string; content_head: string },
+      info: {
+        id: number;
+        score: number;
+        similarity: number;
+        memory_type: string;
+        status: string;
+        content_head: string;
+      },
     ) =>
       Effect.gen(function* () {
         const size = embeddingSizeReport(
@@ -1313,7 +1402,9 @@ export default Cloudflare.Worker<{}>()(
           }),
         );
         if (!size.within_budget) {
-          return yield* badRequest(`Document text must be at most 512 tokens for embedding.`);
+          return yield* badRequest(
+            `Document text must be at most 512 tokens for embedding.`,
+          );
         }
         const inserted = yield* insertProductRow({
           repository: args.repository,
@@ -1346,14 +1437,28 @@ export default Cloudflare.Worker<{}>()(
         content: string;
         tags?: string;
         context?: string;
-        memory_type?: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+        memory_type?:
+          | "convention"
+          | "decision"
+          | "gotcha"
+          | "preference"
+          | "constraint"
+          | "reference"
+          | "status";
         certainty?: "verified" | "inferred" | "speculative";
         expires_after_days?: number;
       },
       tags: string,
       context: string,
       best: { row: ReturnType<typeof scoredResultRow>; score: number },
-      info: { id: number; score: number; similarity: number; memory_type: string; status: string; content_head: string },
+      info: {
+        id: number;
+        score: number;
+        similarity: number;
+        memory_type: string;
+        status: string;
+        content_head: string;
+      },
     ) =>
       Effect.gen(function* () {
         const prospective = {
@@ -1366,7 +1471,9 @@ export default Cloudflare.Worker<{}>()(
         };
         const size = embeddingSizeReport(embeddingTextForMemory(prospective));
         if (!size.within_budget) {
-          return yield* badRequest(`Document text must be at most 512 tokens for embedding.`);
+          return yield* badRequest(
+            `Document text must be at most 512 tokens for embedding.`,
+          );
         }
         const update = updateSets({
           content: args.content,
@@ -1393,10 +1500,13 @@ export default Cloudflare.Worker<{}>()(
           );
         }
         yield* d1
-          .prepare(`UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ?`)
+          .prepare(
+            `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ?`,
+          )
           .bind(...update.params, args.repository, best.row.id)
           .run();
-        const row = (yield* fetchProductRow(args.repository, best.row.id)) ?? best.row;
+        const row =
+          (yield* fetchProductRow(args.repository, best.row.id)) ?? best.row;
         void tags;
         void context;
         yield* syncProductVector(row);
@@ -1423,8 +1533,13 @@ export default Cloudflare.Worker<{}>()(
           return yield* badRequest(input.error);
         }
         const args = normalizeMemoryAddArgs(input.value);
-        if (args.expires_after_days !== undefined && args.memory_type !== "status") {
-          return yield* badRequest("expires_after_days is only valid for status memories.");
+        if (
+          args.expires_after_days !== undefined &&
+          args.memory_type !== "status"
+        ) {
+          return yield* badRequest(
+            "expires_after_days is only valid for status memories.",
+          );
         }
         const upsertQuery = args.upsert_match?.trim() || undefined;
         if (upsertQuery === undefined) {
@@ -1451,22 +1566,33 @@ export default Cloudflare.Worker<{}>()(
         const args = input.value;
         const matchQuery = args.match?.trim() || undefined;
         if (args.id !== undefined && matchQuery !== undefined) {
-          return yield* badRequest("Provide either the numeric id or a match query, not both.");
+          return yield* badRequest(
+            "Provide either the numeric id or a match query, not both.",
+          );
         }
-        const resolved = yield* resolveUpdateTarget(args.repository, args.id, matchQuery);
+        const resolved = yield* resolveUpdateTarget(
+          args.repository,
+          args.id,
+          matchQuery,
+        );
         if (!resolved.ok) {
           return resolved.response;
         }
-        return yield* applyProductUpdate(args.repository, resolved.targetId, {
-          content: args.content,
-          tags: args.tags,
-          context: args.context,
-          memory_type: args.memory_type,
-          certainty: args.certainty,
-          status: args.status,
-          expires_after_days: args.expires_after_days,
-          superseded_by: args.superseded_by,
-        }, resolved.matched);
+        return yield* applyProductUpdate(
+          args.repository,
+          resolved.targetId,
+          {
+            content: args.content,
+            tags: args.tags,
+            context: args.context,
+            memory_type: args.memory_type,
+            certainty: args.certainty,
+            status: args.status,
+            expires_after_days: args.expires_after_days,
+            superseded_by: args.superseded_by,
+          },
+          resolved.matched,
+        );
       });
 
     const resolveUpdateTarget = (
@@ -1487,10 +1613,16 @@ export default Cloudflare.Worker<{}>()(
             );
             return { ok: false as const, response };
           }
-          return { ok: true as const, targetId: best.row.id, matched: { query: match, id: best.row.id, score: best.score } };
+          return {
+            ok: true as const,
+            targetId: best.row.id,
+            matched: { query: match, id: best.row.id, score: best.score },
+          };
         }
         if (id === undefined) {
-          const response = yield* badRequest("Provide either the numeric id or a match query.");
+          const response = yield* badRequest(
+            "Provide either the numeric id or a match query.",
+          );
           return { ok: false as const, response };
         }
         return { ok: true as const, targetId: id, matched: undefined };
@@ -1501,15 +1633,28 @@ export default Cloudflare.Worker<{}>()(
       targetId: number,
       fields: {
         superseded_by?: number;
-        memory_type?: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+        memory_type?:
+          | "convention"
+          | "decision"
+          | "gotcha"
+          | "preference"
+          | "constraint"
+          | "reference"
+          | "status";
         expires_after_days?: number;
       },
     ): string | undefined => {
-      if (fields.superseded_by !== undefined && fields.superseded_by === targetId) {
+      if (
+        fields.superseded_by !== undefined &&
+        fields.superseded_by === targetId
+      ) {
         return "A memory cannot supersede itself.";
       }
       const prospectiveType = fields.memory_type ?? existing.memory_type;
-      if (fields.expires_after_days !== undefined && prospectiveType !== "status") {
+      if (
+        fields.expires_after_days !== undefined &&
+        prospectiveType !== "status"
+      ) {
         return "expires_after_days is only valid for status memories.";
       }
       return undefined;
@@ -1521,7 +1666,14 @@ export default Cloudflare.Worker<{}>()(
         content?: string;
         tags?: string;
         context?: string;
-        memory_type?: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+        memory_type?:
+          | "convention"
+          | "decision"
+          | "gotcha"
+          | "preference"
+          | "constraint"
+          | "reference"
+          | "status";
         certainty?: "verified" | "inferred" | "speculative";
         status?: "active" | "deprecated" | "superseded_by";
       },
@@ -1542,7 +1694,14 @@ export default Cloudflare.Worker<{}>()(
         content?: string;
         tags?: string;
         context?: string;
-        memory_type?: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+        memory_type?:
+          | "convention"
+          | "decision"
+          | "gotcha"
+          | "preference"
+          | "constraint"
+          | "reference"
+          | "status";
         certainty?: "verified" | "inferred" | "speculative";
         status?: "active" | "deprecated" | "superseded_by";
         expires_after_days?: number;
@@ -1565,11 +1724,21 @@ export default Cloudflare.Worker<{}>()(
         if (invalid !== undefined) {
           return yield* badRequest(invalid);
         }
-        const size = embeddingSizeReport(prospectiveUpdateText(existing, fields));
+        const size = embeddingSizeReport(
+          prospectiveUpdateText(existing, fields),
+        );
         if (!size.within_budget) {
-          return yield* badRequest(`Document text must be at most 512 tokens for embedding.`);
+          return yield* badRequest(
+            `Document text must be at most 512 tokens for embedding.`,
+          );
         }
-        return yield* persistProductUpdate(repository, targetId, existing, fields, { size, matched });
+        return yield* persistProductUpdate(
+          repository,
+          targetId,
+          existing,
+          fields,
+          { size, matched },
+        );
       });
 
     const persistProductUpdate = (
@@ -1580,7 +1749,14 @@ export default Cloudflare.Worker<{}>()(
         content?: string;
         tags?: string;
         context?: string;
-        memory_type?: "convention" | "decision" | "gotcha" | "preference" | "constraint" | "reference" | "status";
+        memory_type?:
+          | "convention"
+          | "decision"
+          | "gotcha"
+          | "preference"
+          | "constraint"
+          | "reference"
+          | "status";
         certainty?: "verified" | "inferred" | "speculative";
         status?: "active" | "deprecated" | "superseded_by";
         expires_after_days?: number;
@@ -1597,12 +1773,20 @@ export default Cloudflare.Worker<{}>()(
           return yield* HttpServerResponse.json(
             encodeResponse(MemoryWriteSuccessSchema, {
               ok: true,
-              result: { written_to: repository, id: targetId, memory: existing, size: outcome.size, matched: outcome.matched },
+              result: {
+                written_to: repository,
+                id: targetId,
+                memory: existing,
+                size: outcome.size,
+                matched: outcome.matched,
+              },
             }),
           );
         }
         yield* d1
-          .prepare(`UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ?`)
+          .prepare(
+            `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ?`,
+          )
           .bind(...update.params, repository, targetId)
           .run();
         const row = (yield* fetchProductRow(repository, targetId)) ?? existing;
@@ -1610,7 +1794,13 @@ export default Cloudflare.Worker<{}>()(
         return yield* HttpServerResponse.json(
           encodeResponse(MemoryWriteSuccessSchema, {
             ok: true,
-            result: { written_to: repository, id: targetId, memory: row, size: outcome.size, matched: outcome.matched },
+            result: {
+              written_to: repository,
+              id: targetId,
+              memory: row,
+              size: outcome.size,
+              matched: outcome.matched,
+            },
           }),
         );
       });
@@ -1618,7 +1808,9 @@ export default Cloudflare.Worker<{}>()(
     // oxlint-disable-next-line max-statements -- product route dispatcher maps 11 operations
     const handleProduct = (route: string, body: JsonValue) => {
       const normalized =
-        route === "/product/list_repositories" ? "/product/list-repositories" : route;
+        route === "/product/list_repositories"
+          ? "/product/list-repositories"
+          : route;
       if (normalized === "/product/query") {
         return handleProductQuery(body);
       }
