@@ -1,5 +1,6 @@
 import {
   composeEmbeddingText,
+  jsonString,
   UPSERT_DEFAULT_MIN_SCORE,
   UPSERT_MIN_SIMILARITY,
   type Certainty,
@@ -63,17 +64,17 @@ export type ScoredMemoryRow = ProductMemoryRow & {
 
 export function toProductRow(value: JsonObject): ProductMemoryRow {
   // SAFETY: memories table constrains these columns to the contract vocabularies.
-  const memory_type = String(value.memory_type ?? "convention") as MemoryType;
+  const memory_type = (jsonString(value.memory_type) ?? "convention") as MemoryType;
   // SAFETY: memories table constrains these columns to the contract vocabularies.
-  const status = String(value.status ?? "active") as MemoryStatus;
+  const status = (jsonString(value.status) ?? "active") as MemoryStatus;
   // SAFETY: memories table constrains these columns to the contract vocabularies.
-  const certainty = String(value.certainty ?? "inferred") as Certainty;
+  const certainty = (jsonString(value.certainty) ?? "inferred") as Certainty;
   return {
     id: Number(value.id),
-    repository: String(value.repository ?? ""),
-    content: String(value.content ?? ""),
-    tags: String(value.tags ?? ""),
-    context: String(value.context ?? ""),
+    repository: jsonString(value.repository) ?? "",
+    content: jsonString(value.content) ?? "",
+    tags: jsonString(value.tags) ?? "",
+    context: jsonString(value.context) ?? "",
     memory_type,
     status,
     certainty,
@@ -83,7 +84,7 @@ export function toProductRow(value: JsonObject): ProductMemoryRow {
 export function toRankedRow(value: JsonObject): FtsRankedMemoryRow {
   return {
     ...toProductRow(value),
-    updated_at: String(value.updated_at ?? ""),
+    updated_at: jsonString(value.updated_at) ?? "",
     update_count: Number(value.update_count ?? 0),
     fts_rank: Number(value.fts_rank ?? 0),
   };

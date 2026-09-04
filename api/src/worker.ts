@@ -16,6 +16,7 @@ import {
   isJsonArray,
   jsonNumber,
   jsonObject,
+  jsonString,
   ListRepositoriesArgsInputSchema,
   ListRepositoriesSuccessSchema,
   MemoryAddArgsInputSchema,
@@ -607,7 +608,7 @@ export default Cloudflare.Worker<{}>()(
         const query = distinctRepositoriesSelect(args.limit);
         const rows = yield* sql.unsafe<JsonObject>(query.sql, query.params);
         const repositories = rows
-          .map((row) => String(row.repository ?? ""))
+          .map((row) => jsonString(row.repository) ?? "")
           .filter((repo) => repo.length > 0);
         return yield* HttpServerResponse.json(
           encodeResponse(ListRepositoriesSuccessSchema, {
