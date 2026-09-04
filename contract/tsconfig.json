@@ -8,7 +8,7 @@
     "skipLibCheck": true,
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["bun"]
+    "types": ["bun-types"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }
