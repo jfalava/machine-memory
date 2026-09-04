@@ -128,6 +128,7 @@
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
         "@effect/sql-d1": "catalog:effect",
+        "@machine-memory/contract": "workspace:*",
         "@modelcontextprotocol/server": "2.0.0",
         "agents": "0.22.0",
         "alchemy": "2.0.0-beta.76",
