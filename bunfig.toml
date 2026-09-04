@@ -2,7 +2,7 @@
 minimunReleaseAge = 86400
 minimumReleaseAgeExcludes = [
   "@types/node",
-  "@types/bun",
+  "bun-types",
   "effect",
   "@effect/*",
   "alchemy",

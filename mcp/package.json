@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "@types/bun": "catalog:types",
+    "bun-types": "catalog:types",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",

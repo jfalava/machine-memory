@@ -17,7 +17,7 @@
     "effect": "catalog:effect"
   },
   "devDependencies": {
-    "@types/bun": "catalog:types",
+    "bun-types": "catalog:types",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
