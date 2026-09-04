@@ -10,11 +10,8 @@ const INTERNAL_ERROR = "Internal server error.";
 const OAUTH_PATHS = ["/mcp", "/authorize", "/callback", "/token", "/register"];
 
 export type OAuthResources = {
-  readonly d1: { readonly raw: Effect.Effect<unknown, never, RuntimeContext> };
-  readonly vectorize: {
-    readonly raw: Effect.Effect<unknown, never, RuntimeContext>;
-  };
-  readonly ai: { readonly raw: Effect.Effect<unknown, never, RuntimeContext> };
+  readonly api: Fetcher;
+  readonly apiToken: string;
   readonly oauthKv: {
     readonly raw: Effect.Effect<unknown, never, RuntimeContext>;
   };
@@ -51,8 +48,12 @@ function resolveOAuthConfig(resources: OAuthResources): OAuthConfigResolution {
   ) {
     const missing = [
       githubClientId === undefined ? "MACHINE_MEMORY_GITHUB_CLIENT_ID" : "",
-      githubClientSecret === undefined ? "MACHINE_MEMORY_GITHUB_CLIENT_SECRET" : "",
-      cookieEncryptionKey === undefined ? "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY" : "",
+      githubClientSecret === undefined
+        ? "MACHINE_MEMORY_GITHUB_CLIENT_SECRET"
+        : "",
+      cookieEncryptionKey === undefined
+        ? "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY"
+        : "",
     ].filter((name) => name !== "");
     return { config: undefined, missing };
   }
@@ -80,18 +81,12 @@ export function handleOAuthPath(
   }
 
   const buildOAuthEnv = Effect.gen(function* () {
-    const [rawD1, rawVectorize, rawAi, rawKv] = yield* Effect.all([
-      resources.d1.raw,
-      resources.vectorize.raw,
-      resources.ai.raw,
-      resources.oauthKv.raw,
-    ]);
-    // SAFETY: worker.ts provides these resources from real Cloudflare bindings;
-    // alchemy's RuntimeContext types raw values as unknown only.
+    const [rawKv] = yield* Effect.all([resources.oauthKv.raw]);
+    // SAFETY: worker.ts provides this resource from the real Cloudflare
+    // binding; alchemy's RuntimeContext types raw values as unknown only.
     return {
-      DB: rawD1 as D1Database,
-      VECTORIZE: rawVectorize as Vectorize,
-      AI: rawAi as Ai,
+      api: resources.api,
+      apiToken: resources.apiToken,
       OAUTH_KV: rawKv as KVNamespace,
       MACHINE_MEMORY_GITHUB_CLIENT_ID: config.githubClientId,
       MACHINE_MEMORY_GITHUB_CLIENT_SECRET: config.githubClientSecret,

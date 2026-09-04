@@ -1,6 +1,6 @@
 import type { ErrorToolResult, TextToolResult } from "./types";
 
-export function textResult(rows: unknown[]): TextToolResult {
+export function textResult(rows: readonly unknown[]): TextToolResult {
   return {
     content: [{ type: "text", text: JSON.stringify(rows, null, 2) }],
   };

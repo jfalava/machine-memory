@@ -200,6 +200,7 @@ export {
   MemoryVerifySuccessSchema,
   MemoryWriteResultSchema,
   MemoryWriteSuccessSchema,
+  MatchedUpdateTargetSchema,
   ScoredMemoryRowSchema,
   UpsertMatchInfoSchema,
   type FactCheckResult,
@@ -222,6 +223,7 @@ export {
   type MemoryVerifySuccess,
   type MemoryWriteResult,
   type MemoryWriteSuccess,
+  type MatchedUpdateTarget,
   type ScoredMemoryRow,
   type UpsertMatchInfo,
 } from "./product/results";

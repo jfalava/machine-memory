@@ -11,8 +11,8 @@ The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/iac) u
 | Resource        | Role                                                                 |
 | --------------- | -------------------------------------------------------------------- |
 | **Router**      | Sole public entry (custom domain or `workers.dev`). Dispatches paths |
-| **API worker**  | Authenticated REST (`/query`, `/migrate`, `/vectorize/*`)            |
-| **MCP worker**  | MCP tools at `/mcp` + OAuth (`/authorize`, `/callback`, …)           |
+| **API worker**  | Authenticated REST (`/query`, `/migrate`, `/vectorize/*`, `/product/*`). Sole owner of the D1, Vectorize, and Workers AI bindings |
+| **MCP worker**  | API-only gateway: MCP tools at `/mcp` + OAuth (`/authorize`, `/callback`, …) forwarded to `/product/*` over a service binding |
 | **Docs worker** | Optional static docs site (catch-all on the router)                  |
 | D1 database     | Canonical memory rows and FTS                                        |
 | Vectorize index | Semantic embeddings                                                  |

@@ -12,10 +12,10 @@ export const CLIENT_REGISTRATION_ENDPOINT = "/register";
 
 /**
  * Runtime bindings required by the OAuth provider and the MCP tools it
- * protects. `OAUTH_KV` is provider-owned; the remaining keys are the raw
- * D1, Vectorize, and Workers AI bindings the MCP tools operate on.
- * `OAUTH_PROVIDER` is injected by the provider at request time before
- * handlers run.
+ * protects. `OAUTH_KV` is provider-owned; `api`/`apiToken` are the API
+ * service binding and bearer token the gateway tools POST `/product/*`
+ * through. `OAUTH_PROVIDER` is injected by the provider at request time
+ * before handlers run.
  */
 export type OAuthEnv = McpBindings & {
   readonly OAUTH_KV: KVNamespace;

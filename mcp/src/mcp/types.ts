@@ -1,19 +1,14 @@
-/** Raw Cloudflare bindings the MCP tools operate on. */
-export type McpBindings = {
-  readonly DB: D1Database;
-  readonly VECTORIZE: Vectorize;
-  readonly AI: Ai;
-};
+import type { ApiFetcher } from "./product-client";
 
-export type MemoryRow = {
-  readonly id: number;
-  readonly repository: string;
-  readonly content: string;
-  readonly tags: string;
-  readonly context: string;
-  readonly memory_type: string;
-  readonly status: string;
-  readonly certainty: string;
+/**
+ * API-only gateway bindings. The MCP worker holds no D1, Vectorize, or
+ * Workers AI bindings of its own — every tool POSTs to the API worker's
+ * `/product/*` routes over the `api` service binding, authorized with the
+ * same bearer token the API enforces on all routes.
+ */
+export type McpBindings = {
+  readonly api: ApiFetcher;
+  readonly apiToken: string;
 };
 
 export type TextToolResult = {
@@ -21,17 +16,3 @@ export type TextToolResult = {
 };
 
 export type ErrorToolResult = TextToolResult & { readonly isError: true };
-
-/** D1 memory row plus the columns ranking needs. */
-export type RankedMemoryRow = MemoryRow & {
-  readonly updated_at: string;
-  readonly update_count: number;
-};
-
-export type FtsRankedMemoryRow = RankedMemoryRow & {
-  readonly fts_rank: number;
-};
-
-export type ScoredMemoryRow = RankedMemoryRow & {
-  readonly score: number;
-};

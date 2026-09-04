@@ -135,11 +135,13 @@
         "effect": "catalog:effect",
       },
       "devDependencies": {
+        "@modelcontextprotocol/client": "2.0.0",
         "@types/bun": "catalog:types",
         "oxfmt": "catalog:maintenance",
         "oxlint": "catalog:maintenance",
         "oxlint-tsgolint": "catalog:build",
         "typescript": "catalog:build",
+        "vitest": "catalog:maintenance",
       },
     },
     "router": {

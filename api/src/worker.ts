@@ -1466,7 +1466,7 @@ export default Cloudflare.Worker<{}>()(
           status: args.status,
           expires_after_days: args.expires_after_days,
           superseded_by: args.superseded_by,
-        });
+        }, resolved.matched);
       });
 
     const resolveUpdateTarget = (
@@ -1487,13 +1487,13 @@ export default Cloudflare.Worker<{}>()(
             );
             return { ok: false as const, response };
           }
-          return { ok: true as const, targetId: best.row.id };
+          return { ok: true as const, targetId: best.row.id, matched: { query: match, id: best.row.id, score: best.score } };
         }
         if (id === undefined) {
           const response = yield* badRequest("Provide either the numeric id or a match query.");
           return { ok: false as const, response };
         }
-        return { ok: true as const, targetId: id };
+        return { ok: true as const, targetId: id, matched: undefined };
       });
 
     const validateUpdateFields = (
@@ -1548,6 +1548,7 @@ export default Cloudflare.Worker<{}>()(
         expires_after_days?: number;
         superseded_by?: number;
       },
+      matched: { query: string; id: number; score: number } | undefined,
     ) =>
       Effect.gen(function* () {
         const existing = yield* fetchProductRow(repository, targetId);
@@ -1568,7 +1569,7 @@ export default Cloudflare.Worker<{}>()(
         if (!size.within_budget) {
           return yield* badRequest(`Document text must be at most 512 tokens for embedding.`);
         }
-        return yield* persistProductUpdate(repository, targetId, existing, fields, size);
+        return yield* persistProductUpdate(repository, targetId, existing, fields, { size, matched });
       });
 
     const persistProductUpdate = (
@@ -1585,7 +1586,10 @@ export default Cloudflare.Worker<{}>()(
         expires_after_days?: number;
         superseded_by?: number;
       },
-      size: ReturnType<typeof embeddingSizeReport>,
+      outcome: {
+        size: ReturnType<typeof embeddingSizeReport>;
+        matched: { query: string; id: number; score: number } | undefined;
+      },
     ) =>
       Effect.gen(function* () {
         const update = updateSets(fields);
@@ -1593,7 +1597,7 @@ export default Cloudflare.Worker<{}>()(
           return yield* HttpServerResponse.json(
             encodeResponse(MemoryWriteSuccessSchema, {
               ok: true,
-              result: { written_to: repository, id: targetId, memory: existing, size },
+              result: { written_to: repository, id: targetId, memory: existing, size: outcome.size, matched: outcome.matched },
             }),
           );
         }
@@ -1606,7 +1610,7 @@ export default Cloudflare.Worker<{}>()(
         return yield* HttpServerResponse.json(
           encodeResponse(MemoryWriteSuccessSchema, {
             ok: true,
-            result: { written_to: repository, id: targetId, memory: row, size },
+            result: { written_to: repository, id: targetId, memory: row, size: outcome.size, matched: outcome.matched },
           }),
         );
       });

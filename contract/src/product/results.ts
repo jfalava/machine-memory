@@ -28,6 +28,14 @@ export const UpsertMatchInfoSchema = Schema.Struct({
 });
 export type UpsertMatchInfo = typeof UpsertMatchInfoSchema.Type;
 
+/** Echo of an update-by-match resolution (query that resolved + hit id/score). */
+export const MatchedUpdateTargetSchema = Schema.Struct({
+  query: Schema.String,
+  id: Schema.Number,
+  score: Schema.Number,
+});
+export type MatchedUpdateTarget = typeof MatchedUpdateTargetSchema.Type;
+
 export const MemoryWriteResultSchema = Schema.Struct({
   mode: Schema.optionalKey(Schema.String),
   written_to: Schema.String,
@@ -35,6 +43,7 @@ export const MemoryWriteResultSchema = Schema.Struct({
   memory: MemoryRowSchema,
   size: Schema.optionalKey(EmbeddingSizeReportSchema),
   upsert_match: Schema.optionalKey(UpsertMatchInfoSchema),
+  matched: Schema.optionalKey(MatchedUpdateTargetSchema),
   potential_conflicts: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
 });
 export type MemoryWriteResult = typeof MemoryWriteResultSchema.Type;

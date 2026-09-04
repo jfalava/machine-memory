@@ -7,6 +7,7 @@
     "check": "oxlint --fix",
     "format": "oxfmt",
     "lint": "oxlint",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -22,10 +23,12 @@
     "effect": "catalog:effect"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@types/bun": "catalog:types",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
-    "typescript": "catalog:build"
+    "typescript": "catalog:build",
+    "vitest": "catalog:maintenance"
   }
 }

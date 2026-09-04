@@ -1,23 +1,18 @@
 import {
-  SEARCH_LIMIT_DEFAULT,
-  SEARCH_LIMIT_MAX,
+  ListRepositoriesSuccessSchema,
+  MemoryDeleteSuccessSchema,
+  MemoryDiffSuccessSchema,
+  MemoryGetSuccessSchema,
+  MemoryListSuccessSchema,
+  MemoryQuerySuccessSchema,
+  MemorySizeSuccessSchema,
+  MemorySuggestSuccessSchema,
+  MemoryVerifySuccessSchema,
+  MemoryWriteSuccessSchema,
 } from "@machine-memory/contract";
 import { McpServer } from "@modelcontextprotocol/server";
 import pkg from "../../package.json";
-import {
-  measureMemoryEmbeddingBudget,
-  ROW_SELECT,
-  rowById,
-  validateNamespace,
-} from "./db";
-import { compareMemoryFact } from "./facts";
-import { runMemorySuggest } from "./suggest";
-import {
-  hybridSearch,
-  keywordSearch,
-  queryArgsToSearchInput,
-  semanticSearch,
-} from "./search";
+import { postProduct, ProductApiError } from "./product-client";
 import { errorResult, textMessage, textResult } from "./text";
 import {
   listRepositoriesInput,
@@ -43,13 +38,30 @@ import {
   type MemoryUpdateArgs,
   type MemoryVerifyArgs,
 } from "./tool-schemas";
-import type { McpBindings, MemoryRow } from "./types";
-import { applyMemoryUpdate, resolveUpdateTarget } from "./update";
-import { addMemory, addMemoryUpsert } from "./write";
+import type { ErrorToolResult, McpBindings, TextToolResult } from "./types";
 
 /** Same version as the monorepo CLI / package.json (not a separate MCP protocol number). */
 export const MCP_SERVER_VERSION: string = pkg.version;
 
+/**
+ * Map a product-route failure onto the MCP read-tool contract: the API's
+ * 404 not-found messages pass through as plain text (same wording the
+ * direct-DB tools used to emit); everything else is a tool error.
+ */
+function notFoundOrError(cause: unknown): TextToolResult | ErrorToolResult {
+  if (cause instanceof ProductApiError && cause.status === 404) {
+    return textMessage(cause.message);
+  }
+  return errorResult(cause);
+}
+
+/**
+ * API-only gateway: every tool POSTs its (already MCP-validated) args to
+ * the matching API `/product/*` route and unwraps the contract success
+ * envelope into the exact output shape the direct-DB tools returned, so
+ * agent-facing behavior is unchanged while D1/Vectorize/AI live only in
+ * the API worker.
+ */
 export function createMemoryServer(
   bindings: McpBindings,
   authenticatedLogin?: string,
@@ -58,6 +70,7 @@ export function createMemoryServer(
     name: "machine-memory",
     version: MCP_SERVER_VERSION,
   });
+  const { api, apiToken } = bindings;
 
   const ownerHint = authenticatedLogin
     ? ` The authenticated GitHub user is '${authenticatedLogin}', so repositories under that owner (e.g. '${authenticatedLogin}/repo-name') are likely candidates. Call list_repositories first if unsure.`
@@ -72,14 +85,14 @@ export function createMemoryServer(
     },
     async (args: ListRepositoriesArgs) => {
       try {
-        const limit = args.limit ?? SEARCH_LIMIT_MAX;
-        const result = await bindings.DB.prepare(
-          `SELECT DISTINCT repository FROM memories ORDER BY repository LIMIT ?`,
-        )
-          .bind(limit)
-          .all<{ repository: string }>();
-        const repos = (result.results ?? []).map((r) => r.repository);
-        return textResult(repos);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "list-repositories",
+          { limit: args.limit },
+          ListRepositoriesSuccessSchema,
+        );
+        return textResult(success.result.repositories);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -95,16 +108,14 @@ export function createMemoryServer(
     },
     async (args: MemoryQueryArgs) => {
       try {
-        validateNamespace(args.repository);
-        const mode = args.mode ?? "hybrid";
-        const input = queryArgsToSearchInput(args, SEARCH_LIMIT_DEFAULT);
-        if (mode === "keyword") {
-          return textResult(await keywordSearch(bindings.DB, input));
-        }
-        if (mode === "semantic") {
-          return textResult(await semanticSearch(bindings, input));
-        }
-        return textResult(await hybridSearch(bindings, input));
+        const success = await postProduct(
+          api,
+          apiToken,
+          "query",
+          args,
+          MemoryQuerySuccessSchema,
+        );
+        return textResult(success.result.results);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -120,16 +131,16 @@ export function createMemoryServer(
     },
     async (args: MemoryGetArgs) => {
       try {
-        validateNamespace(args.repository);
-        const row = await rowById(bindings.DB, args.repository, args.id);
-        if (!row) {
-          return textMessage(
-            `No memory found with id ${args.id} in repository '${args.repository}'.`,
-          );
-        }
-        return textResult([row]);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "get",
+          args,
+          MemoryGetSuccessSchema,
+        );
+        return textResult([success.result]);
       } catch (cause) {
-        return errorResult(cause);
+        return notFoundOrError(cause);
       }
     },
   );
@@ -143,33 +154,14 @@ export function createMemoryServer(
     },
     async (args: MemoryListArgs) => {
       try {
-        validateNamespace(args.repository);
-        const clauses = ["repository = ?"];
-        const params: (string | number)[] = [args.repository];
-        if (args.status !== undefined) {
-          clauses.push("status = ?");
-          params.push(args.status);
-        }
-        if (args.memory_type !== undefined) {
-          clauses.push("memory_type = ?");
-          params.push(args.memory_type);
-        }
-        if (args.certainty !== undefined) {
-          clauses.push("certainty = ?");
-          params.push(args.certainty);
-        }
-        if (args.tags !== undefined) {
-          clauses.push("tags LIKE ?");
-          params.push(`%${args.tags}%`);
-        }
-        const result = await bindings.DB.prepare(
-          `SELECT ${ROW_SELECT}
-           FROM memories WHERE ${clauses.join(" AND ")}
-           ORDER BY updated_at DESC LIMIT ?`,
-        )
-          .bind(...params, args.limit ?? SEARCH_LIMIT_DEFAULT)
-          .all<MemoryRow>();
-        return textResult(result.results ?? []);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "list",
+          args,
+          MemoryListSuccessSchema,
+        );
+        return textResult(success.result.results);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -185,7 +177,14 @@ export function createMemoryServer(
     },
     async (args: MemorySuggestArgs) => {
       try {
-        return textResult([await runMemorySuggest(bindings.DB, args)]);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "suggest",
+          args,
+          MemorySuggestSuccessSchema,
+        );
+        return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -201,32 +200,16 @@ export function createMemoryServer(
     },
     async (args: MemoryVerifyArgs) => {
       try {
-        validateNamespace(args.repository);
-        const row = await rowById(bindings.DB, args.repository, args.id);
-        if (!row) {
-          return textMessage(
-            `No memory found with id ${args.id} in repository '${args.repository}'.`,
-          );
-        }
-        const result = compareMemoryFact(row.content, args.fact);
-        return textResult([
-          result.conflict
-            ? {
-                id: args.id,
-                ok: false,
-                result: "conflict",
-                warning: "Conflict",
-                similarity: result.similarity,
-              }
-            : {
-                id: args.id,
-                ok: true,
-                result: "consistent",
-                similarity: result.similarity,
-              },
-        ]);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "verify",
+          args,
+          MemoryVerifySuccessSchema,
+        );
+        return textResult([success.result]);
       } catch (cause) {
-        return errorResult(cause);
+        return notFoundOrError(cause);
       }
     },
   );
@@ -240,25 +223,16 @@ export function createMemoryServer(
     },
     async (args: MemoryDiffArgs) => {
       try {
-        validateNamespace(args.repository);
-        const row = await rowById(bindings.DB, args.repository, args.id);
-        if (!row) {
-          return textMessage(
-            `No memory found with id ${args.id} in repository '${args.repository}'.`,
-          );
-        }
-        const result = compareMemoryFact(row.content, args.content);
-        return textResult([
-          {
-            id: args.id,
-            conflict: result.conflict,
-            similarity: result.similarity,
-            added_terms: result.addedTerms,
-            removed_terms: result.removedTerms,
-          },
-        ]);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "diff",
+          args,
+          MemoryDiffSuccessSchema,
+        );
+        return textResult([success.result]);
       } catch (cause) {
-        return errorResult(cause);
+        return notFoundOrError(cause);
       }
     },
   );
@@ -271,11 +245,14 @@ export function createMemoryServer(
     },
     async (args: MemoryAddArgs) => {
       try {
-        const upsertQuery = args.upsert_match?.trim() || undefined;
-        if (upsertQuery === undefined) {
-          return textResult([await addMemory(bindings, args)]);
-        }
-        return textResult([await addMemoryUpsert(bindings, args, upsertQuery)]);
+        const success = await postProduct(
+          api,
+          apiToken,
+          "add",
+          args,
+          MemoryWriteSuccessSchema,
+        );
+        return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -290,22 +267,16 @@ export function createMemoryServer(
     },
     async (args: MemoryUpdateArgs) => {
       try {
-        validateNamespace(args.repository);
-        const target = await resolveUpdateTarget(
-          bindings.DB,
-          args.repository,
-          args.id,
-          args.match,
+        const success = await postProduct(
+          api,
+          apiToken,
+          "update",
+          args,
+          MemoryWriteSuccessSchema,
         );
-        if (target.kind === "rejection") {
-          return errorResult(new Error(target.message));
-        }
-        if (target.kind === "empty") {
-          return textMessage(target.message);
-        }
-        return applyMemoryUpdate(bindings, args, target);
+        return textResult([success.result]);
       } catch (cause) {
-        return errorResult(cause);
+        return notFoundOrError(cause);
       }
     },
   );
@@ -319,26 +290,25 @@ export function createMemoryServer(
     },
     async (args: MemorySizeArgs) => {
       try {
-        const size = measureMemoryEmbeddingBudget({
-          content: args.content,
-          tags: args.tags ?? "",
-          context: args.context ?? "",
-          memory_type: args.memory_type ?? "convention",
-          status: args.status ?? "active",
-          certainty: args.certainty ?? "inferred",
-        });
-        if (!size.within_budget) {
+        const success = await postProduct(
+          api,
+          apiToken,
+          "size",
+          args,
+          MemorySizeSuccessSchema,
+        );
+        if (!success.result.size.within_budget) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: JSON.stringify([{ size }], null, 2),
+                text: JSON.stringify([{ size: success.result.size }], null, 2),
               },
             ],
             isError: true,
           };
         }
-        return textResult([{ size }]);
+        return textResult([{ size: success.result.size }]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -353,28 +323,14 @@ export function createMemoryServer(
     },
     async (args: MemoryDeleteArgs) => {
       try {
-        validateNamespace(args.repository);
-        const existing = await rowById(bindings.DB, args.repository, args.id);
-        const result = await bindings.DB.prepare(
-          "DELETE FROM memories WHERE repository = ? AND id = ?",
-        )
-          .bind(args.repository, args.id)
-          .run();
-        await bindings.VECTORIZE.deleteByIds([String(args.id)]).catch(
-          (cause) => {
-            console.error(
-              `memory ${args.id} deleted but vector cleanup failed: ${String(cause)}`,
-            );
-          },
+        const success = await postProduct(
+          api,
+          apiToken,
+          "delete",
+          args,
+          MemoryDeleteSuccessSchema,
         );
-        return textResult([
-          {
-            deleted_from: args.repository,
-            id: args.id,
-            deleted: (result.meta.changes ?? 0) > 0,
-            existed: existing !== undefined,
-          },
-        ]);
+        return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
       }
