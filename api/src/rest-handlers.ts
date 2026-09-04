@@ -9,44 +9,20 @@ import type { JsonValue } from "./json";
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
 
+export type RestHandlerFn = (
+  body: JsonValue,
+) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
+
 export type RestHandlers = {
   readonly expectedToken: Redacted.Redacted;
-  readonly handleQuery: (
-    body: JsonValue,
-  ) => Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >;
-  readonly handleMigration: (
-    body: JsonValue,
-  ) => Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >;
-  readonly handleMigrationLinks: (
-    body: JsonValue,
-  ) => Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >;
-  readonly handleVectorizeUpsert: (
-    body: JsonValue,
-  ) => Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >;
-  readonly handleVectorizeSearch: (
-    body: JsonValue,
-  ) => Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >;
-  readonly handleVectorizeDelete: (
+  readonly handleQuery: RestHandlerFn;
+  readonly handleMigration: RestHandlerFn;
+  readonly handleMigrationLinks: RestHandlerFn;
+  readonly handleVectorizeUpsert: RestHandlerFn;
+  readonly handleVectorizeSearch: RestHandlerFn;
+  readonly handleVectorizeDelete: RestHandlerFn;
+  readonly handleProduct: (
+    route: string,
     body: JsonValue,
   ) => Effect.Effect<
     HttpServerResponse.HttpServerResponse,
@@ -74,6 +50,31 @@ function catchInternal(
   );
 }
 
+const PRODUCT_ROUTES = new Set([
+  "/product/query",
+  "/product/get",
+  "/product/list",
+  "/product/suggest",
+  "/product/add",
+  "/product/update",
+  "/product/delete",
+  "/product/verify",
+  "/product/diff",
+  "/product/size",
+  "/product/list-repositories",
+  "/product/list_repositories",
+]);
+
+const KNOWN_ROUTES = new Set([
+  "/query",
+  "/migrate",
+  "/migrate/links",
+  "/vectorize/upsert",
+  "/vectorize/search",
+  "/vectorize/delete",
+  ...PRODUCT_ROUTES,
+]);
+
 export function handleRestRequest(
   handlers: RestHandlers,
   request: HttpServerRequest.HttpServerRequest,
@@ -94,23 +95,19 @@ export function handleRestRequest(
     if (request.url === "/vectorize/delete") {
       return handlers.handleVectorizeDelete(body);
     }
+    if (request.url === "/vectorize/search") {
+      return handlers.handleVectorizeSearch(body);
+    }
+    if (PRODUCT_ROUTES.has(request.url)) {
+      return handlers.handleProduct(request.url, body);
+    }
     return handlers.handleVectorizeSearch(body);
   };
 
   const guardedRoute = (body: JsonValue) => catchInternal(route(body));
 
   return Effect.gen(function* () {
-    if (
-      request.method !== "POST" ||
-      ![
-        "/query",
-        "/migrate",
-        "/migrate/links",
-        "/vectorize/upsert",
-        "/vectorize/search",
-        "/vectorize/delete",
-      ].includes(request.url)
-    ) {
+    if (request.method !== "POST" || !KNOWN_ROUTES.has(request.url)) {
       return HttpServerResponse.jsonUnsafe(
         { error: "Not found" },
         { status: 404 },

@@ -1,4 +1,9 @@
 import { isAbsolute, resolve } from "node:path";
+import type {
+  Certainty,
+  MemoryStatus,
+  MemoryType,
+} from "@machine-memory/contract";
 import pkg from "../package.json";
 
 export const VERSION = pkg.version;
@@ -10,30 +15,28 @@ export const DB_PATH = configuredDbPath
     : resolve(process.cwd(), configuredDbPath)
   : resolve(process.cwd(), "machine-memory.db");
 
-export const MEMORY_TYPES = [
-  "decision",
-  "convention",
-  "gotcha",
-  "preference",
-  "constraint",
-  "reference",
-  "status",
-] as const;
-
-export const CERTAINTY_LEVELS = [
-  "verified",
-  "inferred",
-  "speculative",
-] as const;
-export const MEMORY_STATUSES = [
-  "active",
-  "deprecated",
-  "superseded_by",
-] as const;
-
-export type MemoryType = (typeof MEMORY_TYPES)[number];
-export type Certainty = (typeof CERTAINTY_LEVELS)[number];
-export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
+export {
+  CERTAINTY_LEVELS,
+  CLI_LIMIT_MAX,
+  DEFAULT_CERTAINTY,
+  DEFAULT_MEMORY_STATUS,
+  DEFAULT_MEMORY_TYPE,
+  EMBEDDING_DIMENSIONS,
+  EMBEDDING_MODEL,
+  MAX_EMBEDDING_TOKENS,
+  MAX_NAMESPACE_BYTES,
+  MEMORY_STATUSES,
+  MEMORY_TYPES,
+  SEARCH_LIMIT_DEFAULT,
+  SEARCH_LIMIT_MAX,
+  SEARCH_MODES,
+  UPSERT_DEFAULT_MIN_SCORE,
+  UPSERT_MIN_SIMILARITY,
+  type Certainty,
+  type MemoryStatus,
+  type MemoryType,
+  type SearchMode,
+} from "@machine-memory/contract";
 
 export type CommonFilters = {
   tag?: string;

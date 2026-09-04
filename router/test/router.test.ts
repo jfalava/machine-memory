@@ -101,6 +101,22 @@ describe("router", () => {
     expect(calls.API.map((c) => c.pathname)).toEqual(["/vectorize/search"]);
   });
 
+  it("/product/query goes to API", async () => {
+    const { response, calls } = request("https://mm.example/product/query");
+    await response;
+    expect(calls.API.map((c) => c.pathname)).toEqual(["/product/query"]);
+  });
+
+  it("/product/list-repositories goes to API", async () => {
+    const { response, calls } = request(
+      "https://mm.example/product/list-repositories",
+    );
+    await response;
+    expect(calls.API.map((c) => c.pathname)).toEqual([
+      "/product/list-repositories",
+    ]);
+  });
+
   it("docs paths and root go to docs", async () => {
     const { response, calls } = request("https://mm.example/docs/mcp/overview");
     await response;

@@ -2,8 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   CLI_LIMIT_MAX,
   decodeRequest,
+  decodeResponse,
+  encodeResponse,
   MemoryAddArgsInputSchema,
+  MemoryDiffSuccessSchema,
+  MemoryListSuccessSchema,
   MemoryQueryArgsInputSchema,
+  MemoryQuerySuccessSchema,
+  MemorySuggestSuccessSchema,
+  MemoryVerifySuccessSchema,
   normalizeMemoryAddArgs,
   normalizeMemoryQueryArgs,
   SEARCH_LIMIT_MAX,
@@ -41,5 +48,108 @@ describe("product ops schemas", () => {
       expect(normalized.status).toBe("active");
       expect(normalized.upsert_threshold).toBe(32);
     }
+  });
+
+  it("round-trips product query success envelopes", () => {
+    const payload = {
+      ok: true as const,
+      result: {
+        count: 1,
+        results: [
+          {
+            id: 7,
+            repository: "owner/name",
+            content: "deploy with bun",
+            tags: "area:cli",
+            context: "",
+            memory_type: "convention" as const,
+            status: "active" as const,
+            certainty: "verified" as const,
+            score: 42.5,
+          },
+        ],
+      },
+    };
+    const encoded = encodeResponse(MemoryQuerySuccessSchema, payload);
+    expect(decodeResponse(MemoryQuerySuccessSchema, encoded, "query")).toEqual(payload);
+  });
+
+  it("round-trips product list, suggest, verify, and diff envelopes", () => {
+    const list = {
+      ok: true as const,
+      result: {
+        count: 1,
+        results: [
+          {
+            id: 1,
+            repository: "owner/name",
+            content: "hello",
+            tags: "",
+            context: "",
+            memory_type: "convention" as const,
+            status: "active" as const,
+            certainty: "inferred" as const,
+          },
+        ],
+      },
+    };
+    expect(
+      decodeResponse(
+        MemoryListSuccessSchema,
+        encodeResponse(MemoryListSuccessSchema, list),
+        "list",
+      ),
+    ).toEqual(list);
+    const suggest = {
+      ok: true as const,
+      result: {
+        files: ["src/a.ts"],
+        normalized_path_terms: ["a"],
+        derived_terms: ["a"],
+        neighborhood: { tags: [], paths: [] },
+        count: 0,
+        results: [],
+      },
+    };
+    expect(
+      decodeResponse(
+        MemorySuggestSuccessSchema,
+        encodeResponse(MemorySuggestSuccessSchema, suggest),
+        "suggest",
+      ),
+    ).toEqual(suggest);
+    const verify = {
+      ok: true as const,
+      result: {
+        id: 1,
+        ok: true as const,
+        result: "consistent" as const,
+        similarity: 0.9,
+      },
+    };
+    expect(
+      decodeResponse(
+        MemoryVerifySuccessSchema,
+        encodeResponse(MemoryVerifySuccessSchema, verify),
+        "verify",
+      ),
+    ).toEqual(verify);
+    const diff = {
+      ok: true as const,
+      result: {
+        id: 1,
+        conflict: false,
+        similarity: 0.8,
+        added_terms: ["x"],
+        removed_terms: [],
+      },
+    };
+    expect(
+      decodeResponse(
+        MemoryDiffSuccessSchema,
+        encodeResponse(MemoryDiffSuccessSchema, diff),
+        "diff",
+      ),
+    ).toEqual(diff);
   });
 });

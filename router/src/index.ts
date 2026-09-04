@@ -118,6 +118,7 @@ export const app = new Hono<App>()
   .all("/migrate", forwardBinding("API"))
   .all("/migrate/*", forwardBinding("API"))
   .all("/vectorize/*", forwardBinding("API"))
+  .all("/product/*", forwardBinding("API"))
   // Known docs mounts only; everything else is 418
   .all("*", forwardDocs);
 

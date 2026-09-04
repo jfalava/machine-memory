@@ -1,3 +1,5 @@
+import { Schema } from "effect";
+
 import { MAX_EMBEDDING_TOKENS } from "./literals";
 
 const SPECIAL_TOKEN_COUNT = 2;
@@ -13,22 +15,23 @@ export function estimateEmbeddingTokens(text: string): number {
   return new TextEncoder().encode(text).byteLength + SPECIAL_TOKEN_COUNT;
 }
 
-export type EmbeddingSizeReport = {
-  readonly source: "bytes";
-  readonly bytes_estimate: number;
-  readonly max_bytes_estimate: number;
-  readonly within_budget: boolean;
-  readonly binding_limit: "bytes" | null;
-  readonly over_by_bytes: number;
-  readonly remaining: number;
-  readonly limits: {
-    readonly bytes_estimate: {
-      readonly value: number;
-      readonly limit: number;
-      readonly pass: boolean;
-    };
-  };
-};
+export const EmbeddingSizeReportSchema = Schema.Struct({
+  source: Schema.Literal("bytes"),
+  bytes_estimate: Schema.Number,
+  max_bytes_estimate: Schema.Number,
+  within_budget: Schema.Boolean,
+  binding_limit: Schema.NullOr(Schema.Literal("bytes")),
+  over_by_bytes: Schema.Number,
+  remaining: Schema.Number,
+  limits: Schema.Struct({
+    bytes_estimate: Schema.Struct({
+      value: Schema.Number,
+      limit: Schema.Number,
+      pass: Schema.Boolean,
+    }),
+  }),
+});
+export type EmbeddingSizeReport = typeof EmbeddingSizeReportSchema.Type;
 
 /**
  * Reports the Worker's conservative byte+2 embedding budget for composed text.
