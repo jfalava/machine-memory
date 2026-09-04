@@ -1,3 +1,9 @@
+import {
+  decodeResponse,
+  ErrorBodySchema,
+  QuerySuccessSchema,
+  type JsonValue as ContractJsonValue,
+} from "@machine-memory/contract";
 import { Effect, Layer } from "effect";
 import type { SqlQueryBinding } from "../db";
 import {
@@ -76,13 +82,30 @@ function query(
         }),
       });
       const body = await readRemoteResponse(response);
+      // SAFETY: parsed JSON response bodies carry no undefined values.
+      const contractBody = body as ContractJsonValue;
       if (!response.ok || body.ok !== true) {
+        const failure = decodeResponse(
+          ErrorBodySchema,
+          contractBody,
+          "remote/query",
+        );
         const message =
+          failure?.error ??
           jsonString(body.error) ??
           `Remote database returned HTTP ${response.status}.`;
         throw new Error(message);
       }
-      return body.result;
+      const success = decodeResponse(
+        QuerySuccessSchema,
+        contractBody,
+        "remote/query",
+      );
+      if (success === undefined) {
+        throw new Error("Remote database returned an invalid response.");
+      }
+      // SAFETY: contract Json result re-enters the CLI as an opaque JSON value.
+      return success.result as JsonValue;
     },
     catch: (cause) => remoteError(operation, cause),
   });

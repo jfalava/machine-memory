@@ -1,3 +1,10 @@
+import {
+  decodeResponse,
+  ErrorBodySchema,
+  VectorizeDeleteResultSchema,
+  VectorizeUpsertResultSchema,
+  type JsonValue as ContractJsonValue,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
 import {
   jsonNumber,
@@ -216,17 +223,39 @@ function asRecord(value: JsonValue): JsonObject {
   return object;
 }
 
-function parseMutation(value: JsonValue): MemoryVectorMutation {
-  const result = asRecord(value);
-  const id = jsonString(result.id);
-  const mutationId = jsonString(result.mutationId);
-  if (id === undefined || mutationId === undefined) {
+function toContractValue(value: JsonValue): ContractJsonValue {
+  // SAFETY: parsed JSON response values carry no undefined entries.
+  return value as ContractJsonValue;
+}
+
+function parseUpsertMutation(value: JsonValue): MemoryVectorMutation {
+  const decoded = decodeResponse(
+    VectorizeUpsertResultSchema,
+    toContractValue(value),
+    "vectorize/upsert",
+  );
+  if (decoded === undefined) {
     throw new Error("Remote vector API returned an invalid mutation.");
   }
   return {
-    id,
-    namespace: jsonString(result.namespace),
-    mutationId,
+    id: decoded.id,
+    namespace: decoded.namespace,
+    mutationId: decoded.mutationId,
+  };
+}
+
+function parseDeleteMutation(value: JsonValue): MemoryVectorMutation {
+  const decoded = decodeResponse(
+    VectorizeDeleteResultSchema,
+    toContractValue(value),
+    "vectorize/delete",
+  );
+  if (decoded === undefined) {
+    throw new Error("Remote vector API returned an invalid mutation.");
+  }
+  return {
+    id: decoded.id,
+    mutationId: decoded.mutationId,
   };
 }
 
@@ -284,7 +313,13 @@ function request<T>(
       });
       const payload = await readRemoteResponse(response);
       if (!response.ok || payload.ok !== true) {
+        const failure = decodeResponse(
+          ErrorBodySchema,
+          toContractValue(payload),
+          "vectorize/error",
+        );
         const message =
+          failure?.error ??
           jsonString(payload.error) ??
           `Remote vector API returned HTTP ${response.status}.`;
         throw remoteRequestError(response, message);
@@ -307,7 +342,7 @@ export function remoteVectorApi(
         operation: "vectorize/upsert",
         path: "/vectorize/upsert",
         body: document,
-        parse: parseMutation,
+        parse: parseUpsertMutation,
         beforeRequest: () =>
           validateBgeEmbeddingText(
             memoryVectorEmbeddingText(document),
@@ -321,7 +356,7 @@ export function remoteVectorApi(
         operation: "vectorize/delete",
         path: "/vectorize/delete",
         body: { id },
-        parse: parseMutation,
+        parse: parseDeleteMutation,
       }),
     search: (searchRequest) =>
       request({

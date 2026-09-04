@@ -1,6 +1,12 @@
+import {
+  decodeResponse,
+  ErrorBodySchema,
+  MigrationBatchResultSchema,
+  MigrationLinksSuccessSchema,
+  type JsonValue as ContractJsonValue,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
 import {
-  jsonNumber,
   jsonObject,
   jsonString,
   parseJson,
@@ -74,45 +80,29 @@ function migrationUrl(queryUrl: string, path: string): string {
   return parsed.toString();
 }
 
-function asRecord(value: JsonValue, label: string): JsonObject {
-  const object = jsonObject(value);
-  if (object === undefined) {
-    throw new Error(`Remote migration returned an invalid ${label}.`);
-  }
-  return object;
-}
-
-function integerField(value: JsonValue, label: string): number {
-  const number = jsonNumber(value);
-  if (number === undefined || !Number.isSafeInteger(number)) {
-    throw new Error(`Remote migration returned an invalid ${label}.`);
-  }
-  return number;
+function toContractValue(value: JsonValue): ContractJsonValue {
+  // SAFETY: parsed JSON response values carry no undefined entries.
+  return value as ContractJsonValue;
 }
 
 function parseBatchResult(value: JsonValue): RemoteMigrationBatchResult {
-  const result = asRecord(value, "batch result");
-  const rawItems = result.items;
-  if (!Array.isArray(rawItems)) {
-    throw new Error("Remote migration returned invalid batch items.");
+  const decoded = decodeResponse(
+    MigrationBatchResultSchema,
+    toContractValue(value),
+    "remote/migrate",
+  );
+  if (decoded === undefined) {
+    throw new Error("Remote migration returned an invalid batch result.");
   }
-  const items = rawItems.map((item, index): RemoteMigrationItem => {
-    const record = asRecord(item, `batch item ${index + 1}`);
-    const status = jsonString(record.status);
-    if (status !== "inserted" && status !== "duplicate") {
-      throw new Error(`Remote migration returned an invalid item status.`);
-    }
-    return {
-      source_id: integerField(record.source_id, "source_id"),
-      target_id: integerField(record.target_id, "target_id"),
-      status,
-    };
-  });
   return {
-    processed: integerField(result.processed, "processed"),
-    inserted: integerField(result.inserted, "inserted"),
-    duplicates: integerField(result.duplicates, "duplicates"),
-    items,
+    processed: decoded.processed,
+    inserted: decoded.inserted,
+    duplicates: decoded.duplicates,
+    items: decoded.items.map((item) => ({
+      source_id: item.source_id,
+      target_id: item.target_id,
+      status: item.status,
+    })),
   };
 }
 
@@ -136,7 +126,13 @@ function request(
       });
       const parsed = await readResponse(response, operation);
       if (!response.ok || parsed.ok !== true) {
+        const failure = decodeResponse(
+          ErrorBodySchema,
+          toContractValue(parsed),
+          "remote/migrate",
+        );
         const message =
+          failure?.error ??
           jsonString(parsed.error) ??
           `Remote migration returned HTTP ${response.status}.`;
         throw new Error(message);
@@ -181,5 +177,23 @@ export function migrateRemoteLinks(
     "/migrate/links",
     { repository, links },
     "remote/migrate-links",
-  ).pipe(Effect.asVoid);
+  ).pipe(
+    Effect.flatMap((response) =>
+      Effect.try({
+        try: () => {
+          const decoded = decodeResponse(
+            MigrationLinksSuccessSchema,
+            toContractValue(response),
+            "remote/migrate-links",
+          );
+          if (decoded === undefined) {
+            throw new Error(
+              "Remote migration returned an invalid links result.",
+            );
+          }
+        },
+        catch: (cause) => migrationError("remote/migrate-links", cause),
+      }),
+    ),
+  );
 }
