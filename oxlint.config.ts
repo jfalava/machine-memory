@@ -138,7 +138,7 @@ const builtinRules: DummyRuleMap = {
 // Strict application base: type-aware linting over the built-in plugins plus
 // the vendored anti-slop rules. Workspace configs spread this and add their
 // own jsPlugins registration and ignorePatterns.
-export default defineConfig({
+const base = defineConfig({
   options: {
     typeAware: true,
     typeCheck: true,
@@ -165,3 +165,11 @@ export default defineConfig({
     ...antiSlopRules,
   },
 });
+
+// oxlint only accepts `options.typeAware`/`typeCheck` in the root config, so
+// workspaces spread this options-free variant and enable type-aware linting
+// via the `--type-aware` CLI flag instead.
+const { options: _options, ...workspaceBase } = base;
+export { workspaceBase };
+
+export default base;
