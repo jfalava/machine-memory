@@ -227,3 +227,27 @@ export {
   type ScoredMemoryRow,
   type UpsertMatchInfo,
 } from "./product/results";
+
+export {
+  MemorySummarySchema,
+  StoredMemoryRowSchema,
+  normalizeStoredMemoryRow,
+  type MemorySummary,
+  type StoredMemoryRow,
+} from "./entities";
+export {
+  VectorizeMatchSchema,
+  VectorizeSearchResultSchema,
+  type VectorizeMatch,
+  type VectorizeSearchResult,
+} from "./api/responses";
+export {
+  PRODUCT_OPERATIONS,
+  PRODUCT_ROUTES,
+  isProductRoute,
+  normalizeProductRoute,
+  productRoutePath,
+  type ProductRoute,
+  type ProductRequest,
+  type ProductResponse,
+} from "./product/catalog";

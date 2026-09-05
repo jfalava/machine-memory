@@ -1,15 +1,3 @@
-import {
-  ListRepositoriesSuccessSchema,
-  MemoryDeleteSuccessSchema,
-  MemoryDiffSuccessSchema,
-  MemoryGetSuccessSchema,
-  MemoryListSuccessSchema,
-  MemoryQuerySuccessSchema,
-  MemorySizeSuccessSchema,
-  MemorySuggestSuccessSchema,
-  MemoryVerifySuccessSchema,
-  MemoryWriteSuccessSchema,
-} from "@machine-memory/contract";
 import { McpServer } from "@modelcontextprotocol/server";
 import pkg from "../../package.json";
 import { postProduct, ProductApiError } from "./product-client";
@@ -85,13 +73,9 @@ export function createMemoryServer(
     },
     async (args: ListRepositoriesArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "list-repositories",
-          { limit: args.limit },
-          ListRepositoriesSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "list-repositories", {
+          limit: args.limit,
+        });
         return textResult(success.result.repositories);
       } catch (cause) {
         return errorResult(cause);
@@ -108,13 +92,7 @@ export function createMemoryServer(
     },
     async (args: MemoryQueryArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "query",
-          args,
-          MemoryQuerySuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "query", args);
         return textResult(success.result.results);
       } catch (cause) {
         return errorResult(cause);
@@ -131,13 +109,7 @@ export function createMemoryServer(
     },
     async (args: MemoryGetArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "get",
-          args,
-          MemoryGetSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "get", args);
         return textResult([success.result]);
       } catch (cause) {
         return notFoundOrError(cause);
@@ -154,13 +126,7 @@ export function createMemoryServer(
     },
     async (args: MemoryListArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "list",
-          args,
-          MemoryListSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "list", args);
         return textResult(success.result.results);
       } catch (cause) {
         return errorResult(cause);
@@ -177,13 +143,7 @@ export function createMemoryServer(
     },
     async (args: MemorySuggestArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "suggest",
-          args,
-          MemorySuggestSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "suggest", args);
         return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
@@ -200,13 +160,7 @@ export function createMemoryServer(
     },
     async (args: MemoryVerifyArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "verify",
-          args,
-          MemoryVerifySuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "verify", args);
         return textResult([success.result]);
       } catch (cause) {
         return notFoundOrError(cause);
@@ -223,13 +177,7 @@ export function createMemoryServer(
     },
     async (args: MemoryDiffArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "diff",
-          args,
-          MemoryDiffSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "diff", args);
         return textResult([success.result]);
       } catch (cause) {
         return notFoundOrError(cause);
@@ -245,13 +193,7 @@ export function createMemoryServer(
     },
     async (args: MemoryAddArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "add",
-          args,
-          MemoryWriteSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "add", args);
         return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
@@ -267,13 +209,7 @@ export function createMemoryServer(
     },
     async (args: MemoryUpdateArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "update",
-          args,
-          MemoryWriteSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "update", args);
         return textResult([success.result]);
       } catch (cause) {
         return notFoundOrError(cause);
@@ -290,13 +226,7 @@ export function createMemoryServer(
     },
     async (args: MemorySizeArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "size",
-          args,
-          MemorySizeSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "size", args);
         if (!success.result.size.within_budget) {
           return {
             content: [
@@ -323,13 +253,7 @@ export function createMemoryServer(
     },
     async (args: MemoryDeleteArgs) => {
       try {
-        const success = await postProduct(
-          api,
-          apiToken,
-          "delete",
-          args,
-          MemoryDeleteSuccessSchema,
-        );
+        const success = await postProduct(api, apiToken, "delete", args);
         return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);

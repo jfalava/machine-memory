@@ -10,5 +10,5 @@
     "types": ["@cloudflare/workers-types", "bun-types"],
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

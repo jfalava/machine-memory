@@ -1,6 +1,6 @@
 {
   "name": "@machine-memory/cli",
-  "version": "0.17.1",
+  "version": "0.18.0",
   "bin": {
     "machine-memory": "src/app.ts"
   },

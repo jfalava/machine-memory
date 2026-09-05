@@ -6,26 +6,24 @@ import type { JsonValue } from "./json";
  * Encode a domain value to its wire JSON shape.
  * Server-side: fail closed — a SchemaError means we almost shipped garbage.
  */
-export function encodeResponse<S extends Schema.Top>(
+export function encodeResponse<S extends Schema.ConstraintEncoder<unknown>>(
   schema: S,
   value: S["Type"],
 ): S["Encoded"] {
-  // SAFETY: wire schemas in this package are pure data codecs (no services).
-  return Schema.encodeSync(schema as never)(value as never) as S["Encoded"];
+  return Schema.encodeSync(schema)(value);
 }
 
 /**
  * Decode wire JSON into a domain value.
  * Client-side helper: returns undefined and logs on failure (graceful).
  */
-export function decodeResponse<S extends Schema.Top>(
+export function decodeResponse<S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   body: JsonValue,
   label: string,
 ): S["Type"] | undefined {
   try {
-    // SAFETY: wire schemas in this package are pure data codecs (no services).
-    return Schema.decodeUnknownSync(schema as never)(body) as S["Type"];
+    return Schema.decodeUnknownSync(schema)(body);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     console.error(
@@ -54,13 +52,12 @@ export type DecodeResult<A> =
  * Server-side request decode: fail closed with a stable error string for HTTP 400.
  * `body` is already-parsed JSON from the HTTP layer.
  */
-export function decodeRequest<S extends Schema.Top>(
+export function decodeRequest<S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   body: JsonValue,
 ): DecodeResult<S["Type"]> {
   try {
-    // SAFETY: wire schemas in this package are pure data codecs (no services).
-    const value = Schema.decodeUnknownSync(schema as never)(body) as S["Type"];
+    const value = Schema.decodeUnknownSync(schema)(body);
     return { ok: true, value };
   } catch (cause) {
     return { ok: false, error: schemaErrorMessage(cause) };

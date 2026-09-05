@@ -97,8 +97,8 @@ export const OptionalMemoryStatusSchema =
 
 export const OptionalTagsFilterSchema = Schema.optionalKey(Schema.String);
 
-/** Core memory row fields returned by product read ops. */
-export const MemoryRowSchema = Schema.Struct({
+/** Memory fields returned in search summaries. */
+export const MemorySummarySchema = Schema.Struct({
   id: Schema.Number,
   repository: Schema.String,
   content: Schema.String,
@@ -108,4 +108,39 @@ export const MemoryRowSchema = Schema.Struct({
   status: MemoryStatusSchema,
   certainty: CertaintySchema,
 });
+export type MemorySummary = typeof MemorySummarySchema.Type;
+
+/** Full memory returned by get, list, and writes. refs is decoded JSON. */
+export const MemoryRowSchema = Schema.Struct({
+  ...MemorySummarySchema.fields,
+  superseded_by: Schema.NullOr(Schema.Int),
+  source_agent: Schema.String,
+  last_updated_by: Schema.String,
+  update_count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  refs: Schema.Array(Schema.String),
+  expires_after_days: Schema.NullOr(Schema.Int),
+  created_at: Schema.NullOr(Schema.String),
+  updated_at: Schema.NullOr(Schema.String),
+});
 export type MemoryRow = typeof MemoryRowSchema.Type;
+
+/** SQLite stores refs as JSON text and allows null in optional text columns. */
+export const StoredMemoryRowSchema = Schema.Struct({
+  ...MemoryRowSchema.fields,
+  tags: Schema.NullOr(Schema.String),
+  context: Schema.NullOr(Schema.String),
+  source_agent: Schema.NullOr(Schema.String),
+  last_updated_by: Schema.NullOr(Schema.String),
+  refs: Schema.fromJsonString(Schema.Array(Schema.String)),
+});
+export type StoredMemoryRow = typeof StoredMemoryRowSchema.Type;
+
+export function normalizeStoredMemoryRow(row: StoredMemoryRow): MemoryRow {
+  return {
+    ...row,
+    tags: row.tags ?? "",
+    context: row.context ?? "",
+    source_agent: row.source_agent ?? "",
+    last_updated_by: row.last_updated_by ?? "",
+  };
+}

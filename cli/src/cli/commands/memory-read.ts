@@ -1,3 +1,4 @@
+import { SEARCH_LIMIT_MAX } from "@machine-memory/contract";
 import { Effect } from "effect";
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
@@ -31,7 +32,6 @@ import { printCommandOutput } from "../runtime/output";
 
 const SWEEP_USAGE =
   'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
-const MAX_SEMANTIC_LIMIT = 50;
 
 type FetchResultsOptions = {
   explainScore: boolean;
@@ -191,13 +191,13 @@ function fetchSemanticCandidates(
   if (!vectorize) {
     usageError("Semantic search requires the remote backend: query --remote.");
   }
-  if (options.limit > MAX_SEMANTIC_LIMIT) {
+  if (options.limit > SEARCH_LIMIT_MAX) {
     usageError(
-      `--limit must be an integer between 1 and ${MAX_SEMANTIC_LIMIT} for semantic and hybrid search.`,
+      `--limit must be an integer between 1 and ${SEARCH_LIMIT_MAX} for semantic and hybrid search.`,
     );
   }
   const topK = Math.min(
-    MAX_SEMANTIC_LIMIT,
+    SEARCH_LIMIT_MAX,
     Math.max(
       options.limit * options.topKMultiplier,
       options.minimumTopK ?? options.limit,

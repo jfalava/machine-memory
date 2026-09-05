@@ -3,6 +3,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import { describe, expect, test } from "vitest";
 import { createMemoryServer } from "../src/mcp";
 import type { ApiFetcher } from "../src/mcp/product-client";
+import { postProduct } from "../src/mcp/product-client";
+import {
+  decodeRequest,
+  encodeResponse,
+  PRODUCT_OPERATIONS,
+} from "@machine-memory/contract";
+import { toProductRow } from "../../api/src/product-logic";
 
 type SeenCall = {
   url: string;
@@ -59,6 +66,18 @@ const ROW = {
   certainty: "verified",
 };
 
+const FULL_ROW = {
+  ...ROW,
+  superseded_by: 12,
+  source_agent: "codex",
+  last_updated_by: "mcp",
+  update_count: 3,
+  refs: ["docs/deploy.md"],
+  expires_after_days: 7,
+  created_at: "2026-09-01 10:00:00",
+  updated_at: "2026-09-05 12:00:00",
+};
+
 async function linkedClient(bindings: { api: ApiFetcher; apiToken: string }) {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -80,6 +99,92 @@ function firstText(result: {
 }
 
 describe("mcp gateway to api product routes", () => {
+  test("memory_get carries all metadata from database row through the gateway", async () => {
+    const memory = toProductRow({
+      ...FULL_ROW,
+      refs: JSON.stringify(FULL_ROW.refs),
+    });
+    const client = await linkedClient({
+      api: stubApi(
+        {
+          "/product/get": {
+            status: 200,
+            body: encodeResponse(PRODUCT_OPERATIONS.get.response, {
+              ok: true,
+              result: memory,
+            }),
+          },
+        },
+        [],
+      ),
+      apiToken: "test-token",
+    });
+    const result = await client.callTool({
+      name: "memory_get",
+      arguments: { repository: "o/r", id: 7 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(firstText(result))).toEqual([FULL_ROW]);
+  });
+
+  test.each(["x".repeat(65), "é".repeat(33)])(
+    "MCP and API reject oversized namespaces before fetching: %s",
+    async (repository) => {
+      const seen: SeenCall[] = [];
+      const args = { repository, id: 7 };
+      expect(decodeRequest(PRODUCT_OPERATIONS.get.request, args).ok).toBe(
+        false,
+      );
+      const client = await linkedClient({
+        api: stubApi({}, seen),
+        apiToken: "test-token",
+      });
+      const result = await client.callTool({
+        name: "memory_get",
+        arguments: args,
+      });
+      expect(result.isError).toBe(true);
+      expect(firstText(result)).toContain("64 UTF-8 bytes");
+      expect(seen).toHaveLength(0);
+    },
+  );
+
+  test("tool discovery preserves shared field descriptions and constraints", async () => {
+    const client = await linkedClient({
+      api: stubApi({}, []),
+      apiToken: "test-token",
+    });
+    const { tools } = await client.listTools();
+    expect(tools).toHaveLength(Object.keys(PRODUCT_OPERATIONS).length);
+    const get = tools.find((tool) => tool.name === "memory_get");
+    expect(JSON.stringify(get?.inputSchema)).toContain("64 UTF-8 bytes");
+    const add = tools.find((tool) => tool.name === "memory_add");
+    expect(JSON.stringify(add?.inputSchema)).toContain("weak match refuses");
+  });
+
+  test("the route selects its response schema and rejects a different operation result", async () => {
+    const api = stubApi(
+      {
+        "/product/get": {
+          status: 200,
+          body: {
+            ok: true,
+            result: {
+              deleted_from: "o/r",
+              id: 7,
+              deleted: true,
+              existed: true,
+            },
+          },
+        },
+      },
+      [],
+    );
+    await expect(
+      postProduct(api, "token", "get", { repository: "o/r", id: 7 }),
+    ).rejects.toThrow("invalid response");
+  });
+
   test("memory_query unwraps results and forwards auth + path + body", async () => {
     const seen: SeenCall[] = [];
     const client = await linkedClient({
@@ -200,7 +305,7 @@ describe("mcp gateway to api product routes", () => {
     const write = {
       written_to: "o/r",
       id: 7,
-      memory: ROW,
+      memory: FULL_ROW,
       size: {
         source: "bytes",
         bytes_estimate: 100,

@@ -1,55 +1,19 @@
 import {
   composeEmbeddingText,
-  jsonString,
+  StoredMemoryRowSchema,
+  MemorySummarySchema,
+  normalizeStoredMemoryRow,
+  type MemoryRow,
+  type MemorySummary,
+  type FactCheckResult,
+  type ScoredMemoryRow,
   UPSERT_DEFAULT_MIN_SCORE,
   UPSERT_MIN_SIMILARITY,
-  type Certainty,
   type JsonObject,
-  type MemoryStatus,
-  type MemoryType,
 } from "@machine-memory/contract";
+import { Schema } from "effect";
 
-export const PRODUCT_ROUTES = [
-  "query",
-  "get",
-  "list",
-  "suggest",
-  "add",
-  "update",
-  "delete",
-  "verify",
-  "diff",
-  "size",
-  "list-repositories",
-] as const;
-
-export type ProductRoute = (typeof PRODUCT_ROUTES)[number];
-
-export function productRoutePath(route: ProductRoute): string {
-  return `/product/${route}`;
-}
-
-/** Accepts the legacy underscore alias for list-repositories. */
-export function normalizeProductRoute(url: string): ProductRoute | undefined {
-  if (url === "/product/list_repositories") {
-    return "list-repositories";
-  }
-  const match = PRODUCT_ROUTES.find((route) => url === `/product/${route}`);
-  return match;
-}
-
-export type ProductMemoryRow = {
-  readonly id: number;
-  readonly repository: string;
-  readonly content: string;
-  readonly tags: string;
-  readonly context: string;
-  readonly memory_type: MemoryType;
-  readonly status: MemoryStatus;
-  readonly certainty: Certainty;
-};
-
-export type RankedMemoryRow = ProductMemoryRow & {
+export type RankedMemoryRow = MemorySummary & {
   readonly updated_at: string;
   readonly update_count: number;
 };
@@ -58,39 +22,27 @@ export type FtsRankedMemoryRow = RankedMemoryRow & {
   readonly fts_rank: number;
 };
 
-export type ScoredMemoryRow = ProductMemoryRow & {
-  readonly score: number;
-};
-
-export function toProductRow(value: JsonObject): ProductMemoryRow {
-  // SAFETY: memories table constrains these columns to the contract vocabularies.
-  const memory_type = (jsonString(value.memory_type) ?? "convention") as MemoryType;
-  // SAFETY: memories table constrains these columns to the contract vocabularies.
-  const status = (jsonString(value.status) ?? "active") as MemoryStatus;
-  // SAFETY: memories table constrains these columns to the contract vocabularies.
-  const certainty = (jsonString(value.certainty) ?? "inferred") as Certainty;
-  return {
-    id: Number(value.id),
-    repository: jsonString(value.repository) ?? "",
-    content: jsonString(value.content) ?? "",
-    tags: jsonString(value.tags) ?? "",
-    context: jsonString(value.context) ?? "",
-    memory_type,
-    status,
-    certainty,
-  };
+/** Decode at the database boundary; invalid stored enums must not become typed rows. */
+export function toProductRow(value: JsonObject): MemoryRow {
+  return normalizeStoredMemoryRow(
+    Schema.decodeUnknownSync(StoredMemoryRowSchema)(value),
+  );
 }
 
 export function toRankedRow(value: JsonObject): FtsRankedMemoryRow {
+  const row = toProductRow(value);
   return {
-    ...toProductRow(value),
-    updated_at: jsonString(value.updated_at) ?? "",
-    update_count: Number(value.update_count ?? 0),
+    ...Schema.decodeUnknownSync(MemorySummarySchema)(row),
+    updated_at: row.updated_at ?? "",
+    update_count: row.update_count,
     fts_rank: Number(value.fts_rank ?? 0),
   };
 }
 
-export function toScoredRow(row: RankedMemoryRow, score: number): ScoredMemoryRow {
+export function toScoredRow(
+  row: RankedMemoryRow,
+  score: number,
+): ScoredMemoryRow {
   return {
     id: row.id,
     repository: row.repository,
@@ -189,17 +141,10 @@ function hasNegation(text: string): boolean {
   return /\b(not|no|never|without|cannot|can't)\b/.test(text.toLowerCase());
 }
 
-export type ProductFactCheck = {
-  readonly similarity: number;
-  readonly conflict: boolean;
-  readonly added_terms: string[];
-  readonly removed_terms: string[];
-};
-
 export function compareMemoryFact(
   stored: string,
   candidate: string,
-): ProductFactCheck {
+): FactCheckResult {
   const storedTerms = factTerms(stored);
   const candidateTerms = factTerms(candidate);
   const similarity = jaccardSimilarity(storedTerms, candidateTerms);
@@ -308,7 +253,9 @@ export function scoreMemoryRows(
     .sort((left, right) => right.score - left.score);
 }
 
-export function scoredResultRow(row: RankedMemoryRow & { score: number }): ScoredMemoryRow {
+export function scoredResultRow(
+  row: RankedMemoryRow & { score: number },
+): ScoredMemoryRow {
   return {
     id: row.id,
     repository: row.repository,
@@ -460,7 +407,12 @@ function collectFileHints(
     seenPaths.add(lowerDir);
     pathHints.push(`${directory}/`);
   }
-  collectExtensionHint(directory, normalized.slice(slash + 1), seenPaths, pathHints);
+  collectExtensionHint(
+    directory,
+    normalized.slice(slash + 1),
+    seenPaths,
+    pathHints,
+  );
   collectDirectoryTags(directory, seenTags, tagHints);
 }
 
@@ -527,8 +479,7 @@ export function upsertStrength(
     [candidate.content, candidate.tags, candidate.context].join(" "),
   ).similarity;
   return {
-    strong:
-      similarity >= UPSERT_MIN_SIMILARITY && score >= threshold,
+    strong: similarity >= UPSERT_MIN_SIMILARITY && score >= threshold,
     similarity,
     score,
   };

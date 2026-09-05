@@ -1,13 +1,14 @@
 import {
   decodeResponse,
   ErrorBodySchema,
+  VectorizeSearchResultSchema,
+  type VectorizeSearchRequestInput,
   VectorizeDeleteResultSchema,
   VectorizeUpsertResultSchema,
   type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 import {
-  jsonNumber,
   jsonObject,
   jsonString,
   parseJson,
@@ -61,14 +62,7 @@ export type MemoryVectorApi = {
   ) => Effect.Effect<MemoryVectorSearchResult, MemoryDatabaseError>;
 };
 
-export type MemoryVectorSearchRequest = {
-  readonly repository: string;
-  readonly query: string;
-  readonly top_k: number;
-  readonly status?: string;
-  readonly memory_type?: string;
-  readonly certainty?: string;
-};
+export type MemoryVectorSearchRequest = VectorizeSearchRequestInput;
 
 export function memoryVectorEmbeddingParts(
   document: MemoryVectorDocument,
@@ -215,14 +209,6 @@ function vectorUrl(queryUrl: string, path: string): string {
   return parsed.toString();
 }
 
-function asRecord(value: JsonValue): JsonObject {
-  const object = jsonObject(value);
-  if (object === undefined) {
-    throw new Error("Remote vector API returned an invalid response.");
-  }
-  return object;
-}
-
 function toContractValue(value: JsonValue): ContractJsonValue {
   // SAFETY: parsed JSON response values carry no undefined entries.
   return value as ContractJsonValue;
@@ -260,29 +246,21 @@ function parseDeleteMutation(value: JsonValue): MemoryVectorMutation {
 }
 
 function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
-  const result = asRecord(value);
-  if (!Array.isArray(result.matches)) {
+  const result = decodeResponse(
+    VectorizeSearchResultSchema,
+    toContractValue(value),
+    "vectorize/search",
+  );
+  if (result === undefined) {
     throw new Error("Remote vector API returned an invalid search result.");
   }
-  const matches = result.matches.map((match, index): MemoryVectorMatch => {
-    const candidate = asRecord(match);
-    const id = jsonString(candidate.id);
-    const score = jsonNumber(candidate.score);
-    if (id === undefined || id.trim().length === 0 || score === undefined) {
-      throw new Error(
-        `Remote vector API returned an invalid search match at index ${index}.`,
-      );
-    }
-    const metadata = candidate.metadata;
-    return {
-      id,
-      score,
-      metadata: jsonObject(metadata) ?? {},
-    };
-  });
   return {
-    count: jsonNumber(result.count) ?? matches.length,
-    matches,
+    count: result.count,
+    matches: result.matches.map((match) => ({
+      id: match.id,
+      score: match.score,
+      metadata: match.metadata ?? {},
+    })),
   };
 }
 

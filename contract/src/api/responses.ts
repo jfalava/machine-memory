@@ -89,11 +89,23 @@ export const VectorizeDeleteSuccessSchema = okResponseSchema(
 );
 export type VectorizeDeleteSuccess = typeof VectorizeDeleteSuccessSchema.Type;
 
-/**
- * Vectorize search returns the Cloudflare matches payload as opaque JSON.
- * Tighten when product search routes stabilize.
- */
-export const VectorizeSearchSuccessSchema = okResponseSchema(Schema.Json);
+/** Vectorize matches requested without vector values. Metadata may be absent. */
+export const VectorizeMatchSchema = Schema.Struct({
+  id: Schema.NonEmptyString,
+  score: Schema.Number.check(Schema.isFinite()),
+  namespace: Schema.optionalKey(Schema.String),
+  metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+});
+export type VectorizeMatch = typeof VectorizeMatchSchema.Type;
+
+export const VectorizeSearchResultSchema = Schema.Struct({
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  matches: Schema.Array(VectorizeMatchSchema),
+});
+export type VectorizeSearchResult = typeof VectorizeSearchResultSchema.Type;
+export const VectorizeSearchSuccessSchema = okResponseSchema(
+  VectorizeSearchResultSchema,
+);
 export type VectorizeSearchSuccess = typeof VectorizeSearchSuccessSchema.Type;
 
 export const ApiSuccessSchema = okResponseSchema(Schema.Json);

@@ -1,44 +1,23 @@
 import {
   decodeResponse,
+  PRODUCT_OPERATIONS,
+  productRoutePath,
+  type ProductRoute,
+  type ProductRequest,
+  type ProductResponse,
   ErrorBodySchema,
   SimpleErrorBodySchema,
   type JsonValue,
 } from "@machine-memory/contract";
-import type { Schema } from "effect";
-
-/**
- * Product route paths served by the API worker (mirrors
- * `PRODUCT_ROUTES` in `api/src/product-logic.ts` plus the legacy
- * `list_repositories` underscore alias the API also accepts).
- */
-export const PRODUCT_ROUTES = [
-  "query",
-  "get",
-  "list",
-  "suggest",
-  "add",
-  "update",
-  "delete",
-  "verify",
-  "diff",
-  "size",
-  "list-repositories",
-] as const;
-
-export type ProductRoute = (typeof PRODUCT_ROUTES)[number];
-
-export function productRoutePath(route: ProductRoute): string {
-  return `/product/${route}`;
-}
+export {
+  PRODUCT_ROUTES,
+  productRoutePath,
+  type ProductRoute,
+} from "@machine-memory/contract";
 
 /** Minimal fetch surface over the API worker (service binding at runtime). */
 export type ApiFetcher = {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-};
-
-/** Wire-shaped product request body: MCP-validated tool args (snake_case). */
-export type ProductRequestBody = {
-  readonly [field: string]: string | number | boolean | undefined;
 };
 
 export class ProductApiError extends Error {
@@ -82,14 +61,14 @@ async function readProductBody(response: Response): Promise<JsonValue> {
  * envelope. Throws ProductApiError carrying the HTTP status so callers can
  * map 404s to not-found messages and everything else to tool errors.
  */
-export async function postProduct<S extends Schema.Top>(
+export async function postProduct<R extends ProductRoute>(
   api: ApiFetcher,
   token: string,
-  route: ProductRoute,
-  body: ProductRequestBody,
-  successSchema: S,
-): Promise<S["Type"]> {
+  route: R,
+  body: ProductRequest<NoInfer<R>>,
+): Promise<ProductResponse<R>> {
   const label = `mcp/product/${route}`;
+  const operation = PRODUCT_OPERATIONS[route];
   let response: Response;
   try {
     response = await api.fetch(
@@ -118,12 +97,14 @@ export async function postProduct<S extends Schema.Top>(
       failureMessage(response.status, json),
     );
   }
-  const success = decodeResponse(successSchema, json, label);
+  const success = decodeResponse(operation.response, json, label);
   if (success === undefined) {
     throw new ProductApiError(
       response.status,
       "API product route returned an invalid response.",
     );
   }
-  return success;
+  // SAFETY: TypeScript loses the indexed route/response correlation when decoding the union.
+  // The schema selected above belongs to this exact route.
+  return success as ProductResponse<R>;
 }

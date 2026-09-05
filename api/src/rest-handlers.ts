@@ -1,4 +1,8 @@
-import { RuntimeContext } from "alchemy";
+import {
+  normalizeProductRoute,
+  type ProductRoute,
+} from "@machine-memory/contract";
+import type { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Redacted from "effect/Redacted";
@@ -9,35 +13,27 @@ import type { JsonValue } from "./json";
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
 
-export type RestHandlerFn = (
+export type RestHandlerFn<R = RuntimeContext> = (
   body: JsonValue,
-) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, RuntimeContext>;
+) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, R>;
 
-export type RestHandlers = {
+export type RestHandlers<R = RuntimeContext> = {
   readonly expectedToken: Redacted.Redacted;
-  readonly handleQuery: RestHandlerFn;
-  readonly handleMigration: RestHandlerFn;
-  readonly handleMigrationLinks: RestHandlerFn;
-  readonly handleVectorizeUpsert: RestHandlerFn;
-  readonly handleVectorizeSearch: RestHandlerFn;
-  readonly handleVectorizeDelete: RestHandlerFn;
+  readonly handleQuery: RestHandlerFn<R>;
+  readonly handleMigration: RestHandlerFn<R>;
+  readonly handleMigrationLinks: RestHandlerFn<R>;
+  readonly handleVectorizeUpsert: RestHandlerFn<R>;
+  readonly handleVectorizeSearch: RestHandlerFn<R>;
+  readonly handleVectorizeDelete: RestHandlerFn<R>;
   readonly handleProduct: (
-    route: string,
+    route: ProductRoute,
     body: JsonValue,
-  ) => Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >;
+  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, R>;
 };
 
-function catchInternal(
-  effect: Effect.Effect<
-    HttpServerResponse.HttpServerResponse,
-    unknown,
-    RuntimeContext
-  >,
-): Effect.Effect<HttpServerResponse.HttpServerResponse, never, RuntimeContext> {
+function catchInternal<R>(
+  effect: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, R>,
+): Effect.Effect<HttpServerResponse.HttpServerResponse, never, R> {
   return effect.pipe(
     Effect.catchCause(() =>
       Effect.succeed(
@@ -50,21 +46,6 @@ function catchInternal(
   );
 }
 
-const PRODUCT_ROUTES = new Set([
-  "/product/query",
-  "/product/get",
-  "/product/list",
-  "/product/suggest",
-  "/product/add",
-  "/product/update",
-  "/product/delete",
-  "/product/verify",
-  "/product/diff",
-  "/product/size",
-  "/product/list-repositories",
-  "/product/list_repositories",
-]);
-
 const KNOWN_ROUTES = new Set([
   "/query",
   "/migrate",
@@ -72,13 +53,12 @@ const KNOWN_ROUTES = new Set([
   "/vectorize/upsert",
   "/vectorize/search",
   "/vectorize/delete",
-  ...PRODUCT_ROUTES,
 ]);
 
-export function handleRestRequest(
-  handlers: RestHandlers,
+export function handleRestRequest<R>(
+  handlers: RestHandlers<R>,
   request: HttpServerRequest.HttpServerRequest,
-): Effect.Effect<HttpServerResponse.HttpServerResponse, never, RuntimeContext> {
+): Effect.Effect<HttpServerResponse.HttpServerResponse, never, R> {
   const route = (body: JsonValue) => {
     if (request.url === "/query") {
       return handlers.handleQuery(body);
@@ -98,16 +78,23 @@ export function handleRestRequest(
     if (request.url === "/vectorize/search") {
       return handlers.handleVectorizeSearch(body);
     }
-    if (PRODUCT_ROUTES.has(request.url)) {
-      return handlers.handleProduct(request.url, body);
+    const productRoute = normalizeProductRoute(request.url);
+    if (productRoute !== undefined) {
+      return handlers.handleProduct(productRoute, body);
     }
-    return handlers.handleVectorizeSearch(body);
+    return Effect.succeed(
+      HttpServerResponse.jsonUnsafe({ error: "Not found" }, { status: 404 }),
+    );
   };
 
   const guardedRoute = (body: JsonValue) => catchInternal(route(body));
 
   return Effect.gen(function* () {
-    if (request.method !== "POST" || !KNOWN_ROUTES.has(request.url)) {
+    if (
+      request.method !== "POST" ||
+      (!KNOWN_ROUTES.has(request.url) &&
+        normalizeProductRoute(request.url) === undefined)
+    ) {
       return HttpServerResponse.jsonUnsafe(
         { error: "Not found" },
         { status: 404 },

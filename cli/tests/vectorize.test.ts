@@ -119,12 +119,12 @@ afterEach(() => {
 });
 
 describe("remote Vectorize response parsing", () => {
-  it("normalizes valid match metadata without dropping matches", async () => {
+  it("preserves valid match metadata and defaults absent metadata", async () => {
     stubSearchResponse({
       count: 2,
       matches: [
         { id: "1", score: 0.9, metadata: { tags: "cli" } },
-        { id: "2", score: 0.8, metadata: "invalid" },
+        { id: "2", score: 0.8 },
       ],
     });
 
@@ -146,6 +146,7 @@ describe("remote Vectorize response parsing", () => {
   it.each([
     ["id", { id: 1, score: 0.9 }],
     ["score", { id: "1", score: "0.9" }],
+    ["metadata", { id: "1", score: 0.9, metadata: "invalid" }],
   ] as const)("rejects a match with an invalid %s", async (_field, match) => {
     stubSearchResponse({ count: 1, matches: [match] });
 
@@ -157,7 +158,7 @@ describe("remote Vectorize response parsing", () => {
       ),
     ).rejects.toMatchObject({
       operation: "vectorize/search",
-      message: expect.stringContaining("invalid search match"),
+      message: expect.stringContaining("invalid search result"),
     });
   });
 

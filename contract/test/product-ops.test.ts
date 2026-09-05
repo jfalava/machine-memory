@@ -71,7 +71,9 @@ describe("product ops schemas", () => {
       },
     };
     const encoded = encodeResponse(MemoryQuerySuccessSchema, payload);
-    expect(decodeResponse(MemoryQuerySuccessSchema, encoded, "query")).toEqual(payload);
+    expect(decodeResponse(MemoryQuerySuccessSchema, encoded, "query")).toEqual(
+      payload,
+    );
   });
 
   it("round-trips product list, suggest, verify, and diff envelopes", () => {
@@ -89,6 +91,14 @@ describe("product ops schemas", () => {
             memory_type: "convention" as const,
             status: "active" as const,
             certainty: "inferred" as const,
+            superseded_by: null,
+            source_agent: "agent",
+            last_updated_by: "agent",
+            update_count: 0,
+            refs: [],
+            expires_after_days: null,
+            created_at: null,
+            updated_at: null,
           },
         ],
       },

@@ -7,6 +7,14 @@ import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import {
   composeEmbeddingText,
+  PRODUCT_OPERATIONS,
+  SEARCH_LIMIT_MAX,
+  VectorizeSearchResultSchema,
+  type ProductRoute,
+  type MemoryType,
+  type MemoryStatus,
+  type Certainty,
+  type UpsertMatchInfo,
   decodeRequest,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
@@ -17,27 +25,6 @@ import {
   jsonNumber,
   jsonObject,
   jsonString,
-  ListRepositoriesArgsInputSchema,
-  ListRepositoriesSuccessSchema,
-  MemoryAddArgsInputSchema,
-  MemoryDeleteArgsSchema,
-  MemoryDeleteSuccessSchema,
-  MemoryDiffArgsSchema,
-  MemoryDiffSuccessSchema,
-  MemoryGetArgsSchema,
-  MemoryGetSuccessSchema,
-  MemoryListArgsInputSchema,
-  MemoryListSuccessSchema,
-  MemoryQueryArgsInputSchema,
-  MemoryQuerySuccessSchema,
-  MemorySizeArgsInputSchema,
-  MemorySizeSuccessSchema,
-  MemorySuggestArgsInputSchema,
-  MemorySuggestSuccessSchema,
-  MemoryUpdateArgsSchema,
-  MemoryVerifyArgsSchema,
-  MemoryVerifySuccessSchema,
-  MemoryWriteSuccessSchema,
   MigrationLinksRequestSchema,
   MigrationLinksSuccessSchema,
   MigrationRequestInputSchema,
@@ -64,6 +51,7 @@ import {
   type JsonObject,
   type JsonValue,
   type MigrationRequest,
+  type MigrationItem,
   type QueryRequest,
   type VectorizeSearchRequest,
   type VectorizeUpsertRequest,
@@ -99,7 +87,11 @@ import {
 import { Database } from "../../iac/src/database";
 import { apiName } from "../../iac/src/config";
 import { VectorIndex } from "../../iac/src/vectorize";
-import { handleRestRequest, type RestHandlers } from "./rest-handlers";
+import {
+  handleRestRequest,
+  type RestHandlers,
+  type RestHandlerFn,
+} from "./rest-handlers";
 
 const INTERNAL_ERROR = "Internal server error.";
 const RATE_LIMIT_ERROR = "Too Many Requests";
@@ -192,12 +184,6 @@ function emptyToUndefined(value: string | undefined): string | undefined {
   }
   return value;
 }
-
-type MigrationItem = {
-  readonly source_id: number;
-  readonly target_id: number;
-  readonly status: "inserted" | "duplicate";
-};
 
 type MigrationBatchAccumulator = {
   readonly items: MigrationItem[];
@@ -489,8 +475,9 @@ export default Cloudflare.Worker<{}>()(
           Object.assign(queryOptions, { filter });
         }
         const matches = yield* vectorize.query(values, queryOptions);
-        // VectorizeMatches is a structural CF type; re-enter as JSON for the wire schema.
-        const result = Schema.decodeUnknownSync(Schema.Json)(matches);
+        const result = Schema.decodeUnknownSync(VectorizeSearchResultSchema)(
+          matches,
+        );
         return yield* HttpServerResponse.json(
           encodeResponse(VectorizeSearchSuccessSchema, {
             ok: true,
@@ -600,7 +587,10 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductListRepositories = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(ListRepositoriesArgsInputSchema, body);
+        const input = decodeRequest(
+          PRODUCT_OPERATIONS["list-repositories"].request,
+          body,
+        );
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -611,7 +601,7 @@ export default Cloudflare.Worker<{}>()(
           .map((row) => jsonString(row.repository) ?? "")
           .filter((repo) => repo.length > 0);
         return yield* HttpServerResponse.json(
-          encodeResponse(ListRepositoriesSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["list-repositories"].response, {
             ok: true,
             result: { repositories, count: repositories.length },
           }),
@@ -620,7 +610,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductGet = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryGetArgsSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["get"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -638,13 +628,16 @@ export default Cloudflare.Worker<{}>()(
           );
         }
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryGetSuccessSchema, { ok: true, result: row }),
+          encodeResponse(PRODUCT_OPERATIONS["get"].response, {
+            ok: true,
+            result: row,
+          }),
         );
       });
 
     const handleProductList = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryListArgsInputSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["list"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -662,7 +655,7 @@ export default Cloudflare.Worker<{}>()(
         const rows = yield* sql.unsafe<JsonObject>(query.sql, query.params);
         const results = rows.map(toProductRow);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryListSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["list"].response, {
             ok: true,
             result: { count: results.length, results },
           }),
@@ -671,7 +664,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductSize = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemorySizeArgsInputSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["size"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -687,7 +680,7 @@ export default Cloudflare.Worker<{}>()(
           }),
         );
         return yield* HttpServerResponse.json(
-          encodeResponse(MemorySizeSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["size"].response, {
             ok: true,
             result: { size },
           }),
@@ -696,7 +689,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductVerify = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryVerifyArgsSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["verify"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -709,7 +702,7 @@ export default Cloudflare.Worker<{}>()(
         }
         const result = compareMemoryFact(row.content, input.value.fact);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryVerifySuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["verify"].response, {
             ok: true,
             result: result.conflict
               ? {
@@ -742,7 +735,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductDiff = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryDiffArgsSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["diff"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -755,7 +748,7 @@ export default Cloudflare.Worker<{}>()(
         }
         const result = compareMemoryFact(row.content, input.value.content);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryDiffSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["diff"].response, {
             ok: true,
             result: {
               id: input.value.id,
@@ -770,7 +763,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductDelete = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryDeleteArgsSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["delete"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -784,7 +777,7 @@ export default Cloudflare.Worker<{}>()(
           .run();
         yield* cleanupProductVector(input.value.id);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryDeleteSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["delete"].response, {
             ok: true,
             result: {
               deleted_from: input.value.repository,
@@ -849,18 +842,16 @@ export default Cloudflare.Worker<{}>()(
         if (Object.keys(filter).length > 0) {
           Object.assign(options, { filter });
         }
-        // SAFETY: vectorize.query expects Cloudflare VectorizeQueryOptions; shape matches.
-        const matches = yield* vectorize.query(values, options as never);
-        // SAFETY: Vectorize matches payload is opaque JSON with id/score entries.
-        const list =
-          (matches as { matches?: Array<{ id: string; score: number }> })
-            .matches ?? [];
+        const matches = yield* vectorize.query(values, options);
+        const list = Schema.decodeUnknownSync(VectorizeSearchResultSchema)(
+          matches,
+        ).matches;
         return yield* resolveSemanticRows(repository, list, tags);
       });
 
     const resolveSemanticRows = (
       repository: string,
-      matches: Array<{ id: string; score: number }>,
+      matches: ReadonlyArray<{ id: string; score: number }>,
       tags: string | undefined,
     ) =>
       Effect.gen(function* () {
@@ -899,7 +890,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductQuery = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryQueryArgsInputSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["query"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -941,7 +932,7 @@ export default Cloudflare.Worker<{}>()(
           terms,
         );
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryQuerySuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
             ok: true,
             result: { count: results.length, results },
           }),
@@ -951,7 +942,7 @@ export default Cloudflare.Worker<{}>()(
     const emptyQueryResponse = () =>
       Effect.gen(function* () {
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryQuerySuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
             ok: true,
             result: { count: 0, results: [] },
           }),
@@ -968,7 +959,7 @@ export default Cloudflare.Worker<{}>()(
       tags?: string;
     }) =>
       Effect.gen(function* () {
-        const topK = Math.min(args.limit * 3, 50);
+        const topK = Math.min(args.limit * 3, SEARCH_LIMIT_MAX);
         const results = yield* fetchSemanticScored(
           args.repository,
           args.query,
@@ -982,7 +973,7 @@ export default Cloudflare.Worker<{}>()(
         );
         const sliced = results.slice(0, args.limit);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryQuerySuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
             ok: true,
             result: { count: sliced.length, results: sliced },
           }),
@@ -1038,7 +1029,7 @@ export default Cloudflare.Worker<{}>()(
         }
         const results = [...byId.values()].slice(0, args.limit);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryQuerySuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
             ok: true,
             result: { count: results.length, results },
           }),
@@ -1072,7 +1063,10 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductSuggest = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemorySuggestArgsInputSchema, body);
+        const input = decodeRequest(
+          PRODUCT_OPERATIONS["suggest"].request,
+          body,
+        );
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -1159,7 +1153,7 @@ export default Cloudflare.Worker<{}>()(
           .slice(0, input.limit)
           .map(scoredResultRow);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemorySuggestSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["suggest"].response, {
             ok: true,
             result: {
               files: input.files,
@@ -1209,16 +1203,12 @@ export default Cloudflare.Worker<{}>()(
           .run();
         const id = Number(result.meta.last_row_id);
         const row = yield* fetchProductRow(input.repository, id);
-        const memory = row ?? {
-          id,
-          repository: input.repository,
-          content: input.content,
-          tags: input.tags,
-          context: input.context,
-          memory_type: input.memory_type,
-          status: input.status,
-          certainty: input.certainty,
-        };
+        if (!row) {
+          return yield* Effect.die(
+            new Error(`Inserted memory ${id} could not be read.`),
+          );
+        }
+        const memory = row;
         yield* syncProductVector(memory);
         return { id, row: memory };
       });
@@ -1248,16 +1238,9 @@ export default Cloudflare.Worker<{}>()(
       content: string;
       tags: string;
       context: string;
-      memory_type:
-        | "convention"
-        | "decision"
-        | "gotcha"
-        | "preference"
-        | "constraint"
-        | "reference"
-        | "status";
-      status: "active" | "deprecated" | "superseded_by";
-      certainty: "verified" | "inferred" | "speculative";
+      memory_type: MemoryType;
+      status: MemoryStatus;
+      certainty: Certainty;
       expires_after_days?: number;
     }) =>
       Effect.gen(function* () {
@@ -1294,7 +1277,7 @@ export default Cloudflare.Worker<{}>()(
           inserted.id,
         );
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryWriteSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["add"].response, {
             ok: true,
             result: {
               written_to: args.repository,
@@ -1313,16 +1296,9 @@ export default Cloudflare.Worker<{}>()(
       content: string;
       tags?: string;
       context?: string;
-      memory_type:
-        | "convention"
-        | "decision"
-        | "gotcha"
-        | "preference"
-        | "constraint"
-        | "reference"
-        | "status";
-      status: "active" | "deprecated" | "superseded_by";
-      certainty: "verified" | "inferred" | "speculative";
+      memory_type: MemoryType;
+      status: MemoryStatus;
+      certainty: Certainty;
       expires_after_days?: number;
       force?: boolean;
       upsert_threshold: number;
@@ -1368,28 +1344,14 @@ export default Cloudflare.Worker<{}>()(
       args: {
         repository: string;
         content: string;
-        memory_type:
-          | "convention"
-          | "decision"
-          | "gotcha"
-          | "preference"
-          | "constraint"
-          | "reference"
-          | "status";
-        status: "active" | "deprecated" | "superseded_by";
-        certainty: "verified" | "inferred" | "speculative";
+        memory_type: MemoryType;
+        status: MemoryStatus;
+        certainty: Certainty;
         expires_after_days?: number;
       },
       tags: string,
       context: string,
-      info: {
-        id: number;
-        score: number;
-        similarity: number;
-        memory_type: string;
-        status: string;
-        content_head: string;
-      },
+      info: UpsertMatchInfo,
     ) =>
       Effect.gen(function* () {
         const size = embeddingSizeReport(
@@ -1418,7 +1380,7 @@ export default Cloudflare.Worker<{}>()(
           expires_after_days: args.expires_after_days ?? null,
         });
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryWriteSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["add"].response, {
             ok: true,
             // SAFETY: upsert info carries contract string enums from the matched row.
             result: {
@@ -1438,28 +1400,14 @@ export default Cloudflare.Worker<{}>()(
         content: string;
         tags?: string;
         context?: string;
-        memory_type?:
-          | "convention"
-          | "decision"
-          | "gotcha"
-          | "preference"
-          | "constraint"
-          | "reference"
-          | "status";
-        certainty?: "verified" | "inferred" | "speculative";
+        memory_type?: MemoryType;
+        certainty?: Certainty;
         expires_after_days?: number;
       },
       tags: string,
       context: string,
       best: { row: ReturnType<typeof scoredResultRow>; score: number },
-      info: {
-        id: number;
-        score: number;
-        similarity: number;
-        memory_type: string;
-        status: string;
-        content_head: string;
-      },
+      info: UpsertMatchInfo,
     ) =>
       Effect.gen(function* () {
         const prospective = {
@@ -1485,19 +1433,8 @@ export default Cloudflare.Worker<{}>()(
           expires_after_days: args.expires_after_days,
         });
         if (update === undefined) {
-          return yield* HttpServerResponse.json(
-            encodeResponse(MemoryWriteSuccessSchema, {
-              ok: true,
-              // SAFETY: upsert info carries contract string enums from the matched row.
-              result: {
-                mode: "updated",
-                written_to: args.repository,
-                id: best.row.id,
-                memory: best.row,
-                size,
-                upsert_match: info,
-              },
-            }),
+          return yield* Effect.die(
+            new Error("Upsert requires content to update."),
           );
         }
         yield* d1
@@ -1506,13 +1443,17 @@ export default Cloudflare.Worker<{}>()(
           )
           .bind(...update.params, args.repository, best.row.id)
           .run();
-        const row =
-          (yield* fetchProductRow(args.repository, best.row.id)) ?? best.row;
+        const row = yield* fetchProductRow(args.repository, best.row.id);
+        if (!row) {
+          return yield* Effect.die(
+            new Error(`Updated memory ${best.row.id} could not be read.`),
+          );
+        }
         void tags;
         void context;
         yield* syncProductVector(row);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryWriteSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["add"].response, {
             ok: true,
             // SAFETY: upsert info carries contract string enums from the matched row.
             result: {
@@ -1529,7 +1470,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductAdd = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryAddArgsInputSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["add"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -1560,7 +1501,7 @@ export default Cloudflare.Worker<{}>()(
 
     const handleProductUpdate = (body: JsonValue) =>
       Effect.gen(function* () {
-        const input = decodeRequest(MemoryUpdateArgsSchema, body);
+        const input = decodeRequest(PRODUCT_OPERATIONS["update"].request, body);
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
@@ -1634,14 +1575,7 @@ export default Cloudflare.Worker<{}>()(
       targetId: number,
       fields: {
         superseded_by?: number;
-        memory_type?:
-          | "convention"
-          | "decision"
-          | "gotcha"
-          | "preference"
-          | "constraint"
-          | "reference"
-          | "status";
+        memory_type?: MemoryType;
         expires_after_days?: number;
       },
     ): string | undefined => {
@@ -1667,16 +1601,9 @@ export default Cloudflare.Worker<{}>()(
         content?: string;
         tags?: string;
         context?: string;
-        memory_type?:
-          | "convention"
-          | "decision"
-          | "gotcha"
-          | "preference"
-          | "constraint"
-          | "reference"
-          | "status";
-        certainty?: "verified" | "inferred" | "speculative";
-        status?: "active" | "deprecated" | "superseded_by";
+        memory_type?: MemoryType;
+        certainty?: Certainty;
+        status?: MemoryStatus;
       },
     ) =>
       embeddingTextForMemory({
@@ -1695,16 +1622,9 @@ export default Cloudflare.Worker<{}>()(
         content?: string;
         tags?: string;
         context?: string;
-        memory_type?:
-          | "convention"
-          | "decision"
-          | "gotcha"
-          | "preference"
-          | "constraint"
-          | "reference"
-          | "status";
-        certainty?: "verified" | "inferred" | "speculative";
-        status?: "active" | "deprecated" | "superseded_by";
+        memory_type?: MemoryType;
+        certainty?: Certainty;
+        status?: MemoryStatus;
         expires_after_days?: number;
         superseded_by?: number;
       },
@@ -1750,16 +1670,9 @@ export default Cloudflare.Worker<{}>()(
         content?: string;
         tags?: string;
         context?: string;
-        memory_type?:
-          | "convention"
-          | "decision"
-          | "gotcha"
-          | "preference"
-          | "constraint"
-          | "reference"
-          | "status";
-        certainty?: "verified" | "inferred" | "speculative";
-        status?: "active" | "deprecated" | "superseded_by";
+        memory_type?: MemoryType;
+        certainty?: Certainty;
+        status?: MemoryStatus;
         expires_after_days?: number;
         superseded_by?: number;
       },
@@ -1772,7 +1685,7 @@ export default Cloudflare.Worker<{}>()(
         const update = updateSets(fields);
         if (update === undefined) {
           return yield* HttpServerResponse.json(
-            encodeResponse(MemoryWriteSuccessSchema, {
+            encodeResponse(PRODUCT_OPERATIONS["update"].response, {
               ok: true,
               result: {
                 written_to: repository,
@@ -1790,10 +1703,15 @@ export default Cloudflare.Worker<{}>()(
           )
           .bind(...update.params, repository, targetId)
           .run();
-        const row = (yield* fetchProductRow(repository, targetId)) ?? existing;
+        const row = yield* fetchProductRow(repository, targetId);
+        if (!row) {
+          return yield* Effect.die(
+            new Error(`Updated memory ${targetId} could not be read.`),
+          );
+        }
         yield* syncProductVector(row);
         return yield* HttpServerResponse.json(
-          encodeResponse(MemoryWriteSuccessSchema, {
+          encodeResponse(PRODUCT_OPERATIONS["update"].response, {
             ok: true,
             result: {
               written_to: repository,
@@ -1806,44 +1724,21 @@ export default Cloudflare.Worker<{}>()(
         );
       });
 
-    // oxlint-disable-next-line max-statements -- product route dispatcher maps 11 operations
-    const handleProduct = (route: string, body: JsonValue) => {
-      const normalized =
-        route === "/product/list_repositories"
-          ? "/product/list-repositories"
-          : route;
-      if (normalized === "/product/query") {
-        return handleProductQuery(body);
-      }
-      if (normalized === "/product/get") {
-        return handleProductGet(body);
-      }
-      if (normalized === "/product/list") {
-        return handleProductList(body);
-      }
-      if (normalized === "/product/suggest") {
-        return handleProductSuggest(body);
-      }
-      if (normalized === "/product/add") {
-        return handleProductAdd(body);
-      }
-      if (normalized === "/product/update") {
-        return handleProductUpdate(body);
-      }
-      if (normalized === "/product/delete") {
-        return handleProductDelete(body);
-      }
-      if (normalized === "/product/verify") {
-        return handleProductVerify(body);
-      }
-      if (normalized === "/product/diff") {
-        return handleProductDiff(body);
-      }
-      if (normalized === "/product/size") {
-        return handleProductSize(body);
-      }
-      return handleProductListRepositories(body);
-    };
+    const productHandlers = {
+      query: handleProductQuery,
+      get: handleProductGet,
+      list: handleProductList,
+      suggest: handleProductSuggest,
+      add: handleProductAdd,
+      update: handleProductUpdate,
+      delete: handleProductDelete,
+      verify: handleProductVerify,
+      diff: handleProductDiff,
+      size: handleProductSize,
+      "list-repositories": handleProductListRepositories,
+    } satisfies Record<ProductRoute, RestHandlerFn>;
+    const handleProduct = (route: ProductRoute, body: JsonValue) =>
+      productHandlers[route](body);
 
     const restHandlers = {
       expectedToken,

@@ -2,7 +2,12 @@ import { Schema } from "effect";
 
 import { okResponseSchema } from "../api/responses";
 import { EmbeddingSizeReportSchema } from "../embedding";
-import { MemoryRowSchema } from "../entities";
+import {
+  MemoryRowSchema,
+  MemorySummarySchema,
+  MemoryTypeSchema,
+  MemoryStatusSchema,
+} from "../entities";
 
 export const FactCheckResultSchema = Schema.Struct({
   similarity: Schema.Number,
@@ -13,7 +18,7 @@ export const FactCheckResultSchema = Schema.Struct({
 export type FactCheckResult = typeof FactCheckResultSchema.Type;
 
 export const ScoredMemoryRowSchema = Schema.Struct({
-  ...MemoryRowSchema.fields,
+  ...MemorySummarySchema.fields,
   score: Schema.Number,
 });
 export type ScoredMemoryRow = typeof ScoredMemoryRowSchema.Type;
@@ -22,8 +27,8 @@ export const UpsertMatchInfoSchema = Schema.Struct({
   id: Schema.Number,
   score: Schema.Number,
   similarity: Schema.Number,
-  memory_type: Schema.String,
-  status: Schema.String,
+  memory_type: MemoryTypeSchema,
+  status: MemoryStatusSchema,
   content_head: Schema.String,
 });
 export type UpsertMatchInfo = typeof UpsertMatchInfoSchema.Type;
@@ -52,13 +57,11 @@ export const ListRepositoriesResultSchema = Schema.Struct({
   repositories: Schema.Array(Schema.String),
   count: Schema.Number,
 });
-export type ListRepositoriesResult =
-  typeof ListRepositoriesResultSchema.Type;
+export type ListRepositoriesResult = typeof ListRepositoriesResultSchema.Type;
 export const ListRepositoriesSuccessSchema = okResponseSchema(
   ListRepositoriesResultSchema,
 );
-export type ListRepositoriesSuccess =
-  typeof ListRepositoriesSuccessSchema.Type;
+export type ListRepositoriesSuccess = typeof ListRepositoriesSuccessSchema.Type;
 
 export const MemoryGetSuccessSchema = okResponseSchema(MemoryRowSchema);
 export type MemoryGetSuccess = typeof MemoryGetSuccessSchema.Type;
@@ -68,9 +71,7 @@ export const MemoryListResultSchema = Schema.Struct({
   results: Schema.Array(MemoryRowSchema),
 });
 export type MemoryListResult = typeof MemoryListResultSchema.Type;
-export const MemoryListSuccessSchema = okResponseSchema(
-  MemoryListResultSchema,
-);
+export const MemoryListSuccessSchema = okResponseSchema(MemoryListResultSchema);
 export type MemoryListSuccess = typeof MemoryListSuccessSchema.Type;
 
 export const MemoryQueryResultSchema = Schema.Struct({
@@ -121,18 +122,14 @@ export const MemoryDiffResultSchema = Schema.Struct({
   removed_terms: Schema.Array(Schema.String),
 });
 export type MemoryDiffResult = typeof MemoryDiffResultSchema.Type;
-export const MemoryDiffSuccessSchema = okResponseSchema(
-  MemoryDiffResultSchema,
-);
+export const MemoryDiffSuccessSchema = okResponseSchema(MemoryDiffResultSchema);
 export type MemoryDiffSuccess = typeof MemoryDiffSuccessSchema.Type;
 
 export const MemorySizeResultSchema = Schema.Struct({
   size: EmbeddingSizeReportSchema,
 });
 export type MemorySizeResult = typeof MemorySizeResultSchema.Type;
-export const MemorySizeSuccessSchema = okResponseSchema(
-  MemorySizeResultSchema,
-);
+export const MemorySizeSuccessSchema = okResponseSchema(MemorySizeResultSchema);
 export type MemorySizeSuccess = typeof MemorySizeSuccessSchema.Type;
 
 export const MemoryDeleteResultSchema = Schema.Struct({
