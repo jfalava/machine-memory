@@ -8,7 +8,7 @@ import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
 
 const nimbusConfig = defineNimbusConfig({
   site: "https://machine-memory.jfa.dev",
-  title: "MACHINE-MEMORY",
+  title: "MACHINE-MEMORY by JFA",
   description:
     "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context so future agent sessions can recall them.",
   locale: "en",
