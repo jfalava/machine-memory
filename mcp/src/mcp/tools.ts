@@ -6,23 +6,33 @@ import {
   listRepositoriesInput,
   memoryAddInput,
   memoryDeleteInput,
+  memoryDeleteManyInput,
+  memoryDeprecateInput,
+  memoryDoctorInput,
   memoryDiffInput,
+  memoryGcInput,
   memoryGetInput,
   memoryListInput,
   memoryQueryInput,
   memorySizeInput,
   memorySuggestInput,
+  memoryStatsInput,
   memoryUpdateInput,
   memoryVerifyInput,
   type ListRepositoriesArgs,
   type MemoryAddArgs,
   type MemoryDeleteArgs,
+  type MemoryDeleteManyArgs,
+  type MemoryDeprecateArgs,
+  type MemoryDoctorArgs,
   type MemoryDiffArgs,
+  type MemoryGcArgs,
   type MemoryGetArgs,
   type MemoryListArgs,
   type MemoryQueryArgs,
   type MemorySizeArgs,
   type MemorySuggestArgs,
+  type MemoryStatsArgs,
   type MemoryUpdateArgs,
   type MemoryVerifyArgs,
 } from "./tool-schemas";
@@ -68,15 +78,16 @@ export function createMemoryServer(
     "list_repositories",
     {
       description:
-        "List all repository slugs (owner/name) that have at least one memory stored. Call this before any mutating tool (memory_add, memory_update, memory_delete) when you are not certain which repository slug to use. Reads (memory_query, memory_list, memory_get) can proceed loosely — a wrong slug returns empty results and nothing is lost. Writes against a wrong slug corrupt data, so always confirm the slug first.",
+        "List repository slugs (owner/name) with total, active, deprecated, and superseded counts. The response includes pagination metadata; use offset while has_more is true. Call this before any mutating tool when you are not certain which repository slug to use. Reads can proceed loosely — a wrong slug returns empty results and nothing is lost. Writes against a wrong slug corrupt data, so always confirm the slug first.",
       inputSchema: listRepositoriesInput,
     },
     async (args: ListRepositoriesArgs) => {
       try {
         const success = await postProduct(api, apiToken, "list-repositories", {
           limit: args.limit,
+          offset: args.offset,
         });
-        return textResult(success.result.repositories);
+        return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -121,13 +132,64 @@ export function createMemoryServer(
     "memory_list",
     {
       description:
-        "List memories for a repository, optionally filtered by status, memory type, or certainty. This is a read-only tool — a wrong repository slug returns an empty list; nothing is lost.",
+        "List memories for a repository, optionally filtered by status, memory type, certainty, or tags. The response includes total_count and has_more; increase offset until has_more is false to inspect every match. This is a read-only tool — a wrong repository slug returns an empty list; nothing is lost.",
       inputSchema: memoryListInput,
     },
     async (args: MemoryListArgs) => {
       try {
         const success = await postProduct(api, apiToken, "list", args);
-        return textResult(success.result.results);
+        return textResult([success.result]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_doctor",
+    {
+      description:
+        "Audit active memories in one repository for exact and near duplicates, stale status overlap, canonical-topic overlap, missing status expiry, type-boundary problems, tag taxonomy issues, and malformed refs. This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
+      inputSchema: memoryDoctorInput,
+    },
+    async (args: MemoryDoctorArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "doctor", args);
+        return textResult([success.result]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_stats",
+    {
+      description:
+        "Summarize one repository's memory health and distribution: status, type, certainty, tags, oldest record, stale records, and untagged records. This is read-only; a wrong repository slug returns zero counts.",
+      inputSchema: memoryStatsInput,
+    },
+    async (args: MemoryStatsArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "stats", args);
+        return textResult([success.result]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_gc",
+    {
+      description:
+        "Preview active status memories whose expires_after_days window has elapsed. This is always a read-only dry run: it returns expired rows and ids but never mutates them. Review the result, then explicitly deprecate or delete selected ids.",
+      inputSchema: memoryGcInput,
+    },
+    async (args: MemoryGcArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "gc", args);
+        return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -218,6 +280,22 @@ export function createMemoryServer(
   );
 
   server.registerTool(
+    "memory_deprecate",
+    {
+      description: `⚠️ WRITE OPERATION — marks one to 100 explicit ids deprecated, or superseded_by when a canonical replacement id is supplied. There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} This preserves audit history and re-syncs each changed vector. Prefer this over permanent deletion for obsolete or replaced memories.`,
+      inputSchema: memoryDeprecateInput,
+    },
+    async (args: MemoryDeprecateArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "deprecate", args);
+        return textResult([success.result]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
     "memory_size",
     {
       description:
@@ -254,6 +332,22 @@ export function createMemoryServer(
     async (args: MemoryDeleteArgs) => {
       try {
         const success = await postProduct(api, apiToken, "delete", args);
+        return textResult([success.result]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_delete_many",
+    {
+      description: `⚠️ WRITE OPERATION — bulk deletion is permanent. Deletes one to 100 explicit ids from exactly one repository; there is no default and repository is always required. Call list_repositories first if unsure.${ownerHint} The response echoes deleted_from, deleted_ids, and not_found. Also removes vector embeddings. Prefer memory_deprecate when audit history should remain.`,
+      inputSchema: memoryDeleteManyInput,
+    },
+    async (args: MemoryDeleteManyArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "delete-many", args);
         return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);

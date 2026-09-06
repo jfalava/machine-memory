@@ -5,13 +5,17 @@ import {
   decodeResponse,
   encodeResponse,
   MemoryAddArgsInputSchema,
+  MemoryDeleteManyArgsSchema,
+  MemoryDeprecateArgsSchema,
   MemoryDiffSuccessSchema,
+  MemoryListArgsInputSchema,
   MemoryListSuccessSchema,
   MemoryQueryArgsInputSchema,
   MemoryQuerySuccessSchema,
   MemorySuggestSuccessSchema,
   MemoryVerifySuccessSchema,
   normalizeMemoryAddArgs,
+  normalizeMemoryListArgs,
   normalizeMemoryQueryArgs,
   SEARCH_LIMIT_MAX,
 } from "../src/index";
@@ -50,6 +54,30 @@ describe("product ops schemas", () => {
     }
   });
 
+  it("normalizes list offsets and bounds explicit bulk ids", () => {
+    const list = decodeRequest(MemoryListArgsInputSchema, {
+      repository: "owner/name",
+      offset: 50,
+    });
+    expect(list.ok).toBe(true);
+    if (list.ok) {
+      expect(normalizeMemoryListArgs(list.value).offset).toBe(50);
+    }
+    expect(
+      decodeRequest(MemoryDeleteManyArgsSchema, {
+        repository: "owner/name",
+        ids: [],
+      }).ok,
+    ).toBe(false);
+    expect(
+      decodeRequest(MemoryDeprecateArgsSchema, {
+        repository: "owner/name",
+        ids: [1, 2],
+        superseded_by: 3,
+      }).ok,
+    ).toBe(true);
+  });
+
   it("round-trips product query success envelopes", () => {
     const payload = {
       ok: true as const,
@@ -81,6 +109,10 @@ describe("product ops schemas", () => {
       ok: true as const,
       result: {
         count: 1,
+        total_count: 3,
+        offset: 1,
+        limit: 1,
+        has_more: true,
         results: [
           {
             id: 1,

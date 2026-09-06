@@ -46,12 +46,17 @@ describe("init templates", () => {
       "memory_query",
       "memory_get",
       "memory_list",
+      "memory_doctor",
+      "memory_stats",
+      "memory_gc",
       "memory_verify",
       "memory_diff",
       "memory_size",
       "memory_add",
       "memory_update",
+      "memory_deprecate",
       "memory_delete",
+      "memory_delete_many",
     ]) {
       expect(content).toContain(tool);
     }

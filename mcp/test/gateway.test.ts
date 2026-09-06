@@ -156,10 +156,24 @@ describe("mcp gateway to api product routes", () => {
     });
     const { tools } = await client.listTools();
     expect(tools).toHaveLength(Object.keys(PRODUCT_OPERATIONS).length);
+    expect(tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining([
+        "memory_doctor",
+        "memory_stats",
+        "memory_gc",
+        "memory_deprecate",
+        "memory_delete_many",
+      ]),
+    );
+    expect(tools.map((tool) => tool.name)).not.toEqual(
+      expect.arrayContaining(["memory_migrate", "memory_import"]),
+    );
     const get = tools.find((tool) => tool.name === "memory_get");
     expect(JSON.stringify(get?.inputSchema)).toContain("64 UTF-8 bytes");
     const add = tools.find((tool) => tool.name === "memory_add");
     expect(JSON.stringify(add?.inputSchema)).toContain("weak match refuses");
+    const deleteMany = tools.find((tool) => tool.name === "memory_delete_many");
+    expect(deleteMany?.description).toContain("deletion is permanent");
   });
 
   test("the route selects its response schema and rejects a different operation result", async () => {
@@ -339,14 +353,24 @@ describe("mcp gateway to api product routes", () => {
     expect(JSON.parse(firstText(result))).toEqual([write]);
   });
 
-  test("list_repositories unwraps the repository array", async () => {
+  test("list_repositories returns counts and pagination metadata", async () => {
     const seen: SeenCall[] = [];
+    const repositoryPage = {
+      repositories: [
+        { slug: "o/r", total: 9, active: 5, deprecated: 2, superseded: 2 },
+      ],
+      count: 1,
+      total_count: 3,
+      offset: 1,
+      limit: 1,
+      has_more: true,
+    };
     const client = await linkedClient({
       api: stubApi(
         {
           "/product/list-repositories": {
             status: 200,
-            body: { ok: true, result: { repositories: ["o/r"], count: 1 } },
+            body: { ok: true, result: repositoryPage },
           },
         },
         seen,
@@ -355,10 +379,166 @@ describe("mcp gateway to api product routes", () => {
     });
     const result = await client.callTool({
       name: "list_repositories",
-      arguments: {},
+      arguments: { limit: 1, offset: 1 },
     });
     expect(result.isError).toBeFalsy();
-    expect(JSON.parse(firstText(result))).toEqual(["o/r"]);
+    expect(JSON.parse(firstText(result))).toEqual([repositoryPage]);
+    expect(seen[0]?.body).toEqual({ limit: 1, offset: 1 });
+  });
+
+  test("memory_list exposes total_count and has_more", async () => {
+    const seen: SeenCall[] = [];
+    const page = {
+      count: 1,
+      total_count: 53,
+      offset: 50,
+      limit: 1,
+      has_more: true,
+      results: [FULL_ROW],
+    };
+    const client = await linkedClient({
+      api: stubApi(
+        { "/product/list": { status: 200, body: { ok: true, result: page } } },
+        seen,
+      ),
+      apiToken: "test-token",
+    });
+    const result = await client.callTool({
+      name: "memory_list",
+      arguments: { repository: "o/r", limit: 1, offset: 50 },
+    });
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(firstText(result))).toEqual([page]);
+    expect(seen[0]?.body).toMatchObject({ limit: 1, offset: 50 });
+  });
+
+  test.each([
+    [
+      "memory_doctor",
+      "/product/doctor",
+      {
+        repository: "o/r",
+        checked: 2,
+        count: 1,
+        findings: [
+          {
+            kind: "exact_duplicate",
+            ids: [7, 8],
+            details: { keep_id: 7, duplicate_ids: [8] },
+          },
+        ],
+        counts_by_kind: { exact_duplicate: 1 },
+      },
+    ],
+    [
+      "memory_stats",
+      "/product/stats",
+      {
+        repository: "o/r",
+        total_memories: 2,
+        active: 1,
+        deprecated: 1,
+        superseded: 0,
+        breakdown_by_memory_type: { decision: 2 },
+        breakdown_by_certainty: { verified: 2 },
+        tag_frequency_map: { "area:docs": 2 },
+        oldest_memory: { id: 7, created_at: FULL_ROW.created_at },
+        memories_not_updated_over_90_days: 0,
+        memories_with_no_tags: 0,
+      },
+    ],
+    [
+      "memory_gc",
+      "/product/gc",
+      {
+        repository: "o/r",
+        dry_run: true,
+        count: 1,
+        ids: [7],
+        expired: [FULL_ROW],
+      },
+    ],
+  ] as const)(
+    "%s unwraps its maintenance result",
+    async (name, path, maintenanceResult) => {
+      const seen: SeenCall[] = [];
+      const client = await linkedClient({
+        api: stubApi(
+          {
+            [path]: {
+              status: 200,
+              body: { ok: true, result: maintenanceResult },
+            },
+          },
+          seen,
+        ),
+        apiToken: "test-token",
+      });
+      const result = await client.callTool({
+        name,
+        arguments: { repository: "o/r" },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(firstText(result))).toEqual([maintenanceResult]);
+      expect(seen[0]?.url).toContain(path);
+    },
+  );
+
+  test("memory_deprecate preserves history and memory_delete_many reports every id", async () => {
+    const seen: SeenCall[] = [];
+    const deprecatedRow = {
+      ...FULL_ROW,
+      status: "superseded_by",
+      superseded_by: 12,
+    };
+    const deprecateResult = {
+      written_to: "o/r",
+      status: "superseded_by",
+      superseded_by: 12,
+      requested_ids: [7, 99],
+      deprecated: [deprecatedRow],
+      not_found: [99],
+      count: 1,
+    };
+    const deleteResult = {
+      deleted_from: "o/r",
+      requested_ids: [7, 99],
+      deleted_ids: [7],
+      not_found: [99],
+      count: 1,
+    };
+    const client = await linkedClient({
+      api: stubApi(
+        {
+          "/product/deprecate": {
+            status: 200,
+            body: { ok: true, result: deprecateResult },
+          },
+          "/product/delete-many": {
+            status: 200,
+            body: { ok: true, result: deleteResult },
+          },
+        },
+        seen,
+      ),
+      apiToken: "test-token",
+    });
+    const deprecate = await client.callTool({
+      name: "memory_deprecate",
+      arguments: { repository: "o/r", ids: [7, 99], superseded_by: 12 },
+    });
+    const remove = await client.callTool({
+      name: "memory_delete_many",
+      arguments: { repository: "o/r", ids: [7, 99] },
+    });
+    expect(deprecate.isError).toBeFalsy();
+    expect(remove.isError).toBeFalsy();
+    expect(JSON.parse(firstText(deprecate))).toEqual([deprecateResult]);
+    expect(JSON.parse(firstText(remove))).toEqual([deleteResult]);
+    expect(seen.map((call) => call.body)).toEqual([
+      { repository: "o/r", ids: [7, 99], superseded_by: 12 },
+      { repository: "o/r", ids: [7, 99] },
+    ]);
   });
 
   test("bearer-shaped 401 without ok flag maps to a tool error", async () => {

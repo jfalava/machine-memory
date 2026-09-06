@@ -40,6 +40,14 @@ const optionalString = Schema.optionalKey(Schema.String);
 const optionalBoolean = Schema.optionalKey(Schema.Boolean);
 const positiveInt = Schema.Int.check(Schema.isGreaterThan(0));
 const memoryId = positiveInt.annotateKey({ description: "Numeric memory id." });
+const offset = Schema.optionalKey(
+  Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+).annotateKey({
+  description: "Number of matching rows to skip; defaults to 0.",
+});
+const memoryIds = Schema.Array(memoryId)
+  .check(Schema.isMinLength(1), Schema.isMaxLength(100))
+  .annotateKey({ description: "One to 100 explicit numeric memory ids." });
 
 const filterFields = {
   status: Schema.optionalKey(MemoryStatusSchema),
@@ -52,14 +60,21 @@ const filterFields = {
 
 export const ListRepositoriesArgsInputSchema = Schema.Struct({
   limit: searchLimit,
+  offset,
 });
 export type ListRepositoriesArgsInput =
   typeof ListRepositoriesArgsInputSchema.Type;
-export type ListRepositoriesArgs = { readonly limit: number };
+export type ListRepositoriesArgs = {
+  readonly limit: number;
+  readonly offset: number;
+};
 export function normalizeListRepositoriesArgs(
   input: ListRepositoriesArgsInput,
 ): ListRepositoriesArgs {
-  return { limit: normalizeSearchLimit(input.limit) };
+  return {
+    limit: normalizeSearchLimit(input.limit),
+    offset: input.offset ?? 0,
+  };
 }
 
 export const MemoryQueryArgsInputSchema = Schema.Struct({
@@ -108,12 +123,14 @@ export type MemoryGetArgs = typeof MemoryGetArgsSchema.Type;
 export const MemoryListArgsInputSchema = Schema.Struct({
   repository: RepositorySchema,
   limit: searchLimit,
+  offset,
   ...filterFields,
 });
 export type MemoryListArgsInput = typeof MemoryListArgsInputSchema.Type;
 export type MemoryListArgs = {
   readonly repository: string;
   readonly limit: number;
+  readonly offset: number;
   readonly status?: MemoryStatus;
   readonly memory_type?: MemoryType;
   readonly certainty?: Certainty;
@@ -125,6 +142,7 @@ export function normalizeMemoryListArgs(
   return {
     repository: input.repository,
     limit: normalizeSearchLimit(input.limit),
+    offset: input.offset ?? 0,
     status: input.status,
     memory_type: input.memory_type,
     certainty: input.certainty,
@@ -317,6 +335,37 @@ export const MemoryDeleteArgsSchema = Schema.Struct({
   id: memoryId,
 });
 export type MemoryDeleteArgs = typeof MemoryDeleteArgsSchema.Type;
+
+export const MemoryDeleteManyArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  ids: memoryIds,
+});
+export type MemoryDeleteManyArgs = typeof MemoryDeleteManyArgsSchema.Type;
+
+export const MemoryDeprecateArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  ids: memoryIds,
+  superseded_by: Schema.optionalKey(memoryId).annotateKey({
+    description:
+      "Id of the canonical memory replacing every target. Omit to mark targets deprecated without a replacement.",
+  }),
+});
+export type MemoryDeprecateArgs = typeof MemoryDeprecateArgsSchema.Type;
+
+export const MemoryDoctorArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+});
+export type MemoryDoctorArgs = typeof MemoryDoctorArgsSchema.Type;
+
+export const MemoryStatsArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+});
+export type MemoryStatsArgs = typeof MemoryStatsArgsSchema.Type;
+
+export const MemoryGcArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+});
+export type MemoryGcArgs = typeof MemoryGcArgsSchema.Type;
 
 /** Aliases for the catalog entrypoints. */
 export const ListRepositoriesArgsSchema = ListRepositoriesArgsInputSchema;

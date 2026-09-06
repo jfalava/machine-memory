@@ -6,5 +6,5 @@ export default defineConfig({
   experimentalSortPackageJson: {
     sortScripts: true,
   },
-  ignorePatterns: ["node_modules/**"],
+  ignorePatterns: [],
 });

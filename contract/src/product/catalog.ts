@@ -6,6 +6,11 @@ import {
   MemoryAddArgsInputSchema,
   MemoryUpdateArgsSchema,
   MemoryDeleteArgsSchema,
+  MemoryDeleteManyArgsSchema,
+  MemoryDeprecateArgsSchema,
+  MemoryDoctorArgsSchema,
+  MemoryStatsArgsSchema,
+  MemoryGcArgsSchema,
   MemoryVerifyArgsSchema,
   MemoryDiffArgsSchema,
   MemorySizeArgsInputSchema,
@@ -18,6 +23,11 @@ import {
   MemorySuggestSuccessSchema,
   MemoryWriteSuccessSchema,
   MemoryDeleteSuccessSchema,
+  MemoryDeleteManySuccessSchema,
+  MemoryDeprecateSuccessSchema,
+  MemoryDoctorSuccessSchema,
+  MemoryStatsSuccessSchema,
+  MemoryGcSuccessSchema,
   MemoryVerifySuccessSchema,
   MemoryDiffSuccessSchema,
   MemorySizeSuccessSchema,
@@ -50,6 +60,26 @@ export const PRODUCT_OPERATIONS = {
   delete: {
     request: MemoryDeleteArgsSchema,
     response: MemoryDeleteSuccessSchema,
+  },
+  "delete-many": {
+    request: MemoryDeleteManyArgsSchema,
+    response: MemoryDeleteManySuccessSchema,
+  },
+  deprecate: {
+    request: MemoryDeprecateArgsSchema,
+    response: MemoryDeprecateSuccessSchema,
+  },
+  doctor: {
+    request: MemoryDoctorArgsSchema,
+    response: MemoryDoctorSuccessSchema,
+  },
+  stats: {
+    request: MemoryStatsArgsSchema,
+    response: MemoryStatsSuccessSchema,
+  },
+  gc: {
+    request: MemoryGcArgsSchema,
+    response: MemoryGcSuccessSchema,
   },
   verify: {
     request: MemoryVerifyArgsSchema,

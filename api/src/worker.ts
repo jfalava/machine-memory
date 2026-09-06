@@ -11,6 +11,7 @@ import {
   SEARCH_LIMIT_MAX,
   VectorizeSearchResultSchema,
   type ProductRoute,
+  type MemoryRow,
   type MemoryType,
   type MemoryStatus,
   type Certainty,
@@ -58,6 +59,7 @@ import {
 } from "@machine-memory/contract";
 import {
   buildFtsQuery,
+  analyzeMemoryDoctor,
   compareMemoryFact,
   contentHead,
   deriveFileNeighborhood,
@@ -67,18 +69,21 @@ import {
   parseSuggestFilesParam,
   scoredResultRow,
   scoreMemoryRows,
+  summarizeMemoryStats,
   toProductRow,
   toRankedRow,
   uniqueLowerPreserveOrder,
   UPSERT_MIN_SIMILARITY,
 } from "./product-logic";
 import {
-  distinctRepositoriesSelect,
   ftsSelect,
   INSERT_SQL,
   insertParams,
+  listCountSelect,
   listSelect,
   neighborhoodSelect,
+  REPOSITORY_COUNT_SQL,
+  repositoryStatsSelect,
   rowByIdSelect,
   updateSets,
   vectorFilter,
@@ -595,15 +600,36 @@ export default Cloudflare.Worker<{}>()(
           return yield* badRequest(input.error);
         }
         const args = normalizeListRepositoriesArgs(input.value);
-        const query = distinctRepositoriesSelect(args.limit);
+        const query = repositoryStatsSelect(args.limit, args.offset);
         const rows = yield* sql.unsafe<JsonObject>(query.sql, query.params);
-        const repositories = rows
-          .map((row) => jsonString(row.repository) ?? "")
-          .filter((repo) => repo.length > 0);
+        const countRows = yield* sql.unsafe<JsonObject>(REPOSITORY_COUNT_SQL);
+        const totalCount = jsonNumber(countRows[0]?.total_count) ?? 0;
+        const repositories = rows.flatMap((row) => {
+          const slug = jsonString(row.repository);
+          if (!slug) {
+            return [];
+          }
+          return [
+            {
+              slug,
+              total: jsonNumber(row.total) ?? 0,
+              active: jsonNumber(row.active) ?? 0,
+              deprecated: jsonNumber(row.deprecated) ?? 0,
+              superseded: jsonNumber(row.superseded) ?? 0,
+            },
+          ];
+        });
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["list-repositories"].response, {
             ok: true,
-            result: { repositories, count: repositories.length },
+            result: {
+              repositories,
+              count: repositories.length,
+              total_count: totalCount,
+              offset: args.offset,
+              limit: args.limit,
+              has_more: args.offset + repositories.length < totalCount,
+            },
           }),
         );
       });
@@ -642,22 +668,103 @@ export default Cloudflare.Worker<{}>()(
           return yield* badRequest(input.error);
         }
         const args = normalizeMemoryListArgs(input.value);
+        const filters = {
+          status: args.status,
+          memory_type: args.memory_type,
+          certainty: args.certainty,
+          tags: args.tags,
+        };
         const query = listSelect(
           args.repository,
-          {
-            status: args.status,
-            memory_type: args.memory_type,
-            certainty: args.certainty,
-            tags: args.tags,
-          },
+          filters,
           args.limit,
+          args.offset,
         );
         const rows = yield* sql.unsafe<JsonObject>(query.sql, query.params);
+        const countQuery = listCountSelect(args.repository, filters);
+        const countRows = yield* sql.unsafe<JsonObject>(
+          countQuery.sql,
+          countQuery.params,
+        );
+        const totalCount = jsonNumber(countRows[0]?.total_count) ?? 0;
         const results = rows.map(toProductRow);
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["list"].response, {
             ok: true,
-            result: { count: results.length, results },
+            result: {
+              count: results.length,
+              total_count: totalCount,
+              offset: args.offset,
+              limit: args.limit,
+              has_more: args.offset + results.length < totalCount,
+              results,
+            },
+          }),
+        );
+      });
+
+    const handleProductDoctor = (body: JsonValue) =>
+      Effect.gen(function* () {
+        const input = decodeRequest(PRODUCT_OPERATIONS.doctor.request, body);
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const rows = yield* sql.unsafe<JsonObject>(
+          `SELECT * FROM memories WHERE repository = ? AND status = 'active' ORDER BY updated_at DESC, id DESC`,
+          [input.value.repository],
+        );
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS.doctor.response, {
+            ok: true,
+            result: analyzeMemoryDoctor(input.value.repository, rows),
+          }),
+        );
+      });
+
+    const handleProductStats = (body: JsonValue) =>
+      Effect.gen(function* () {
+        const input = decodeRequest(PRODUCT_OPERATIONS.stats.request, body);
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const rows = yield* sql.unsafe<JsonObject>(
+          "SELECT * FROM memories WHERE repository = ?",
+          [input.value.repository],
+        );
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS.stats.response, {
+            ok: true,
+            result: summarizeMemoryStats(input.value.repository, rows),
+          }),
+        );
+      });
+
+    const handleProductGc = (body: JsonValue) =>
+      Effect.gen(function* () {
+        const input = decodeRequest(PRODUCT_OPERATIONS.gc.request, body);
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const rows = yield* sql.unsafe<JsonObject>(
+          `SELECT * FROM memories
+           WHERE repository = ?
+             AND status = 'active'
+             AND expires_after_days IS NOT NULL
+             AND datetime(updated_at, '+' || expires_after_days || ' days') <= datetime('now')
+           ORDER BY updated_at ASC`,
+          [input.value.repository],
+        );
+        const expired = rows.map(toProductRow);
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS.gc.response, {
+            ok: true,
+            result: {
+              repository: input.value.repository,
+              dry_run: true,
+              count: expired.length,
+              ids: expired.map((row) => row.id),
+              expired,
+            },
           }),
         );
       });
@@ -799,6 +906,114 @@ export default Cloudflare.Worker<{}>()(
           }),
         ),
       );
+
+    const handleProductDeleteMany = (body: JsonValue) =>
+      Effect.gen(function* () {
+        const input = decodeRequest(
+          PRODUCT_OPERATIONS["delete-many"].request,
+          body,
+        );
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const requestedIds = [...new Set(input.value.ids)];
+        const deletedIds: number[] = [];
+        const notFound: number[] = [];
+        for (const id of requestedIds) {
+          const result = yield* d1
+            .prepare(`DELETE FROM memories WHERE repository = ? AND id = ?`)
+            .bind(input.value.repository, id)
+            .run();
+          if (result.meta.changes > 0) {
+            deletedIds.push(id);
+            yield* cleanupProductVector(id);
+          } else {
+            notFound.push(id);
+          }
+        }
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS["delete-many"].response, {
+            ok: true,
+            result: {
+              deleted_from: input.value.repository,
+              requested_ids: requestedIds,
+              deleted_ids: deletedIds,
+              not_found: notFound,
+              count: deletedIds.length,
+            },
+          }),
+        );
+      });
+
+    const deprecateProductRows = (
+      repository: string,
+      ids: readonly number[],
+      status: "deprecated" | "superseded_by",
+      supersededBy: number | null,
+    ) =>
+      Effect.gen(function* () {
+        const deprecated: MemoryRow[] = [];
+        const notFound: number[] = [];
+        for (const id of ids) {
+          const existing = yield* fetchProductRow(repository, id);
+          if (!existing) {
+            notFound.push(id);
+            continue;
+          }
+          yield* d1
+            .prepare(
+              `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = 'api', updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id = ?`,
+            )
+            .bind(status, supersededBy, repository, id)
+            .run();
+          const row = yield* fetchProductRow(repository, id);
+          if (row) {
+            deprecated.push(row);
+            yield* syncProductVector(row);
+          }
+        }
+        return { deprecated, notFound };
+      });
+
+    const handleProductDeprecate = (body: JsonValue) =>
+      Effect.gen(function* () {
+        const input = decodeRequest(PRODUCT_OPERATIONS.deprecate.request, body);
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const requestedIds = [...new Set(input.value.ids)];
+        if (
+          input.value.superseded_by !== undefined &&
+          requestedIds.includes(input.value.superseded_by)
+        ) {
+          return yield* badRequest("A memory cannot supersede itself.");
+        }
+        const status =
+          input.value.superseded_by === undefined
+            ? ("deprecated" as const)
+            : ("superseded_by" as const);
+        const supersededBy = input.value.superseded_by ?? null;
+        const { deprecated, notFound } = yield* deprecateProductRows(
+          input.value.repository,
+          requestedIds,
+          status,
+          supersededBy,
+        );
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS.deprecate.response, {
+            ok: true,
+            result: {
+              written_to: input.value.repository,
+              status,
+              superseded_by: supersededBy,
+              requested_ids: requestedIds,
+              deprecated,
+              not_found: notFound,
+              count: deprecated.length,
+            },
+          }),
+        );
+      });
 
     const fetchKeywordScored = (
       ftsQuery: string,
@@ -1732,6 +1947,11 @@ export default Cloudflare.Worker<{}>()(
       add: handleProductAdd,
       update: handleProductUpdate,
       delete: handleProductDelete,
+      "delete-many": handleProductDeleteMany,
+      deprecate: handleProductDeprecate,
+      doctor: handleProductDoctor,
+      stats: handleProductStats,
+      gc: handleProductGc,
       verify: handleProductVerify,
       diff: handleProductDiff,
       size: handleProductSize,

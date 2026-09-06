@@ -1,4 +1,8 @@
-import type { MemoryGetSuccess } from "@machine-memory/contract";
+import type {
+  MemoryDeprecateSuccess,
+  MemoryGetSuccess,
+  MemoryStatsSuccess,
+} from "@machine-memory/contract";
 import { postProduct, type ApiFetcher } from "../src/mcp/product-client";
 
 // Checked by tsc, never executed. A route determines both its body and result.
@@ -8,6 +12,20 @@ export function checkProductClientTypes(api: ApiFetcher): void {
     id: 1,
   });
   void get;
+  const stats: Promise<MemoryStatsSuccess> = postProduct(
+    api,
+    "token",
+    "stats",
+    { repository: "o/r" },
+  );
+  void stats;
+  const deprecate: Promise<MemoryDeprecateSuccess> = postProduct(
+    api,
+    "token",
+    "deprecate",
+    { repository: "o/r", ids: [1, 2], superseded_by: 3 },
+  );
+  void deprecate;
   void postProduct(api, "token", "delete", {
     repository: "o/r",
     // @ts-expect-error delete requires an id, not a query

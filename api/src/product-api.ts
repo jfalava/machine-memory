@@ -36,7 +36,10 @@ export type ProductQuery = {
   readonly params: (string | number)[];
 };
 
-export function filterClauses(filters: ProductFilters, prefix: string): ProductQuery {
+export function filterClauses(
+  filters: ProductFilters,
+  prefix: string,
+): ProductQuery {
   const clauses: string[] = [];
   const params: (string | number)[] = [];
   if (filters.status !== undefined) {
@@ -62,13 +65,28 @@ export function listSelect(
   repository: string,
   filters: ProductFilters,
   limit: number,
+  offset: number,
 ): ProductQuery {
   const base: ProductQuery = { sql: "repository = ?", params: [repository] };
   const extra = filterClauses(filters, "");
-  const where = extra.sql.length > 0 ? `${base.sql} AND ${extra.sql}` : base.sql;
+  const where =
+    extra.sql.length > 0 ? `${base.sql} AND ${extra.sql}` : base.sql;
   return {
-    sql: `SELECT * FROM memories WHERE ${where} ORDER BY updated_at DESC, id DESC LIMIT ?`,
-    params: [...base.params, ...extra.params, limit],
+    sql: `SELECT * FROM memories WHERE ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`,
+    params: [...base.params, ...extra.params, limit, offset],
+  };
+}
+
+export function listCountSelect(
+  repository: string,
+  filters: ProductFilters,
+): ProductQuery {
+  const extra = filterClauses(filters, "");
+  const where =
+    extra.sql.length > 0 ? `repository = ? AND ${extra.sql}` : "repository = ?";
+  return {
+    sql: `SELECT COUNT(*) AS total_count FROM memories WHERE ${where}`,
+    params: [repository, ...extra.params],
   };
 }
 
@@ -79,9 +97,10 @@ export function ftsSelect(
   limit: number,
 ): ProductQuery {
   const extra = filterClauses(filters, "m.");
-  const where = extra.sql.length > 0
-    ? `memories_fts MATCH ? AND m.repository = ? AND ${extra.sql}`
-    : `memories_fts MATCH ? AND m.repository = ?`;
+  const where =
+    extra.sql.length > 0
+      ? `memories_fts MATCH ? AND m.repository = ? AND ${extra.sql}`
+      : `memories_fts MATCH ? AND m.repository = ?`;
   return {
     sql: `SELECT m.*, bm25(memories_fts) AS fts_rank FROM memories m JOIN memories_fts ON m.id = memories_fts.rowid WHERE ${where} ORDER BY bm25(memories_fts) LIMIT ?`,
     params: [ftsQuery, repository, ...extra.params, limit],
@@ -95,12 +114,18 @@ export function rowByIdSelect(repository: string, id: number): ProductQuery {
   };
 }
 
-export function distinctRepositoriesSelect(limit: number): ProductQuery {
+export function repositoryStatsSelect(
+  limit: number,
+  offset: number,
+): ProductQuery {
   return {
-    sql: `SELECT DISTINCT repository FROM memories ORDER BY repository LIMIT ?`,
-    params: [limit],
+    sql: `SELECT repository, COUNT(*) AS total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active, SUM(CASE WHEN status = 'deprecated' THEN 1 ELSE 0 END) AS deprecated, SUM(CASE WHEN status = 'superseded_by' THEN 1 ELSE 0 END) AS superseded FROM memories GROUP BY repository ORDER BY repository LIMIT ? OFFSET ?`,
+    params: [limit, offset],
   };
 }
+
+export const REPOSITORY_COUNT_SQL =
+  "SELECT COUNT(DISTINCT repository) AS total_count FROM memories";
 
 export type NeighborhoodInput = {
   readonly repository: string;
@@ -109,7 +134,9 @@ export type NeighborhoodInput = {
   readonly pathHints: string[];
 };
 
-export function neighborhoodSelect(input: NeighborhoodInput): ProductQuery | undefined {
+export function neighborhoodSelect(
+  input: NeighborhoodInput,
+): ProductQuery | undefined {
   const orClauses: string[] = [];
   const orParams: (string | number)[] = [];
   for (const tagHint of input.tagHints.slice(0, 10)) {
@@ -137,9 +164,10 @@ function neighborhoodWhere(
   const clauses = [`(${orClauses.join(" OR ")})`, "m.repository = ?"];
   const params: (string | number)[] = [...orParams, input.repository];
   const extra = filterClauses(input.filters, "m.");
-  const where = extra.sql.length > 0
-    ? [...clauses, extra.sql].join(" AND ")
-    : clauses.join(" AND ");
+  const where =
+    extra.sql.length > 0
+      ? [...clauses, extra.sql].join(" AND ")
+      : clauses.join(" AND ");
   return {
     sql: `SELECT m.*, 0 AS fts_rank FROM memories m WHERE ${where} ORDER BY m.updated_at DESC, m.id DESC LIMIT 30`,
     params: [...params, ...extra.params],

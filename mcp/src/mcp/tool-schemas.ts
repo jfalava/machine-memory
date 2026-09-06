@@ -54,3 +54,26 @@ export type MemoryDeleteArgs = ProductRequest<"delete">;
 export const memoryDeleteInput = mcpInputSchema(
   PRODUCT_OPERATIONS["delete"].request,
 );
+
+export type MemoryDeleteManyArgs = ProductRequest<"delete-many">;
+export const memoryDeleteManyInput = mcpInputSchema(
+  PRODUCT_OPERATIONS["delete-many"].request,
+);
+
+export type MemoryDeprecateArgs = ProductRequest<"deprecate">;
+export const memoryDeprecateInput = mcpInputSchema(
+  PRODUCT_OPERATIONS.deprecate.request,
+);
+
+export type MemoryDoctorArgs = ProductRequest<"doctor">;
+export const memoryDoctorInput = mcpInputSchema(
+  PRODUCT_OPERATIONS.doctor.request,
+);
+
+export type MemoryStatsArgs = ProductRequest<"stats">;
+export const memoryStatsInput = mcpInputSchema(
+  PRODUCT_OPERATIONS.stats.request,
+);
+
+export type MemoryGcArgs = ProductRequest<"gc">;
+export const memoryGcInput = mcpInputSchema(PRODUCT_OPERATIONS.gc.request);

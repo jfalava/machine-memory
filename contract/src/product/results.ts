@@ -53,9 +53,22 @@ export const MemoryWriteResultSchema = Schema.Struct({
 });
 export type MemoryWriteResult = typeof MemoryWriteResultSchema.Type;
 
+export const RepositoryStatsSchema = Schema.Struct({
+  slug: Schema.String,
+  total: Schema.Number,
+  active: Schema.Number,
+  deprecated: Schema.Number,
+  superseded: Schema.Number,
+});
+export type RepositoryStats = typeof RepositoryStatsSchema.Type;
+
 export const ListRepositoriesResultSchema = Schema.Struct({
-  repositories: Schema.Array(Schema.String),
+  repositories: Schema.Array(RepositoryStatsSchema),
   count: Schema.Number,
+  total_count: Schema.Number,
+  offset: Schema.Number,
+  limit: Schema.Number,
+  has_more: Schema.Boolean,
 });
 export type ListRepositoriesResult = typeof ListRepositoriesResultSchema.Type;
 export const ListRepositoriesSuccessSchema = okResponseSchema(
@@ -68,6 +81,10 @@ export type MemoryGetSuccess = typeof MemoryGetSuccessSchema.Type;
 
 export const MemoryListResultSchema = Schema.Struct({
   count: Schema.Number,
+  total_count: Schema.Number,
+  offset: Schema.Number,
+  limit: Schema.Number,
+  has_more: Schema.Boolean,
   results: Schema.Array(MemoryRowSchema),
 });
 export type MemoryListResult = typeof MemoryListResultSchema.Type;
@@ -143,6 +160,89 @@ export const MemoryDeleteSuccessSchema = okResponseSchema(
   MemoryDeleteResultSchema,
 );
 export type MemoryDeleteSuccess = typeof MemoryDeleteSuccessSchema.Type;
+
+export const MemoryDeleteManyResultSchema = Schema.Struct({
+  deleted_from: Schema.String,
+  requested_ids: Schema.Array(Schema.Number),
+  deleted_ids: Schema.Array(Schema.Number),
+  not_found: Schema.Array(Schema.Number),
+  count: Schema.Number,
+});
+export type MemoryDeleteManyResult = typeof MemoryDeleteManyResultSchema.Type;
+export const MemoryDeleteManySuccessSchema = okResponseSchema(
+  MemoryDeleteManyResultSchema,
+);
+export type MemoryDeleteManySuccess = typeof MemoryDeleteManySuccessSchema.Type;
+
+export const MemoryDeprecateResultSchema = Schema.Struct({
+  written_to: Schema.String,
+  status: MemoryStatusSchema,
+  superseded_by: Schema.NullOr(Schema.Number),
+  requested_ids: Schema.Array(Schema.Number),
+  deprecated: Schema.Array(MemoryRowSchema),
+  not_found: Schema.Array(Schema.Number),
+  count: Schema.Number,
+});
+export type MemoryDeprecateResult = typeof MemoryDeprecateResultSchema.Type;
+export const MemoryDeprecateSuccessSchema = okResponseSchema(
+  MemoryDeprecateResultSchema,
+);
+export type MemoryDeprecateSuccess = typeof MemoryDeprecateSuccessSchema.Type;
+
+export const MemoryGcResultSchema = Schema.Struct({
+  repository: Schema.String,
+  dry_run: Schema.Literal(true),
+  count: Schema.Number,
+  ids: Schema.Array(Schema.Number),
+  expired: Schema.Array(MemoryRowSchema),
+});
+export type MemoryGcResult = typeof MemoryGcResultSchema.Type;
+export const MemoryGcSuccessSchema = okResponseSchema(MemoryGcResultSchema);
+export type MemoryGcSuccess = typeof MemoryGcSuccessSchema.Type;
+
+export const MemoryStatsResultSchema = Schema.Struct({
+  repository: Schema.String,
+  total_memories: Schema.Number,
+  active: Schema.Number,
+  deprecated: Schema.Number,
+  superseded: Schema.Number,
+  breakdown_by_memory_type: Schema.Record(Schema.String, Schema.Number),
+  breakdown_by_certainty: Schema.Record(Schema.String, Schema.Number),
+  tag_frequency_map: Schema.Record(Schema.String, Schema.Number),
+  oldest_memory: Schema.NullOr(
+    Schema.Struct({
+      id: Schema.Number,
+      created_at: Schema.NullOr(Schema.String),
+    }),
+  ),
+  memories_not_updated_over_90_days: Schema.Number,
+  memories_with_no_tags: Schema.Number,
+});
+export type MemoryStatsResult = typeof MemoryStatsResultSchema.Type;
+export const MemoryStatsSuccessSchema = okResponseSchema(
+  MemoryStatsResultSchema,
+);
+export type MemoryStatsSuccess = typeof MemoryStatsSuccessSchema.Type;
+
+export const MemoryDoctorFindingSchema = Schema.Struct({
+  kind: Schema.String,
+  ids: Schema.Array(Schema.Number),
+  details: Schema.Record(Schema.String, Schema.Json),
+});
+export type MemoryDoctorFinding = typeof MemoryDoctorFindingSchema.Type;
+
+export const MemoryDoctorResultSchema = Schema.Struct({
+  repository: Schema.String,
+  checked: Schema.Number,
+  count: Schema.Number,
+  findings: Schema.Array(MemoryDoctorFindingSchema),
+  counts_by_kind: Schema.Record(Schema.String, Schema.Number),
+});
+export type MemoryDoctorResult = typeof MemoryDoctorResultSchema.Type;
+export const MemoryDoctorSuccessSchema = okResponseSchema(
+  MemoryDoctorResultSchema,
+);
+export type MemoryDoctorSuccess = typeof MemoryDoctorSuccessSchema.Type;
 
 export const MemoryWriteSuccessSchema = okResponseSchema(
   MemoryWriteResultSchema,
