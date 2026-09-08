@@ -827,24 +827,6 @@ const NEIGHBORHOOD_IGNORED_SEGMENTS = new Set([
   "tests",
 ]);
 
-function collectExtensionHint(
-  directory: string,
-  base: string,
-  seenPaths: Set<string>,
-  pathHints: string[],
-): void {
-  const dot = base.lastIndexOf(".");
-  const extension = dot > 0 ? base.slice(dot + 1) : "";
-  if (!extension) {
-    return;
-  }
-  const hint = `${directory}/%.${extension}`;
-  if (!seenPaths.has(hint.toLowerCase())) {
-    seenPaths.add(hint.toLowerCase());
-    pathHints.push(hint);
-  }
-}
-
 function collectDirectoryTags(
   directory: string,
   seenTags: Set<string>,
@@ -877,12 +859,6 @@ function collectFileHints(
     seenPaths.add(lowerDir);
     pathHints.push(`${directory}/`);
   }
-  collectExtensionHint(
-    directory,
-    normalized.slice(slash + 1),
-    seenPaths,
-    pathHints,
-  );
   collectDirectoryTags(directory, seenTags, tagHints);
 }
 

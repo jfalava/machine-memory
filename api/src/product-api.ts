@@ -140,14 +140,14 @@ export function neighborhoodSelect(
   const orClauses: string[] = [];
   const orParams: (string | number)[] = [];
   for (const tagHint of input.tagHints.slice(0, 10)) {
-    orClauses.push("LOWER(m.tags) LIKE ?");
-    orParams.push(`%${tagHint.toLowerCase()}%`);
+    orClauses.push("INSTR(LOWER(m.tags), ?) > 0");
+    orParams.push(tagHint.toLowerCase());
   }
   for (const pathHint of input.pathHints.slice(0, 10)) {
-    const lowered = `%${pathHint.toLowerCase()}%`;
-    orClauses.push("LOWER(m.content) LIKE ?");
+    const lowered = pathHint.toLowerCase();
+    orClauses.push("INSTR(LOWER(m.content), ?) > 0");
     orParams.push(lowered);
-    orClauses.push("LOWER(m.context) LIKE ?");
+    orClauses.push("INSTR(LOWER(m.context), ?) > 0");
     orParams.push(lowered);
   }
   if (orClauses.length === 0) {

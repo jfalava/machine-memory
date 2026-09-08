@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
   analyzeMemoryDoctor,
+  deriveFileNeighborhood,
   summarizeMemoryStats,
 } from "../../api/src/product-logic";
 import {
   listCountSelect,
   listSelect,
+  neighborhoodSelect,
   repositoryStatsSelect,
 } from "../../api/src/product-api";
 
@@ -109,5 +111,30 @@ describe("product maintenance logic", () => {
       params: ["o/r", "active"],
     });
     expect(repositoryStatsSelect(20, 40).params).toEqual([20, 40]);
+  });
+
+  test("suggest uses literal directory matches without D1 wildcard patterns", () => {
+    const neighborhood = deriveFileNeighborhood([
+      "web/portal/src/components/references/gallery/gallery-tab.tsx",
+      "web/portal/src/components/references/gallery/image-card.tsx",
+    ]);
+    expect(neighborhood.pathHints).toEqual([
+      "web/portal/src/components/references/gallery/",
+    ]);
+
+    const select = neighborhoodSelect({
+      repository: "o/r",
+      filters: { status: "active" },
+      tagHints: neighborhood.tagHints,
+      pathHints: neighborhood.pathHints,
+    });
+    expect(select?.sql).toContain("INSTR(LOWER(m.content), ?) > 0");
+    expect(select?.sql).not.toContain("LIKE");
+    expect(select?.params).toContain(
+      "web/portal/src/components/references/gallery/",
+    );
+    expect(select?.params.some((param) => String(param).includes("%"))).toBe(
+      false,
+    );
   });
 });

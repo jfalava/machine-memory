@@ -228,6 +228,29 @@ describe("mcp gateway to api product routes", () => {
     expect(seen[0]?.body).toMatchObject({ repository: "o/r", query: "deploy" });
   });
 
+  test("memory_query preserves actionable API query guidance for the agent", async () => {
+    const guidance =
+      "Full-text query could not be parsed. Use simpler words and remove FTS punctuation or operators.";
+    const client = await linkedClient({
+      api: stubApi(
+        {
+          "/product/query": {
+            status: 400,
+            body: { ok: false, error: guidance },
+          },
+        },
+        [],
+      ),
+      apiToken: "test-token",
+    });
+    const result = await client.callTool({
+      name: "memory_query",
+      arguments: { repository: "o/r", query: "botched*query" },
+    });
+    expect(result.isError).toBe(true);
+    expect(firstText(result)).toBe(guidance);
+  });
+
   test("memory_get maps 404 to a plain not-found message", async () => {
     const seen: SeenCall[] = [];
     const client = await linkedClient({

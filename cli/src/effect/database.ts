@@ -1,3 +1,4 @@
+import { databaseFailureGuidance } from "@machine-memory/contract";
 import { Context, Effect, Layer, Schema } from "effect";
 import {
   allWithRetry,
@@ -44,10 +45,12 @@ function operationError(
   operation: string,
   cause: unknown,
 ): MemoryDatabaseError {
+  const guidance = databaseFailureGuidance(cause);
   return new MemoryDatabaseError({
     operation,
     message:
-      cause instanceof Error ? cause.message : "Database operation failed.",
+      guidance?.error ??
+      (cause instanceof Error ? cause.message : "Database operation failed."),
     cause,
   });
 }

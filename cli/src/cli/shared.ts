@@ -1,11 +1,5 @@
 import { Effect } from "effect";
-import {
-  resolve,
-  relative,
-  sep,
-  dirname as pathDirname,
-  extname,
-} from "node:path";
+import { resolve, relative, sep, dirname as pathDirname } from "node:path";
 import type { FileSystem } from "effect/FileSystem";
 import { getFlagValue, hasFlag, usageError } from "../cli-utils";
 import {
@@ -1004,10 +998,6 @@ export function deriveNeighborhoodFromFiles(
     const directory = pathDirname(normalized).replaceAll("\\", "/");
     if (directory && directory !== ".") {
       pathHints.push(`${directory}/`);
-      const extension = extname(normalized).replace(/^\./, "");
-      if (extension) {
-        pathHints.push(`${directory}/%.${extension}`);
-      }
       const segments = directory.split("/").filter(Boolean);
       for (const segment of segments) {
         if (!ignoredSegments.has(segment.toLowerCase())) {
@@ -1033,16 +1023,16 @@ export function queryNeighborhoodMatches(
   const params: (string | number)[] = [];
 
   for (const tagHint of neighborhood.tagHints.slice(0, 10)) {
-    orClauses.push("LOWER(m.tags) LIKE ?");
-    params.push(`%${tagHint.toLowerCase()}%`);
+    orClauses.push("INSTR(LOWER(m.tags), ?) > 0");
+    params.push(tagHint.toLowerCase());
   }
   for (const pathHint of neighborhood.pathHints.slice(0, 10)) {
-    const lowered = `%${pathHint.toLowerCase()}%`;
-    orClauses.push("LOWER(m.content) LIKE ?");
+    const lowered = pathHint.toLowerCase();
+    orClauses.push("INSTR(LOWER(m.content), ?) > 0");
     params.push(lowered);
-    orClauses.push("LOWER(m.context) LIKE ?");
+    orClauses.push("INSTR(LOWER(m.context), ?) > 0");
     params.push(lowered);
-    orClauses.push("LOWER(m.refs) LIKE ?");
+    orClauses.push("INSTR(LOWER(m.refs), ?) > 0");
     params.push(lowered);
   }
   if (orClauses.length === 0) {

@@ -15,6 +15,65 @@ export const SimpleErrorBodySchema = Schema.Struct({
 });
 export type SimpleErrorBody = typeof SimpleErrorBodySchema.Type;
 
+export type DatabaseFailureGuidance = {
+  readonly category:
+    | "fts-query"
+    | "pattern-complexity"
+    | "sql-query"
+    | "database-schema";
+  readonly error: string;
+  readonly correctableInput: boolean;
+};
+
+export function databaseFailureGuidance(
+  cause: unknown,
+): DatabaseFailureGuidance | undefined {
+  const detail = String(cause).toLowerCase();
+  if (
+    detail.includes("fts5: syntax error") ||
+    detail.includes("malformed match expression")
+  ) {
+    return {
+      category: "fts-query",
+      error:
+        "Full-text query could not be parsed. Use simpler words and remove FTS punctuation or operators such as quotes, parentheses, '*', and NEAR.",
+      correctableInput: true,
+    };
+  }
+  if (
+    detail.includes("like or glob pattern too complex") ||
+    detail.includes("like pattern too complex") ||
+    detail.includes("glob pattern too complex")
+  ) {
+    return {
+      category: "pattern-complexity",
+      error:
+        "Database query failed because a LIKE or GLOB pattern was too complex. Retry with shorter path or query terms; for file suggestions, use shorter relative paths or basenames. If machine-memory generated the pattern, report this as a bug.",
+      correctableInput: false,
+    };
+  }
+  if (detail.includes("no such table") || detail.includes("no such column")) {
+    return {
+      category: "database-schema",
+      error:
+        "Database query references a missing table or column. Run `machine-memory migrate` for the selected backend, then retry. If the schema is current, report this as a machine-memory bug.",
+      correctableInput: false,
+    };
+  }
+  if (
+    detail.includes("sql syntax error") ||
+    (detail.includes("sqlite") && detail.includes("syntax error"))
+  ) {
+    return {
+      category: "sql-query",
+      error:
+        "Database query SQL was rejected. Retry with simpler query terms. If machine-memory generated the SQL, report this as a bug rather than repeatedly retrying the same query.",
+      correctableInput: false,
+    };
+  }
+  return undefined;
+}
+
 export function okResponseSchema<S extends Schema.Top>(result: S) {
   return Schema.Struct({
     ok: Schema.Literal(true),

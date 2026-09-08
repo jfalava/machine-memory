@@ -105,6 +105,7 @@ export {
 export {
   ApiFailureSchema,
   ApiSuccessSchema,
+  databaseFailureGuidance,
   ErrorBodySchema,
   MigrationBatchResultSchema,
   MigrationItemSchema,
@@ -122,6 +123,7 @@ export {
   okResponseSchema,
   type ApiFailure,
   type ApiSuccess,
+  type DatabaseFailureGuidance,
   type ErrorBody,
   type MigrationBatchResult,
   type MigrationItem,

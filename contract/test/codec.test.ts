@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  databaseFailureGuidance,
   decodeRequest,
   decodeResponse,
   encodeResponse,
@@ -15,6 +16,43 @@ import {
 } from "../src/index";
 
 describe("codec", () => {
+  it("classifies only safely actionable database query failures", () => {
+    expect(
+      databaseFailureGuidance(
+        new Error("SQLITE_ERROR: fts5: syntax error near '*'"),
+      ),
+    ).toMatchObject({ category: "fts-query", correctableInput: true });
+    expect(
+      databaseFailureGuidance(
+        new Error("SQLITE_ERROR: LIKE or GLOB pattern too complex"),
+      ),
+    ).toMatchObject({
+      category: "pattern-complexity",
+      correctableInput: false,
+      error: expect.stringContaining("report this as a bug"),
+    });
+    expect(
+      databaseFailureGuidance(new Error("secret=request-body-content")),
+    ).toBeUndefined();
+    expect(
+      databaseFailureGuidance(
+        new Error('SQLITE_ERROR: near "ORDER": syntax error'),
+      ),
+    ).toMatchObject({
+      category: "sql-query",
+      correctableInput: false,
+      error: expect.stringContaining("machine-memory generated the SQL"),
+    });
+    expect(
+      databaseFailureGuidance(
+        new Error("SQLITE_ERROR: no such table: memories"),
+      ),
+    ).toMatchObject({
+      category: "database-schema",
+      error: expect.stringContaining("machine-memory migrate"),
+    });
+  });
+
   it("encodeResponse fails closed on invalid domain values", () => {
     expect(() =>
       encodeResponse(ErrorBodySchema, {

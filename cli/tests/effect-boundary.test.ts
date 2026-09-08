@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { Effect } from "effect";
-import type { MemoryDatabaseApi } from "@/effect/database";
+import { Cause, Effect } from "effect";
+import { MemoryDatabase, type MemoryDatabaseApi } from "@/effect/database";
 import { MemoryDatabaseError } from "@/effect/errors";
+import { remoteLayer } from "@/effect/remote-database";
 import { handleReindexCommand } from "@/cli/commands/reindex";
 import type { CommandContext } from "@/cli/runtime/context";
 import { compareFact } from "@/cli/features/memory/compare";
 import {
   combineHybridResults,
+  deriveNeighborhoodFromFiles,
   normalizeSqliteRow,
   parseIdSpec,
+  queryNeighborhoodMatches,
 } from "@/cli/shared";
 import {
   databaseConfig,
@@ -29,6 +32,66 @@ describe("Effect application boundaries", () => {
     expect(compareFact("Effect is used", "Effect is not used").conflict).toBe(
       true,
     );
+  });
+
+  it("queries long suggest paths as literal substrings without wildcards", async () => {
+    const calls: Array<[string, Array<string | number>]> = [];
+    const all: MemoryDatabaseApi["all"] = (sql, params = []) => {
+      calls.push([sql, [...params] as Array<string | number>]);
+      return Effect.succeed([]);
+    };
+    const database: MemoryDatabaseApi = {
+      run: () => Effect.succeed(undefined),
+      get: () => Effect.succeed(undefined),
+      all,
+    };
+    const neighborhood = deriveNeighborhoodFromFiles([
+      "web/portal/src/components/references/gallery/gallery-tab.tsx",
+    ]);
+
+    await Effect.runPromise(
+      queryNeighborhoodMatches(
+        database,
+        neighborhood,
+        { includeDeprecated: false },
+        8,
+      ),
+    );
+    expect(neighborhood.pathHints).toEqual([
+      "web/portal/src/components/references/gallery/",
+    ]);
+    const [sql, params] = calls[0] ?? ["", []];
+    expect(sql).toContain("INSTR(LOWER(m.content), ?) > 0");
+    expect(sql).not.toContain("LIKE");
+    expect(params).toContain("web/portal/src/components/references/gallery/");
+    expect(params?.some((param) => String(param).includes("%"))).toBe(false);
+  });
+
+  it("preserves actionable remote query errors through the CLI database layer", async () => {
+    const guidance =
+      "Full-text query could not be parsed. Use simpler words and remove FTS punctuation or operators.";
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error: guidance }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        Effect.gen(function* () {
+          const database = yield* MemoryDatabase;
+          return yield* database.all("SELECT * FROM memories");
+        }).pipe(
+          Effect.provide(remoteLayer("https://memory.test/query", "token")),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(Cause.pretty(exit.cause)).toContain(guidance);
+      }
+    } finally {
+      fetch.mockRestore();
+    }
   });
 
   it("reports failed reindex upserts before failing, including quiet mode", async () => {

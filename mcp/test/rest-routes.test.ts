@@ -9,13 +9,23 @@ import {
   type JsonValue,
 } from "@machine-memory/contract";
 import {
+  classifyRestFailure,
   handleRestRequest,
   type RestHandlers,
 } from "../../api/src/rest-handlers";
 
-function setup() {
+function responseJson(
+  response: HttpServerResponse.HttpServerResponse,
+): unknown {
+  const body = response.body.toJSON() as { readonly body?: unknown };
+  return JSON.parse(String(body.body));
+}
+
+function setup(failingProduct?: RestHandlers<never>["handleProduct"]) {
   const ok = () => Effect.succeed(HttpServerResponse.jsonUnsafe({ ok: true }));
-  const product = vi.fn((_route: ProductRoute, _body: JsonValue) => ok());
+  const product = vi.fn(
+    failingProduct ?? ((_route: ProductRoute, _body: JsonValue) => ok()),
+  );
   const vectorize = vi.fn(ok);
   const handlers: RestHandlers<never> = {
     expectedToken: Redacted.make("token"),
@@ -73,5 +83,59 @@ describe("REST product route catalog", () => {
     const { call, product } = setup();
     expect((await call("/product/get", "wrong")).status).toBe(401);
     expect(product).not.toHaveBeenCalled();
+  });
+
+  test("returns actionable guidance for correctable FTS failures", async () => {
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      const { call } = setup(() =>
+        Effect.fail(new Error("SQLITE_ERROR: fts5: syntax error near '*'")),
+      );
+      const response = await call("/product/query");
+      expect(response.status).toBe(400);
+      expect(responseJson(response)).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("Use simpler words"),
+      });
+      expect(error).toHaveBeenCalledWith(
+        "REST /product/query failed [fts-query].",
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("guides pattern failures without blaming input or leaking diagnostics", async () => {
+    expect(
+      classifyRestFailure(
+        new Error("SQLITE_ERROR: LIKE or GLOB pattern too complex"),
+      ),
+    ).toMatchObject({
+      status: 500,
+      category: "pattern-complexity",
+      error: expect.stringContaining("If machine-memory generated the pattern"),
+    });
+
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    try {
+      const { call } = setup(() =>
+        Effect.fail(new Error("unexpected secret=request-body-content")),
+      );
+      const response = await call("/product/suggest");
+      expect(response.status).toBe(500);
+      expect(responseJson(response)).toEqual({
+        ok: false,
+        error: "Internal server error.",
+      });
+      expect(error).not.toHaveBeenCalledWith(
+        expect.stringContaining("request-body-content"),
+      );
+    } finally {
+      error.mockRestore();
+    }
   });
 });

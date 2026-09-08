@@ -1,4 +1,5 @@
 import {
+  databaseFailureGuidance,
   normalizeProductRoute,
   type ProductRoute,
 } from "@machine-memory/contract";
@@ -12,6 +13,29 @@ import type { JsonValue } from "./json";
 
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
+
+export type RestFailure = {
+  readonly status: 400 | 500;
+  readonly error: string;
+  readonly category:
+    | "fts-query"
+    | "pattern-complexity"
+    | "sql-query"
+    | "database-schema"
+    | "internal";
+};
+
+export function classifyRestFailure(cause: unknown): RestFailure {
+  const guidance = databaseFailureGuidance(cause);
+  if (guidance !== undefined) {
+    return {
+      status: guidance.correctableInput ? 400 : 500,
+      error: guidance.error,
+      category: guidance.category,
+    };
+  }
+  return { status: 500, error: INTERNAL_ERROR, category: "internal" };
+}
 
 export type RestHandlerFn<R = RuntimeContext> = (
   body: JsonValue,
@@ -33,15 +57,18 @@ export type RestHandlers<R = RuntimeContext> = {
 
 function catchInternal<R>(
   effect: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, R>,
+  route: string,
 ): Effect.Effect<HttpServerResponse.HttpServerResponse, never, R> {
   return effect.pipe(
-    Effect.catchCause(() =>
-      Effect.succeed(
-        HttpServerResponse.jsonUnsafe(
-          { ok: false, error: INTERNAL_ERROR },
-          { status: 500 },
-        ),
-      ),
+    Effect.catchCause((cause) =>
+      Effect.sync(() => {
+        const failure = classifyRestFailure(cause);
+        console.error(`REST ${route} failed [${failure.category}].`);
+        return HttpServerResponse.jsonUnsafe(
+          { ok: false, error: failure.error },
+          { status: failure.status },
+        );
+      }),
     ),
   );
 }
@@ -87,7 +114,8 @@ export function handleRestRequest<R>(
     );
   };
 
-  const guardedRoute = (body: JsonValue) => catchInternal(route(body));
+  const guardedRoute = (body: JsonValue) =>
+    catchInternal(route(body), request.url);
 
   return Effect.gen(function* () {
     if (
