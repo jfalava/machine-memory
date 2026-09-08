@@ -1,13 +1,6 @@
 import { databaseFailureGuidance } from "@machine-memory/contract";
-import { Context, Effect, Layer, Schema } from "effect";
-import {
-  allWithRetry,
-  ensureDb,
-  getWithRetry,
-  runWithRetry,
-  type DbAccessMode,
-  type SqlQueryBinding,
-} from "../db";
+import { Context, Effect, Layer } from "effect";
+import type { DbAccessMode, SqlQueryBinding } from "../db";
 import {
   loadDatabaseConfig,
   validateDatabaseBackendFlags,
@@ -55,50 +48,16 @@ function operationError(
   });
 }
 
-function effectful<T>(
-  operation: string,
-  run: () => T,
-): Effect.Effect<T, MemoryDatabaseError> {
-  return Effect.try({
-    try: run,
-    catch: (cause) => operationError(operation, cause),
-  });
-}
-
-function localLayer(
+function loadLocalLayer(
   mode: DbAccessMode,
-): Layer.Layer<MemoryDatabase, MemoryDatabaseError> {
-  return Layer.effect(
-    MemoryDatabase,
-    Effect.gen(function* () {
-      const database = yield* Effect.acquireRelease(
-        effectful("open", () => ensureDb(mode)),
-        (instance) => Effect.sync(() => instance.close()),
-      );
-
-      return MemoryDatabase.of({
-        run: (sql, params = []) =>
-          effectful("run", () =>
-            Schema.decodeUnknownSync(Schema.MutableJson)(
-              runWithRetry(database, sql, params),
-            ),
-          ),
-        get: (sql, params = []) =>
-          effectful("get", () => {
-            const result = getWithRetry(database, sql, params);
-            return result === undefined
-              ? undefined
-              : Schema.decodeUnknownSync(Schema.MutableJson)(result);
-          }),
-        all: (sql, params = []) =>
-          effectful("all", () => [
-            ...Schema.decodeUnknownSync(Schema.Array(Schema.MutableJson))(
-              allWithRetry(database, sql, params),
-            ),
-          ]),
-      });
-    }),
-  );
+): Effect.Effect<
+  Layer.Layer<MemoryDatabase, MemoryDatabaseError>,
+  MemoryDatabaseError
+> {
+  return Effect.tryPromise({
+    try: async () => (await import("./local-database")).localLayer(mode),
+    catch: (cause) => operationError("load", cause),
+  });
 }
 
 export const layer = (
@@ -124,10 +83,10 @@ export const layer = (
           cause,
         }),
     }).pipe(
-      Effect.map((config) =>
+      Effect.flatMap((config) =>
         config.kind === "remote"
-          ? remoteLayer(config.url, config.token)
-          : localLayer(mode),
+          ? Effect.succeed(remoteLayer(config.url, config.token))
+          : loadLocalLayer(mode),
       ),
     ),
   );
