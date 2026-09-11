@@ -102,6 +102,7 @@ export default defineConfig({
   // Astro 7's Vite 8 bundler).
   vite: {
     plugins: [tailwindcss()],
+    resolve: { conditions: ["node", "import", "default"] },
     // Bun hoists workspace dependencies into the repository-level .bun store;
     // allow Vite to serve self-hosted font assets through that symlink.
     server: {
