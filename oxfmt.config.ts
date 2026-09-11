@@ -11,6 +11,9 @@ export const fmtBase: OxfmtConfig = {
   singleQuote: false,
   trailingComma: "all",
   insertFinalNewline: true,
+  sortImports: true,
+  sortPackageJson: true,
+  sortTailwindcss: true,
 };
 
 // Repo root only formats top-level files; each workspace formats itself.

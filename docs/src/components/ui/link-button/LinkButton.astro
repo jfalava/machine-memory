@@ -48,7 +48,8 @@ const {
 } = Astro.props;
 
 // Map the LinkButton-only aliases onto the shared Button vocabulary.
-const resolvedVariant: ButtonVariant = variant === "minimal" ? "ghost" : variant;
+const resolvedVariant: ButtonVariant =
+  variant === "minimal" ? "ghost" : variant;
 const resolvedSize: ButtonSize = size === "md" ? "base" : size;
 ---
 

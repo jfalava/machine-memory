@@ -17,7 +17,11 @@
 import { Icon } from "astro-icon/components";
 import { cn } from "@/lib/cn";
 import type { HTMLAttributes } from "astro/types";
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
 import SidebarLink from "./SidebarLink.astro";
 import { Badge } from "@/components/ui/badge";
 import type { SidebarItem, SidebarBadge } from "@cloudflare/nimbus-docs/types";
@@ -61,14 +65,18 @@ function hasActiveDescendant(items: SidebarItem[]): boolean {
 }
 
 const hasActive = Boolean(indexIsCurrent) || hasActiveDescendant(items);
-const isOpen = Boolean(hasActive || collapsed === false || collapsed === undefined);
+const isOpen = Boolean(
+  hasActive || collapsed === false || collapsed === undefined,
+);
 
 // Shared classes for the row that holds the label + caret in both
 // rendering modes (landing-as-link vs. label-as-trigger).
 const rowClass = cn(
   "group/expander flex min-h-[2rem] items-center rounded-lg px-3 py-1 text-[0.8125rem] no-underline transition-colors duration-150 focus-visible:outline-offset-[-2px]",
   "hover:bg-accent hover:text-foreground",
-  hasActive ? "font-semibold text-foreground" : "font-medium text-muted-foreground",
+  hasActive
+    ? "font-semibold text-foreground"
+    : "font-medium text-muted-foreground",
 );
 // Chevron icon classes. Rotation is driven by an explicit CSS rule in
 // `<style is:global>` at the bottom of this file.
@@ -82,29 +90,84 @@ const caretClass =
   data-nb-sidebar-group
   {...attrs}
 >
-  {indexHref ? (
-    <div
-      class={cn(
-        rowClass,
-        "p-0",
-        // Active state covers the WHOLE row (label-link + chevron),
-        // not just the link half.
-        indexIsCurrent ? "bg-accent text-foreground font-semibold" : "",
-      )}
-      data-nb-state={isOpen ? "open" : "closed"}
-      data-nb-sidebar-group-label
-    >
-      <a
-        href={indexHref}
-        aria-current={indexIsCurrent ? "page" : undefined}
-        target={indexIsExternal ? "_blank" : undefined}
-        rel={indexIsExternal ? "noopener" : undefined}
+  {
+    indexHref ? (
+      <div
         class={cn(
-          "flex flex-1 min-w-0 items-center min-h-[2rem] px-3 py-1 rounded-l-lg focus-visible:outline-offset-[-2px]",
+          rowClass,
+          "p-0",
+          // Active state covers the WHOLE row (label-link + chevron),
+          // not just the link half.
+          indexIsCurrent ? "bg-accent text-foreground font-semibold" : "",
         )}
+        data-nb-state={isOpen ? "open" : "closed"}
+        data-nb-sidebar-group-label
+      >
+        <a
+          href={indexHref}
+          aria-current={indexIsCurrent ? "page" : undefined}
+          target={indexIsExternal ? "_blank" : undefined}
+          rel={indexIsExternal ? "noopener" : undefined}
+          class={cn(
+            "flex flex-1 min-w-0 items-center min-h-[2rem] px-3 py-1 rounded-l-lg focus-visible:outline-offset-[-2px]",
+          )}
+        >
+          <span class="flex items-center gap-2 flex-1 min-w-0">
+            {icon && (
+              <Icon
+                name={icon}
+                class="shrink-0 h-4 w-4 text-muted-foreground"
+              />
+            )}
+            <span class="break-words">{label}</span>
+            {badge &&
+              (typeof badge === "string" ? (
+                <Badge text={badge} />
+              ) : (
+                <Badge text={badge.text} variant={badge.variant} />
+              ))}
+          </span>
+        </a>
+        <CollapsibleTrigger
+          class={cn(
+            // `w-auto` overrides CollapsibleTrigger's default `w-full`,
+            // which would otherwise compete with the label-link's
+            // `flex-1` and starve the label's width.
+            "w-auto flex items-center shrink-0 min-h-[2rem] px-1.5 py-1 rounded-r-lg",
+            "hover:bg-accent hover:text-foreground focus-visible:outline-offset-[-2px]",
+            // The chevron icon uses `group-data-[nb-state=open]/expander:rotate-90`
+            // to rotate on toggle. That variant resolves to the nearest
+            // ancestor with `group/expander` *AND* `data-nb-state="open"`.
+            // The disclosure JS only updates `data-nb-state` on the
+            // trigger and content elements (not the outer row container),
+            // so the trigger itself must carry `group/expander` —
+            // otherwise the icon's class would match the outer row,
+            // whose `data-nb-state` is stale after the first click.
+            "group/expander",
+          )}
+          data-nb-state={isOpen ? "open" : "closed"}
+          aria-expanded={isOpen ? "true" : "false"}
+          aria-label={`Toggle ${label} section`}
+        >
+          <Icon
+            name="ph:caret-right"
+            class={caretClass}
+            data-nb-caret
+            is:inline
+          />
+        </CollapsibleTrigger>
+      </div>
+    ) : (
+      <CollapsibleTrigger
+        class={cn(rowClass, "justify-between w-full")}
+        data-nb-sidebar-group-label
+        data-nb-state={isOpen ? "open" : "closed"}
+        aria-expanded={isOpen ? "true" : "false"}
       >
         <span class="flex items-center gap-2 flex-1 min-w-0">
-          {icon && <Icon name={icon} class="shrink-0 h-4 w-4 text-muted-foreground" />}
+          {icon && (
+            <Icon name={icon} class="shrink-0 h-4 w-4 text-muted-foreground" />
+          )}
           <span class="break-words">{label}</span>
           {badge &&
             (typeof badge === "string" ? (
@@ -113,74 +176,53 @@ const caretClass =
               <Badge text={badge.text} variant={badge.variant} />
             ))}
         </span>
-      </a>
-      <CollapsibleTrigger
-        class={cn(
-          // `w-auto` overrides CollapsibleTrigger's default `w-full`,
-          // which would otherwise compete with the label-link's
-          // `flex-1` and starve the label's width.
-          "w-auto flex items-center shrink-0 min-h-[2rem] px-1.5 py-1 rounded-r-lg",
-          "hover:bg-accent hover:text-foreground focus-visible:outline-offset-[-2px]",
-          // The chevron icon uses `group-data-[nb-state=open]/expander:rotate-90`
-          // to rotate on toggle. That variant resolves to the nearest
-          // ancestor with `group/expander` *AND* `data-nb-state="open"`.
-          // The disclosure JS only updates `data-nb-state` on the
-          // trigger and content elements (not the outer row container),
-          // so the trigger itself must carry `group/expander` —
-          // otherwise the icon's class would match the outer row,
-          // whose `data-nb-state` is stale after the first click.
-          "group/expander",
-        )}
-        data-nb-state={isOpen ? "open" : "closed"}
-        aria-expanded={isOpen ? "true" : "false"}
-        aria-label={`Toggle ${label} section`}
-      >
-        <Icon name="ph:caret-right" class={caretClass} data-nb-caret is:inline />
+        <Icon
+          name="ph:caret-right"
+          class={caretClass}
+          data-nb-caret
+          is:inline
+        />
       </CollapsibleTrigger>
-    </div>
-  ) : (
-    <CollapsibleTrigger
-      class={cn(rowClass, "justify-between w-full")}
-      data-nb-sidebar-group-label
-      data-nb-state={isOpen ? "open" : "closed"}
-      aria-expanded={isOpen ? "true" : "false"}
-    >
-      <span class="flex items-center gap-2 flex-1 min-w-0">
-        {icon && <Icon name={icon} class="shrink-0 h-4 w-4 text-muted-foreground" />}
-        <span class="break-words">{label}</span>
-        {badge &&
-          (typeof badge === "string" ? (
-            <Badge text={badge} />
-          ) : (
-            <Badge text={badge.text} variant={badge.variant} />
-          ))}
-      </span>
-      <Icon name="ph:caret-right" class={caretClass} data-nb-caret is:inline />
-    </CollapsibleTrigger>
-  )}
+    )
+  }
 
   <CollapsibleContent data-nb-state={isOpen ? "open" : "closed"}>
-    <ul class="mt-0.5 ml-3 list-none border-l border-border p-0 pl-2 flex flex-col gap-px">
-      {items.map((item) => (
-        <li class="break-words">
-          {item.type === "group" ? (
-            <Astro.self
-              label={item.label}
-              items={item.children}
-              collapsed={item.collapsed}
-              badge={item.badge}
-              icon={item.icon}
-              indexHref={item.indexHref}
-              indexIsCurrent={item.indexIsCurrent}
-              indexIsExternal={item.indexIsExternal}
-            />
-          ) : item.type === "external" ? (
-            <SidebarLink label={item.label} href={item.href} badge={item.badge} target="_blank" rel="noopener" />
-          ) : (
-            <SidebarLink label={item.label} href={item.href} isCurrent={item.isCurrent} badge={item.badge} />
-          )}
-        </li>
-      ))}
+    <ul
+      class="mt-0.5 ml-3 list-none border-l border-border p-0 pl-2 flex flex-col gap-px"
+    >
+      {
+        items.map((item) => (
+          <li class="break-words">
+            {item.type === "group" ? (
+              <Astro.self
+                label={item.label}
+                items={item.children}
+                collapsed={item.collapsed}
+                badge={item.badge}
+                icon={item.icon}
+                indexHref={item.indexHref}
+                indexIsCurrent={item.indexIsCurrent}
+                indexIsExternal={item.indexIsExternal}
+              />
+            ) : item.type === "external" ? (
+              <SidebarLink
+                label={item.label}
+                href={item.href}
+                badge={item.badge}
+                target="_blank"
+                rel="noopener"
+              />
+            ) : (
+              <SidebarLink
+                label={item.label}
+                href={item.href}
+                isCurrent={item.isCurrent}
+                badge={item.badge}
+              />
+            )}
+          </li>
+        ))
+      }
     </ul>
   </CollapsibleContent>
 </Collapsible>

@@ -60,7 +60,10 @@ const {
 >
   {
     loading ? (
-      <Icon name="ph:circle-notch" class={cn("animate-spin", buttonIconSize[size])} />
+      <Icon
+        name="ph:circle-notch"
+        class={cn("animate-spin", buttonIconSize[size])}
+      />
     ) : (
       icon && <Icon name={icon} class={buttonIconSize[size]} />
     )

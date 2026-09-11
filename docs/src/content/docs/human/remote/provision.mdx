@@ -49,16 +49,16 @@ Full field reference: [Deployment options](/infrastructure/deployment).
 
 ## Names and defaults
 
-| Option                  | Environment variable               | Default                    |
-| ----------------------- | ---------------------------------- | -------------------------- |
-| `--config`              | `MACHINE_MEMORY_DEPLOY_CONFIG`     | auto-discover              |
-| `--domain`              | `MACHINE_MEMORY_DOMAIN`            | (workers.dev router)       |
-| `--no-docs` / `--docs`  | `MACHINE_MEMORY_DEPLOY_DOCS`       | docs on                    |
-| `--stack-name`          | `MACHINE_MEMORY_STACK_NAME`        | `machine-memory-remote-db` |
-| `--database-name`       | `MACHINE_MEMORY_DB_NAME`           | `machine-memory-db`        |
-| `--router-name`         | `MACHINE_MEMORY_ROUTER_NAME`       | `machine-memory-router`    |
-| `--api-name`            | `MACHINE_MEMORY_API_NAME`          | `machine-memory-api`       |
-| `--mcp-name`            | `MACHINE_MEMORY_MCP_NAME`          | `machine-memory-mcp`       |
+| Option                 | Environment variable           | Default                    |
+| ---------------------- | ------------------------------ | -------------------------- |
+| `--config`             | `MACHINE_MEMORY_DEPLOY_CONFIG` | auto-discover              |
+| `--domain`             | `MACHINE_MEMORY_DOMAIN`        | (workers.dev router)       |
+| `--no-docs` / `--docs` | `MACHINE_MEMORY_DEPLOY_DOCS`   | docs on                    |
+| `--stack-name`         | `MACHINE_MEMORY_STACK_NAME`    | `machine-memory-remote-db` |
+| `--database-name`      | `MACHINE_MEMORY_DB_NAME`       | `machine-memory-db`        |
+| `--router-name`        | `MACHINE_MEMORY_ROUTER_NAME`   | `machine-memory-router`    |
+| `--api-name`           | `MACHINE_MEMORY_API_NAME`      | `machine-memory-api`       |
+| `--mcp-name`           | `MACHINE_MEMORY_MCP_NAME`      | `machine-memory-mcp`       |
 
 Flags take precedence over the config file, then environment variables, then stored remote credentials, then defaults.
 

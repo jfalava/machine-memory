@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "bun run --filter @machine-memory/iac typecheck && bash ../docs/scripts/build-cf.sh",
+    "build": "bun run --filter @machine-memory/iac typecheck && bun run --filter @machine-memory/docs build",
     "check": "oxlint --fix",
     "ci:build": "bun run build",
     "ci:deploy": "alchemy deploy --yes --adopt",

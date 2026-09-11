@@ -44,7 +44,9 @@ function initPackageManager(container: HTMLElement): () => void {
             return;
           }
           btn.replaceChildren(cloneIcon(checkTpl));
-          if (handlerInfo.timer) window.clearTimeout(handlerInfo.timer);
+          if (handlerInfo.timer) {
+            window.clearTimeout(handlerInfo.timer);
+          }
           handlerInfo.timer = window.setTimeout(() => {
             btn.replaceChildren(cloneIcon(copyTpl));
           }, 1500);
@@ -58,7 +60,9 @@ function initPackageManager(container: HTMLElement): () => void {
     tabs.destroy();
     copyHandlers.forEach(({ btn, handler, timer }) => {
       btn.removeEventListener("click", handler);
-      if (timer) window.clearTimeout(timer);
+      if (timer) {
+        window.clearTimeout(timer);
+      }
     });
   };
 }

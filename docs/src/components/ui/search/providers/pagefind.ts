@@ -61,7 +61,9 @@ const defaultFilters: PagefindFilters | undefined =
 
 export const provider: SearchProvider = {
   async init() {
-    if (pagefind) return;
+    if (pagefind) {
+      return;
+    }
     const baseUrl = new URL(
       import.meta.env.BASE_URL ?? "/",
       window.location.origin,
@@ -75,8 +77,12 @@ export const provider: SearchProvider = {
   },
 
   async search(query) {
-    if (!pagefind) await this.init?.();
-    if (!pagefind) return [];
+    if (!pagefind) {
+      await this.init?.();
+    }
+    if (!pagefind) {
+      return [];
+    }
 
     const search = await pagefind.search(
       query,

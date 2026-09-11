@@ -5,7 +5,9 @@ import {
 } from "@cloudflare/nimbus-docs/client";
 
 mount("[data-dialog]", (root) => {
-  if (!(root instanceof HTMLDialogElement)) return () => {};
+  if (!(root instanceof HTMLDialogElement)) {
+    return () => undefined;
+  }
   const dialog = root;
 
   const sync = () => (dialog.open ? lockScroll() : unlockScroll());
@@ -14,7 +16,9 @@ mount("[data-dialog]", (root) => {
 
   const onClose = () => unlockScroll();
   const onBackdrop = (e: MouseEvent) => {
-    if (e.target === dialog) dialog.close();
+    if (e.target === dialog) {
+      dialog.close();
+    }
   };
   dialog.addEventListener("close", onClose);
   dialog.addEventListener("click", onBackdrop);
@@ -24,6 +28,8 @@ mount("[data-dialog]", (root) => {
     dialog.removeEventListener("close", onClose);
     dialog.removeEventListener("click", onBackdrop);
     // A swap while open never fires `close`; balance the scroll lock.
-    if (dialog.open) unlockScroll();
+    if (dialog.open) {
+      unlockScroll();
+    }
   };
 });
