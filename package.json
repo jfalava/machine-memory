@@ -37,6 +37,9 @@
       }
     }
   },
+  "overrides": {
+    "@effect/platform-node-shared": "4.0.0-rc.112"
+  },
   "type": "module",
   "scripts": {
     "format": "bunx oxfmt",

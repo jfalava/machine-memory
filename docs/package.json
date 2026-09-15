@@ -43,6 +43,7 @@
     "@astrojs/check": "0.9.10",
     "@tailwindcss/vite": "4.3.3",
     "@typescript-eslint/parser": "8.70.0",
+    "cross-spawn": "7.0.6",
     "eslint": "10.10.0",
     "eslint-plugin-astro": "3.1.0",
     "oxfmt": "catalog:maintenance",
@@ -51,9 +52,20 @@
     "pagefind": "1.5.2",
     "prettier": "3.9.6",
     "prettier-plugin-astro": "1.0.0",
-    "satteri": "0.10.5",
+    "satteri": "^0.10.5",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "wrangler": "catalog:build"
+  },
+  "optionalDependencies": {
+    "@bruits/satteri-darwin-arm64": "0.9.5",
+    "@bruits/satteri-darwin-x64": "0.9.5",
+    "@bruits/satteri-linux-arm64-gnu": "0.9.5",
+    "@bruits/satteri-linux-arm64-musl": "0.9.5",
+    "@bruits/satteri-linux-x64-gnu": "0.9.5",
+    "@bruits/satteri-linux-x64-musl": "0.9.5",
+    "@bruits/satteri-wasm32-wasi": "0.9.5",
+    "@bruits/satteri-win32-arm64-msvc": "0.9.5",
+    "@bruits/satteri-win32-x64-msvc": "0.9.5"
   }
 }
