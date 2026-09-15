@@ -22,69 +22,67 @@ const formattedDate = lastUpdated
   : null;
 ---
 
-{
-  (markdownUrl || lastUpdated) && (
-    <div
-      data-nb-page-actions
-      data-md-url={markdownUrl}
-      class={cn(
-        "not-prose -ml-2 flex flex-wrap items-center gap-y-1 text-[0.8125rem]",
-        className,
-      )}
-      {...attrs}
-    >
-      {lastUpdated && (
-        <span class="inline-flex items-center gap-1.5 px-2 py-1 text-muted-foreground">
-          <Icon name="ph:clock" class="w-3.5 h-3.5" />
-          Updated{" "}
-          <time datetime={lastUpdated.toISOString()}>{formattedDate}</time>
-        </span>
-      )}
+{(markdownUrl || lastUpdated) && (
+  <div
+    data-nb-page-actions
+    data-md-url={markdownUrl}
+    class={cn(
+      "not-prose -ml-2 flex flex-wrap items-center gap-y-1 text-[0.8125rem]",
+      className,
+    )}
+    {...attrs}
+  >
+    {lastUpdated && (
+      <span class="inline-flex items-center gap-1.5 px-2 py-1 text-muted-foreground">
+        <Icon name="ph:clock" class="w-3.5 h-3.5" />
+        Updated{" "}
+        <time datetime={lastUpdated.toISOString()}>{formattedDate}</time>
+      </span>
+    )}
 
-      {markdownUrl && lastUpdated && (
+    {markdownUrl && lastUpdated && (
+      <span aria-hidden="true" class="select-none text-muted-foreground/40">
+        |
+      </span>
+    )}
+
+    {markdownUrl && (
+      <>
+        <button type="button" data-nb-page-actions-copy class={baseBtn}>
+          <Icon
+            name="ph:copy"
+            class="w-3.5 h-3.5"
+            data-nb-page-actions-copy-icon
+            is:inline
+          />
+          <Icon
+            name="ph:check"
+            class="hidden w-3.5 h-3.5 text-success"
+            data-nb-page-actions-check-icon
+            is:inline
+          />
+          <span data-nb-page-actions-label aria-live="polite">
+            Copy page
+          </span>
+        </button>
+
         <span aria-hidden="true" class="select-none text-muted-foreground/40">
           |
         </span>
-      )}
 
-      {markdownUrl && (
-        <>
-          <button type="button" data-nb-page-actions-copy class={baseBtn}>
-            <Icon
-              name="ph:copy"
-              class="w-3.5 h-3.5"
-              data-nb-page-actions-copy-icon
-              is:inline
-            />
-            <Icon
-              name="ph:check"
-              class="hidden w-3.5 h-3.5 text-success"
-              data-nb-page-actions-check-icon
-              is:inline
-            />
-            <span data-nb-page-actions-label aria-live="polite">
-              Copy page
-            </span>
-          </button>
-
-          <span aria-hidden="true" class="select-none text-muted-foreground/40">
-            |
-          </span>
-
-          <a
-            href={markdownUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            class={baseBtn}
-          >
-            <Icon name="ph:markdown-logo" class="w-3.5 h-3.5" />
-            View as Markdown
-          </a>
-        </>
-      )}
-    </div>
-  )
-}
+        <a
+          href={markdownUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          class={baseBtn}
+        >
+          <Icon name="ph:markdown-logo" class="w-3.5 h-3.5" />
+          View as Markdown
+        </a>
+      </>
+    )}
+  </div>
+)}
 
 <script>
   import "./page-actions.client";

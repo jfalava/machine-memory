@@ -97,7 +97,6 @@ const llmsUrl = Astro.site
         window.__nbApplyTheme = applyTheme;
       })();
     </script>
-
     <NimbusHead
       title={title}
       description={description}
@@ -117,11 +116,9 @@ const llmsUrl = Astro.site
     >
       Skip to content
     </a>
-    {
-      markdownUrl && !isHiddenVersion && (
-        <AgentDirective markdownUrl={markdownUrl} llmsUrl={llmsUrl} />
-      )
-    }
+    {markdownUrl && !isHiddenVersion && (
+      <AgentDirective markdownUrl={markdownUrl} llmsUrl={llmsUrl} />
+    )}
     <slot />
     {config.search !== false && <SearchDialog />}
 
