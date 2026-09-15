@@ -17,6 +17,7 @@ export type OAuthResources = {
   };
   readonly githubClientId: string | undefined;
   readonly githubClientSecret: string | undefined;
+  readonly githubAllowedUserId: string | undefined;
   readonly cookieEncryptionKey: string | undefined;
 };
 
@@ -32,6 +33,7 @@ export function isOAuthPath(url: string): boolean {
 type OAuthConfig = {
   readonly githubClientId: string;
   readonly githubClientSecret: string;
+  readonly githubAllowedUserId: string;
   readonly cookieEncryptionKey: string;
 };
 
@@ -40,16 +42,26 @@ type OAuthConfigResolution =
   | { readonly config: undefined; readonly missing: string[] };
 
 function resolveOAuthConfig(resources: OAuthResources): OAuthConfigResolution {
-  const { githubClientId, githubClientSecret, cookieEncryptionKey } = resources;
+  const {
+    githubClientId,
+    githubClientSecret,
+    githubAllowedUserId,
+    cookieEncryptionKey,
+  } = resources;
   if (
     githubClientId === undefined ||
     githubClientSecret === undefined ||
+    githubAllowedUserId === undefined ||
+    githubAllowedUserId.trim() === "" ||
     cookieEncryptionKey === undefined
   ) {
     const missing = [
       githubClientId === undefined ? "MACHINE_MEMORY_GITHUB_CLIENT_ID" : "",
       githubClientSecret === undefined
         ? "MACHINE_MEMORY_GITHUB_CLIENT_SECRET"
+        : "",
+      githubAllowedUserId === undefined || githubAllowedUserId.trim() === ""
+        ? "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID"
         : "",
       cookieEncryptionKey === undefined
         ? "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY"
@@ -58,7 +70,12 @@ function resolveOAuthConfig(resources: OAuthResources): OAuthConfigResolution {
     return { config: undefined, missing };
   }
   return {
-    config: { githubClientId, githubClientSecret, cookieEncryptionKey },
+    config: {
+      githubAllowedUserId,
+      githubClientId,
+      githubClientSecret,
+      cookieEncryptionKey,
+    },
     missing: [],
   };
 }
@@ -90,6 +107,7 @@ export function handleOAuthPath(
       OAUTH_KV: rawKv as KVNamespace,
       MACHINE_MEMORY_GITHUB_CLIENT_ID: config.githubClientId,
       MACHINE_MEMORY_GITHUB_CLIENT_SECRET: config.githubClientSecret,
+      MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: config.githubAllowedUserId,
       MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: config.cookieEncryptionKey,
     } satisfies OAuthEnv;
   });

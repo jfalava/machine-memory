@@ -6,7 +6,7 @@ sidebar:
   order: 0
 ---
 
-Machine Memory’s remote Worker can act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect with OAuth 2.1, then call tools to search and write project memories. Access is scoped by GitHub identity and repository slug, not a shared bearer token.
+Machine Memory’s remote Worker can act as a [Model Context Protocol](https://modelcontextprotocol.io) server. Agents connect with OAuth 2.1, then call tools to search and write project memories. Access is limited to the configured GitHub user ID and repository slug, not a shared bearer token.
 
 > Only GitHub OAuth is supported for now.
 

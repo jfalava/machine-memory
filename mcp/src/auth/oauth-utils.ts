@@ -32,6 +32,15 @@ export class OAuthError extends Error {
   }
 }
 
+export function isAllowedGithubUserId(
+  githubUserId: number | undefined,
+  allowedGithubUserId: string,
+): boolean {
+  return (
+    githubUserId !== undefined && String(githubUserId) === allowedGithubUserId
+  );
+}
+
 export function sanitizeText(text: string): string {
   return text
     .replace(/&/g, "&amp;")

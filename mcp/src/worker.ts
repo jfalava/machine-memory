@@ -54,6 +54,9 @@ export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
         githubClientSecret: Config.redacted(
           "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
         ).pipe(Effect.option),
+        githubAllowedUserId: Config.string(
+          "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
+        ).pipe(Effect.option),
         cookieEncryptionKey: Config.redacted(
           "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY",
         ).pipe(Effect.option),
@@ -67,6 +70,9 @@ export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
           oauthConfig.githubClientSecret,
           Redacted.value,
         ).pipe(Option.getOrUndefined),
+        githubAllowedUserId: Option.getOrUndefined(
+          oauthConfig.githubAllowedUserId,
+        ),
         cookieEncryptionKey: Option.map(
           oauthConfig.cookieEncryptionKey,
           Redacted.value,

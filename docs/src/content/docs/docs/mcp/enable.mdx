@@ -29,6 +29,7 @@ When deploying (CLI provision env, `iac/.env`, or your CI secrets), set:
 ```sh
 MACHINE_MEMORY_GITHUB_CLIENT_ID=your-github-oauth-app-client-id
 MACHINE_MEMORY_GITHUB_CLIENT_SECRET=your-github-oauth-app-client-secret
+MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID=your-numeric-github-user-id
 MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY=your-random-cookie-signing-secret
 ```
 
@@ -39,6 +40,14 @@ openssl rand -hex 32
 ```
 
 These are bound on the Worker and read at startup. If any are missing, OAuth/MCP routes return `503` with the missing names listed. REST routes stay available.
+
+`MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID` is the numeric ID of the one GitHub account allowed to use this MCP endpoint. Find it with:
+
+```sh
+gh api user --jq .id
+```
+
+The allowlist is checked when OAuth completes and on every MCP request. Changing it blocks previously issued tokens for the old account after redeployment. Grants from before this check also fail closed, so reconnect after deploying it.
 
 ## 3. Redeploy
 

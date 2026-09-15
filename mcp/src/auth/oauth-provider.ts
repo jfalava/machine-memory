@@ -5,6 +5,7 @@ import type {
 import { createMcpHandler } from "agents/mcp/server";
 import { createMemoryServer, type McpBindings } from "../mcp";
 import { githubHandler } from "./github-handler";
+import { isAllowedGithubUserId } from "./oauth-utils";
 
 export const AUTHORIZE_ENDPOINT = "/authorize";
 export const TOKEN_ENDPOINT = "/token";
@@ -21,6 +22,7 @@ export type OAuthEnv = McpBindings & {
   readonly OAUTH_KV: KVNamespace;
   readonly MACHINE_MEMORY_GITHUB_CLIENT_ID: string;
   readonly MACHINE_MEMORY_GITHUB_CLIENT_SECRET: string;
+  readonly MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: string;
   readonly MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: string;
   readonly OAUTH_PROVIDER?: OAuthHelpers;
 };
@@ -56,17 +58,31 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
         "The OAuth provider is only available inside the Worker runtime.",
       );
     }
-    // SAFETY: completeAuthorization stored GitHubAuthProps, so ctx.props always carries login.
+    // SAFETY: completeAuthorization stores the GitHub identity in ctx.props.
     return new mod.OAuthProvider<OAuthEnv>({
       apiRoute: "/mcp",
       apiHandler: {
-        fetch: (request, env, ctx) =>
-          createMcpHandler(() =>
-            createMemoryServer(
-              env,
-              (ctx.props as { login?: string } | undefined)?.login,
-            ),
-          )(request, env, ctx),
+        fetch: (request, env, ctx) => {
+          // SAFETY: only these optional fields are read from provider-owned
+          // grant props; a missing githubUserId fails closed below.
+          const props = ctx.props as
+            | { githubUserId?: number; login?: string }
+            | undefined;
+          if (
+            !isAllowedGithubUserId(
+              props?.githubUserId,
+              env.MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID,
+            )
+          ) {
+            return new Response(
+              "This GitHub user is not authorized to access machine-memory.",
+              { status: 403 },
+            );
+          }
+          return createMcpHandler(() =>
+            createMemoryServer(env, props?.login),
+          )(request, env, ctx);
+        },
       },
       defaultHandler: githubHandler,
       authorizeEndpoint: AUTHORIZE_ENDPOINT,

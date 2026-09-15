@@ -14,11 +14,20 @@ Symptoms against `https://<worker-url>/mcp` and the OAuth flow. Enablement steps
 
 - `MACHINE_MEMORY_GITHUB_CLIENT_ID`
 - `MACHINE_MEMORY_GITHUB_CLIENT_SECRET`
+- `MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID`
 - `MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY`
 
 The 503 body lists which names are missing.
 
-**Fix:** Set all three, redeploy ([Enable MCP](/docs/mcp/enable)). Generate the cookie key with `openssl rand -hex 32`.
+**Fix:** Set all four, redeploy ([Enable MCP](/docs/mcp/enable)). Generate the cookie key with `openssl rand -hex 32`.
+
+## GitHub user is not authorized
+
+**Symptom:** OAuth reaches the callback or an existing MCP client receives `403` with `This GitHub user is not authorized to access machine-memory.`
+
+**Cause:** MCP allows only the GitHub account whose numeric `/user.id` exactly matches `MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID`. The login name is not accepted as a substitute.
+
+**Fix:** Check the account ID with `gh api user --jq .id`, set `MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID` to that value, and redeploy. If the allowlist changes, reconnect the MCP client.
 
 ## Cookie / session signing failures
 

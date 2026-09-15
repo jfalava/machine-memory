@@ -10,6 +10,7 @@ import {
   createOAuthState,
   generateCSRFProtection,
   isClientApproved,
+  isAllowedGithubUserId,
   OAuthError,
   renderApprovalDialog,
   validateCSRFToken,
@@ -17,6 +18,7 @@ import {
 } from "./oauth-utils";
 
 export type GitHubAuthProps = {
+  githubUserId: number;
   login: string;
   name: string;
   email: string;
@@ -101,12 +103,14 @@ async function exchangeGithubCode(params: {
 }
 
 const GitHubUserSchema = Schema.Struct({
+  id: Schema.Number,
   login: Schema.String,
   name: Schema.NullOr(Schema.String),
   email: Schema.NullOr(Schema.String),
 });
 
 async function fetchGithubUser(accessToken: string): Promise<{
+  id: number;
   login: string;
   name: string;
   email: string;
@@ -127,6 +131,7 @@ async function fetchGithubUser(accessToken: string): Promise<{
   try {
     const user = Schema.decodeUnknownSync(GitHubUserSchema)(body);
     return {
+      id: user.id,
       login: user.login,
       name: user.name ?? user.login,
       email: user.email ?? "",
@@ -270,7 +275,10 @@ async function handleAuthorizePost(
 
 async function fetchOrError(
   accessToken: string,
-): Promise<{ login: string; name: string; email: string } | Response> {
+): Promise<
+  | { id: number; login: string; name: string; email: string }
+  | Response
+> {
   try {
     return await fetchGithubUser(accessToken);
   } catch (error) {
@@ -314,7 +322,7 @@ async function exchangeCodeForUser(
   | {
       kind: "ok";
       accessToken: string;
-      user: { login: string; name: string; email: string };
+      user: { id: number; login: string; name: string; email: string };
     }
   | { kind: "error"; response: Response }
 > {
@@ -359,6 +367,18 @@ async function handleCallback(
   }
   const { accessToken, user } = exchanged;
 
+  if (
+    !isAllowedGithubUserId(
+      user.id,
+      env.MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID,
+    )
+  ) {
+    return new Response(
+      "This GitHub user is not authorized to access machine-memory.",
+      { status: 403 },
+    );
+  }
+
   const { redirectTo } = await helpers.completeAuthorization({
     metadata: {
       label: user.name,
@@ -367,6 +387,7 @@ async function handleCallback(
     props: {
       accessToken,
       email: user.email,
+      githubUserId: user.id,
       login: user.login,
       name: user.name,
     } as GitHubAuthProps,
