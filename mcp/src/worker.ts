@@ -43,21 +43,21 @@ export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
       const env = yield* Cloudflare.WorkerEnvironment;
       // SAFETY: alchemy lowers env.API to a service binding for the API worker.
       const apiFetcher = env.API as Fetcher;
-      const apiToken = yield* Config.redacted("MACHINE_MEMORY_DB_TOKEN").pipe(
+      const apiToken = yield* Config.Redacted("MACHINE_MEMORY_DB_TOKEN").pipe(
         Effect.orDie,
       );
       const oauthKv = yield* Cloudflare.KV.ReadWriteNamespace(OAuthKv);
       const oauthConfig = yield* Effect.all({
-        githubClientId: Config.string("MACHINE_MEMORY_GITHUB_CLIENT_ID").pipe(
+        githubClientId: Config.String("MACHINE_MEMORY_GITHUB_CLIENT_ID").pipe(
           Effect.option,
         ),
-        githubClientSecret: Config.redacted(
+        githubClientSecret: Config.Redacted(
           "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
         ).pipe(Effect.option),
-        githubAllowedUserId: Config.string(
+        githubAllowedUserId: Config.String(
           "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
         ).pipe(Effect.option),
-        cookieEncryptionKey: Config.redacted(
+        cookieEncryptionKey: Config.Redacted(
           "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY",
         ).pipe(Effect.option),
       });

@@ -19,11 +19,11 @@ export type CommandHandler = (
 type CommandInput = JsonObject;
 
 export const positionalArgs = () =>
-  Argument.string("arg").pipe(Argument.variadic());
+  Argument.String("arg").pipe(Argument.variadic());
 export const stringFlag = (name: string) =>
-  Flag.string(name).pipe(Flag.optional);
+  Flag.String(name).pipe(Flag.optional);
 export const booleanFlag = (name: string) =>
-  Flag.boolean(name).pipe(Flag.withDefault(false));
+  Flag.Boolean(name).pipe(Flag.withDefault(false));
 export const stringSpec = (name: string): FlagSpec => ({
   name,
   kind: "string",

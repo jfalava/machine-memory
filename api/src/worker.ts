@@ -228,7 +228,7 @@ export default Cloudflare.Worker<{}>()(
     const sql = yield* SQL.D1(d1);
     const vectorize = yield* Cloudflare.Vectorize.SearchIndex(vectorIndex);
     const ai = yield* Cloudflare.Workers.AI();
-    const expectedToken = yield* Config.redacted(
+    const expectedToken = yield* Config.Redacted(
       "MACHINE_MEMORY_DB_TOKEN",
     ).pipe(Effect.orDie);
     const embed = (text: string) =>

@@ -5,8 +5,8 @@ import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";
 import { renderPretty } from "./pretty";
 import type { JsonObject, JsonValue } from "../../json";
 
-export const prettyOutput = GlobalFlag.setting("pretty")({
-  flag: Flag.boolean("pretty").pipe(
+export const prettyOutput = GlobalFlag.Setting("pretty")({
+  flag: Flag.Boolean("pretty").pipe(
     Flag.withDescription("Render human-readable output for machine commands"),
     Flag.withDefault(false),
   ),

@@ -6,4 +6,5 @@ minimumReleaseAgeExcludes = [
   "effect",
   "@effect/*",
   "alchemy",
+  "@distilled.cloud/*",
 ]
