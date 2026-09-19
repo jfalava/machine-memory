@@ -10,7 +10,7 @@ import {
   migrateRemoteRows,
   type RemoteMigrationBatchResult,
 } from "../../effect/remote-migration";
-import { CommandError } from "../../effect/errors";
+import { commandError } from "../../effect/errors";
 import {
   readLocalMigrationRows,
   resolveMigrationSourcePath,
@@ -22,12 +22,12 @@ import { replaceMemoryBlock } from "./agents-md-content";
 const ROW_BATCH_SIZE = 50;
 const LINK_BATCH_SIZE = 100;
 
-function migrationCommandError(message: string, cause?: unknown): CommandError {
-  return new CommandError({
-    message,
-    command: "local export",
-    cause,
-  });
+function migrationCommandError(
+  message: string,
+  cause?: unknown,
+  hint?: string,
+) {
+  return commandError("local export", message, cause, hint);
 }
 
 function positionalSourcePath(args: string[]): string | undefined {
@@ -61,7 +61,11 @@ function updateAgentsMdForRemote(context: CommandContext) {
     );
   }).pipe(
     Effect.mapError((cause) =>
-      migrationCommandError("Could not update AGENTS.md for --remote.", cause),
+      migrationCommandError(
+        "Could not update AGENTS.md for --remote.",
+        cause,
+        "Check that AGENTS.md is writable in this directory.",
+      ),
     ),
   );
 }
@@ -87,6 +91,7 @@ export function handleLocalExport(context: CommandContext) {
             ? cause.message
             : "Choose --remote for the migration target.",
           cause,
+          "machine-memory local export [local-db-path] --remote",
         ),
     });
 
@@ -99,6 +104,7 @@ export function handleLocalExport(context: CommandContext) {
         migrationCommandError(
           "Could not determine the current Git repository.",
           cause,
+          "Run the command from a Git repository.",
         ),
     });
     const rows = yield* Effect.try({
@@ -109,6 +115,7 @@ export function handleLocalExport(context: CommandContext) {
             ? cause.message
             : "Could not read the local database.",
           cause,
+          "Pass a local database path or set MACHINE_MEMORY_DB_PATH.",
         ),
     });
     const remote = yield* Effect.tryPromise({
@@ -119,12 +126,15 @@ export function handleLocalExport(context: CommandContext) {
             ? cause.message
             : "Could not load remote credentials.",
           cause,
+          "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN, or run machine-memory remote setup.",
         ),
     });
     if (remote.kind !== "remote") {
       return yield* Effect.fail(
         migrationCommandError(
-          "Local export requires configured remote credentials. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN or run 'machine-memory remote setup'.",
+          "Local export requires configured remote credentials.",
+          undefined,
+          "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN, or run machine-memory remote setup.",
         ),
       );
     }
@@ -138,7 +148,13 @@ export function handleLocalExport(context: CommandContext) {
         repository,
         batch,
       ).pipe(
-        Effect.mapError((cause) => migrationCommandError(cause.message, cause)),
+        Effect.mapError((cause) =>
+          migrationCommandError(
+            cause.message,
+            cause,
+            "Confirm the Worker URL and token with machine-memory remote setup.",
+          ),
+        ),
       );
       for (const item of result.items) {
         targetIds.set(item.source_id, item.target_id);
@@ -173,7 +189,13 @@ export function handleLocalExport(context: CommandContext) {
         repository,
         batch,
       ).pipe(
-        Effect.mapError((cause) => migrationCommandError(cause.message, cause)),
+        Effect.mapError((cause) =>
+          migrationCommandError(
+            cause.message,
+            cause,
+            "Confirm the Worker URL and token with machine-memory remote setup.",
+          ),
+        ),
       );
     }
 

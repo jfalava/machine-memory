@@ -84,6 +84,7 @@ function resolveInitBackend(
             "Choose exactly one init target: --local, --remote, or --mcp.",
           command: "init",
           cause: undefined,
+          hint: "machine-memory init (--local|--remote|--mcp)",
         }),
       );
     }
@@ -101,6 +102,7 @@ function resolveInitBackend(
               : "Choose a database backend explicitly with --local or --remote.",
           command: "init",
           cause,
+          hint: "machine-memory init (--local|--remote|--mcp)",
         }),
     });
     return remote ? "remote" : "local";
@@ -149,7 +151,12 @@ function offerFirstRunSetup(
       yield* remoteProvision(commandCtx);
     } else if (choice !== "skip") {
       yield* Effect.fail(
-        new Error("Choose setup, create, or skip during first-run setup."),
+        new CommandError({
+          message: "Choose setup, create, or skip during first-run setup.",
+          command: "init",
+          cause: undefined,
+          hint: "Answer setup, create, or skip.",
+        }),
       );
     }
   });

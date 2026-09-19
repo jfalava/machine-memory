@@ -15,6 +15,10 @@ import { CommandError } from "../effect/errors";
 import { UpgradeError } from "../upgrade";
 import { builtinCommands, featureCommands } from "./commands/definitions";
 import { helpPayload } from "./help";
+import {
+  commandErrorForRender,
+  humanCommandFailureOutput,
+} from "./human-error";
 
 const rootCommand = Command.make("machine-memory", {}, () =>
   Effect.gen(function* () {
@@ -80,29 +84,8 @@ function humanUpgradeErrorLines(message: string): string[] {
   return ["", pc.red(pc.bold("✗ Upgrade failed")), `  ${String(message)}`, ""];
 }
 
-function humanCommandErrorLines(error: CommandError): string[] {
-  const lines = [
-    "",
-    pc.red(pc.bold(`✗ ${error.command} failed`)),
-    `  ${String(error.message)}`,
-  ];
-  if (error.command === "init") {
-    lines.push(`  ${pc.dim("Usage:")} machine-memory init (--local|--remote|--mcp)`);
-  } else if (error.command === "remote setup") {
-    lines.push(
-      `  ${pc.dim("Next:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
-    );
-  } else if (error.command === "remote provision") {
-    lines.push(
-      `  ${pc.dim("Next:")} machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]`,
-    );
-  } else if (error.command === "local export") {
-    lines.push(
-      `  ${pc.dim("Usage:")} machine-memory local export [local-db-path] --remote`,
-    );
-  }
-  lines.push("");
-  return lines;
+function humanCommandErrorText(error: CommandError): string {
+  return humanCommandFailureOutput(error).stderr.join("\n");
 }
 
 function humanCommandHelp(command: string): string {
@@ -154,19 +137,23 @@ function formatterFor(
         ? humanUpgradeErrorLines(
             errors.map((error) => error.message).join("\n"),
           ).join("\n")
-        : humanCommandErrorLines(
+        : humanCommandErrorText(
             new CommandError({
               command,
               message: errors.map((error) => error.message).join("\n"),
               cause: undefined,
             }),
-          ).join("\n"),
+          ),
   };
 }
 
 function renderHumanCommandError(error: CommandError): void {
-  for (const line of humanCommandErrorLines(error)) {
+  const output = humanCommandFailureOutput(error);
+  for (const line of output.stderr) {
     console.error(line);
+  }
+  for (const line of output.stdout) {
+    console.info(line);
   }
 }
 
@@ -186,14 +173,7 @@ function renderHumanCommandFailure(command: string, error: Error): void {
     );
     return;
   }
-  renderHumanCommandError(
-    new CommandError({
-      command,
-      message:
-        error instanceof Error ? error.message : "Unexpected CLI failure.",
-      cause: undefined,
-    }),
-  );
+  renderHumanCommandError(commandErrorForRender(command, error));
 }
 
 function isReindexSummaryFailure(

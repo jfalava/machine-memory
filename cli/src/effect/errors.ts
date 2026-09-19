@@ -6,6 +6,7 @@ export class CommandError extends Schema.TaggedError<CommandError>()(
     message: Schema.String,
     command: Schema.String,
     cause: Schema.Unknown,
+    hint: Schema.optionalKey(Schema.String),
   },
 ) {}
 
@@ -22,6 +23,10 @@ export function commandError(
   command: string,
   message: string,
   cause?: unknown,
+  hint?: string,
 ): CommandError {
+  if (hint) {
+    return new CommandError({ message, command, cause, hint });
+  }
   return new CommandError({ message, command, cause });
 }

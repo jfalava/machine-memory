@@ -1118,6 +1118,11 @@ describe("human command errors", () => {
         "Usage: machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
         "✗ remote provision failed",
       ],
+      [
+        ["local", "export", "--bad"],
+        "Usage: machine-memory local export [local-db-path] --remote",
+        "✗ local export failed",
+      ],
     ] as const;
 
     for (const [args, usage, heading] of cases) {
@@ -1128,6 +1133,36 @@ describe("human command errors", () => {
       expect(result.stdout).not.toContain('"error"');
       expect(result.stderr).toContain(heading);
       expect(result.stderr).not.toContain('{"error"');
+      expect(result.stderr).not.toContain("Next:");
+    }
+  });
+
+  it("prints runtime hints on stdout instead of a red Next line", async () => {
+    const cases = [
+      [
+        ["init"],
+        "Choose exactly one init target",
+        "✗ init failed",
+        "machine-memory init (--local|--remote|--mcp)",
+      ],
+      [
+        ["local", "export"],
+        "Choose a database backend explicitly",
+        "✗ local export failed",
+        "machine-memory local export [local-db-path] --remote",
+      ],
+    ] as const;
+
+    for (const [args, message, heading, hint] of cases) {
+      const result = await execBun(["run", cliEntrypoint, ...args], {});
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(heading);
+      expect(result.stderr).toContain(message);
+      expect(result.stderr).not.toContain("Next:");
+      expect(result.stderr).not.toContain("Hint");
+      expect(result.stdout).toContain("Hint");
+      expect(result.stdout).toContain(hint);
     }
   });
 });

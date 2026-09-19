@@ -11,7 +11,11 @@ import {
   normalizeRemoteUrl,
   saveRemoteCredentials,
 } from "../../database-config";
-import { CommandError } from "../../effect/errors";
+import {
+  CommandError,
+  commandError as makeCommandError,
+} from "../../effect/errors";
+import { storedRemoteCredentialsError } from "../human-error";
 import type { CommandContext } from "../runtime/context";
 import {
   booleanFlag,
@@ -30,10 +34,18 @@ import {
 
 function commandError(
   message: string,
-  cause?: unknown,
-  command = "remote setup",
+  options?: {
+    cause?: unknown;
+    command?: string;
+    hint?: string;
+  },
 ): CommandError {
-  return new CommandError({ message, command, cause });
+  return makeCommandError(
+    options?.command ?? "remote setup",
+    message,
+    options?.cause,
+    options?.hint,
+  );
 }
 
 function ask(label: string, fallback: string | undefined): string {
@@ -44,7 +56,11 @@ function ask(label: string, fallback: string | undefined): string {
   const answer = globalThis.prompt(`${pc.cyan(label)}${suffix}:`);
   const value = answer?.trim() || fallback;
   if (!value) {
-    throw commandError(`${label} is required.`);
+    const flag =
+      label === "Worker URL" ? "--url <worker-url>" : "--token <worker-token>";
+    throw commandError(`${label} is required.`, {
+      hint: `Pass ${flag}, or run from a terminal that can prompt.`,
+    });
   }
   return value;
 }
@@ -181,7 +197,11 @@ function cancelMaskedInput(options: {
 }): void {
   restoreMaskedInput(options.stdin, options.onData, options.wasRaw);
   options.stdout.write("\n");
-  options.reject(commandError(`${options.label} input was cancelled.`));
+  options.reject(
+    commandError(`${options.label} input was cancelled.`, {
+      hint: "Rerun the command, or pass --url and --token to skip the prompt.",
+    }),
+  );
 }
 
 
@@ -196,8 +216,7 @@ function loadCurrentRemote() {
       const stored = await loadStoredRemoteCredentials();
       return stored ? { kind: "remote" as const, ...stored } : configured;
     },
-    catch: (cause) =>
-      commandError("Could not read stored remote credentials.", cause),
+    catch: (cause) => storedRemoteCredentialsError(cause, "remote setup"),
   });
 }
 
@@ -214,8 +233,10 @@ export function remoteSetup(context: CommandContext) {
       catch: (cause) =>
         commandError(
           cause instanceof Error ? cause.message : "Invalid Worker URL.",
-          cause,
-          "remote setup",
+          {
+            cause,
+            hint: "Pass a full http:// or https:// Worker URL.",
+          },
         ),
     });
 
@@ -224,7 +245,11 @@ export function remoteSetup(context: CommandContext) {
       (currentRemote?.token || undefined) ??
       (yield* Effect.promise(() => askMasked("Worker token")));
     if (!token) {
-      return yield* Effect.fail(commandError("Worker token is required."));
+      return yield* Effect.fail(
+        commandError("Worker token is required.", {
+          hint: "Pass --token <worker-token>.",
+        }),
+      );
     }
 
     yield* Effect.tryPromise({
@@ -237,10 +262,10 @@ export function remoteSetup(context: CommandContext) {
           apiName: currentRemote?.apiName,
         }),
       catch: (cause) =>
-        commandError(
-          "Could not store credentials in the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKENin the repository root instead.",
+        commandError("Could not store credentials in the OS keychain.", {
           cause,
-        ),
+          hint: "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN instead.",
+        }),
     });
 
     yield* Effect.sync(() => printRemoteSaved(url));
@@ -251,11 +276,10 @@ function docsFlagOverride(args: string[]): boolean | undefined {
   const noDocs = args.includes("--no-docs");
   const forceDocs = args.includes("--docs");
   if (noDocs && forceDocs) {
-    throw commandError(
-      "Pass only one of --docs or --no-docs.",
-      undefined,
-      "remote provision",
-    );
+    throw commandError("Pass only one of --docs or --no-docs.", {
+      command: "remote provision",
+      hint: "machine-memory remote provision [--docs|--no-docs]",
+    });
   }
   if (noDocs) {
     return false;
@@ -339,6 +363,26 @@ function printProvisioned(url: string, resolved: DeployConfig): void {
   console.info();
 }
 
+function provisionDeployError(cause: unknown): CommandError {
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : "Could not deploy the remote database.";
+  let hint =
+    "Check Cloudflare authentication and the Alchemy stack (MACHINE_MEMORY_REMOTE_DB_DIR).";
+  if (message.includes("did not report the Worker URL")) {
+    hint =
+      "Rerun machine-memory remote provision, or save the Worker with machine-memory remote setup --url <worker-url> --token <worker-token>.";
+  } else if (message.includes("Alchemy remote stack is unavailable")) {
+    hint = "Set MACHINE_MEMORY_REMOTE_DB_DIR to the iac/ stack directory.";
+  }
+  return commandError(message, {
+    cause,
+    command: "remote provision",
+    hint,
+  });
+}
+
 export function remoteProvision(context: CommandContext) {
   return Effect.gen(function* () {
     const current = yield* loadCurrentRemote();
@@ -349,9 +393,14 @@ export function remoteProvision(context: CommandContext) {
         cause instanceof CommandError
           ? cause
           : commandError(
-              cause instanceof Error ? cause.message : "Invalid provision flags.",
-              cause,
-              "remote provision",
+              cause instanceof Error
+                ? cause.message
+                : "Invalid provision flags.",
+              {
+                cause,
+                command: "remote provision",
+                hint: "Check --config and the provision flag names.",
+              },
             ),
     });
     const workerToken =
@@ -364,23 +413,16 @@ export function remoteProvision(context: CommandContext) {
           deployConfig: resolved,
           workerToken,
         }),
-      catch: (cause) =>
-        commandError(
-          cause instanceof Error
-            ? cause.message
-            : "Could not deploy the remote database.",
-          cause,
-          "remote provision",
-        ),
+      catch: (cause) => provisionDeployError(cause),
     });
     const url = yield* Effect.try({
       try: () => normalizeRemoteUrl(deployment.url),
       catch: (cause) =>
-        commandError(
-          "Alchemy did not return a valid Worker URL.",
+        commandError("Alchemy did not return a valid Worker URL.", {
           cause,
-          "remote provision",
-        ),
+          command: "remote provision",
+          hint: "Save the Worker with machine-memory remote setup --url <worker-url> --token <worker-token>.",
+        }),
     });
 
     yield* Effect.tryPromise({
@@ -394,9 +436,12 @@ export function remoteProvision(context: CommandContext) {
         }),
       catch: (cause) =>
         commandError(
-          "The remote database was deployed, but credentials could not be stored in the OS keychain. Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
-          cause,
-          "remote provision",
+          "The remote database was deployed, but credentials could not be stored in the OS keychain.",
+          {
+            cause,
+            command: "remote provision",
+            hint: "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
+          },
         ),
     });
 
