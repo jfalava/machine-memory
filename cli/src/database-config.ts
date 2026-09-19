@@ -135,6 +135,29 @@ export async function loadStoredRemoteCredentials(): Promise<
   return stored ? parseRemoteCredentials(stored) : undefined;
 }
 
+export async function loadCurrentRemoteConfig(
+  environment: Record<string, string | undefined> = process.env,
+  loadStored: () => Promise<
+    RemoteCredentials | undefined
+  > = loadStoredRemoteCredentials,
+): Promise<{
+  config: DatabaseConfig;
+  warningCause?: unknown;
+}> {
+  const configured = databaseConfig(environment);
+  if (configured.kind === "remote") {
+    return { config: configured };
+  }
+  try {
+    const stored = await loadStored();
+    return stored
+      ? { config: { kind: "remote", ...stored } }
+      : { config: configured };
+  } catch (warningCause) {
+    return { config: configured, warningCause };
+  }
+}
+
 function parseOptionalRemoteCredentials(
   candidate: JsonObject,
 ): Pick<RemoteCredentials, "stackName" | "databaseName" | "apiName"> {

@@ -13,7 +13,7 @@ describe("human command failure output", () => {
         command: "remote setup",
         message: "Could not read stored remote credentials from the OS keychain.",
         cause: undefined,
-        hint: "Unlock the OS keychain, or set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
+        hint: "Unlock the OS keychain, pass --url and --token, or set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
       }),
     );
 
@@ -67,6 +67,7 @@ describe("stored remote credential errors", () => {
       "Could not read stored remote credentials from the OS keychain.",
     );
     expect(error.hint).toContain("Unlock the OS keychain");
+    expect(error.hint).toContain("--url");
     expect(error.hint).toContain("MACHINE_MEMORY_DB_TOKEN");
   });
 });

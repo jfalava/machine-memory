@@ -47,6 +47,16 @@ export function storedRemoteCredentialsError(
     command,
     "Could not read stored remote credentials from the OS keychain.",
     cause,
-    "Unlock the OS keychain, or set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
+    "Unlock the OS keychain, pass --url and --token, or set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
   );
+}
+
+export function storedRemoteCredentialsWarningLines(cause: unknown): string[] {
+  const error = storedRemoteCredentialsError(cause, "remote setup");
+  const lines = [`  ${pc.dim(error.message)}`];
+  if (error.hint) {
+    lines.push(humanHintLine(error.hint));
+  }
+  lines.push("");
+  return lines;
 }

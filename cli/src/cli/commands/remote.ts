@@ -6,8 +6,7 @@ import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { getFlagValue } from "../../cli-utils";
 import {
-  databaseConfig,
-  loadStoredRemoteCredentials,
+  loadCurrentRemoteConfig,
   normalizeRemoteUrl,
   saveRemoteCredentials,
 } from "../../database-config";
@@ -15,7 +14,7 @@ import {
   CommandError,
   commandError as makeCommandError,
 } from "../../effect/errors";
-import { storedRemoteCredentialsError } from "../human-error";
+import { storedRemoteCredentialsWarningLines } from "../human-error";
 import type { CommandContext } from "../runtime/context";
 import {
   booleanFlag,
@@ -206,18 +205,21 @@ function cancelMaskedInput(options: {
 
 
 function loadCurrentRemote() {
-  return Effect.tryPromise({
-    try: async () => {
-      const configured = databaseConfig();
-      if (configured.kind === "remote") {
-        return configured;
+  return Effect.promise(() => loadCurrentRemoteConfig()).pipe(
+    Effect.tap((result) => {
+      if (result.warningCause === undefined) {
+        return Effect.void;
       }
-
-      const stored = await loadStoredRemoteCredentials();
-      return stored ? { kind: "remote" as const, ...stored } : configured;
-    },
-    catch: (cause) => storedRemoteCredentialsError(cause, "remote setup"),
-  });
+      return Effect.sync(() => {
+        for (const line of storedRemoteCredentialsWarningLines(
+          result.warningCause,
+        )) {
+          console.info(line);
+        }
+      });
+    }),
+    Effect.map((result) => result.config),
+  );
 }
 
 export function remoteSetup(context: CommandContext) {
