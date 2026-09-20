@@ -29,7 +29,6 @@
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
-    "typescript": "catalog:build",
-    "wrangler": "catalog:build"
+    "typescript": "catalog:build"
   }
 }

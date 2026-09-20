@@ -19,7 +19,7 @@
       },
       "types": {
         "bun-types": "1.4.2",
-        "@cloudflare/workers-types": "5.20260915.1"
+        "@cloudflare/workers-types": "5.20260920.1"
       },
       "iac": {
         "alchemy": "2.0.0-beta.79"
@@ -28,7 +28,7 @@
         "oxlint": "1.83.0",
         "oxlint-tsgolint": "7.0.2001",
         "typescript": "7.0.2",
-        "wrangler": "4.131.2"
+        "wrangler": "4.135.0"
       },
       "maintenance": {
         "oxfmt": "0.68.0",
