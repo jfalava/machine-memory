@@ -10,10 +10,10 @@ Sandboxes (Amp orbs, CI, locked-down Linux) often cannot use the OS keychain. MC
 
 ## MCP vs CLI credentials
 
-| Path               | Auth                            | Sandbox notes                                                                                                                       |
-| ------------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **MCP** `/mcp`     | GitHub OAuth 2.1 in the browser | No `MACHINE_MEMORY_DB_TOKEN`. Client must complete OAuth; cookie signing uses `MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY` on the Worker. |
-| **CLI** `--remote` | Worker URL + bearer token       | Needs keychain **or** repo-root `.env` (below).                                                                                     |
+| Path               | Auth                                                         | Sandbox notes                                                                                            |
+| ------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| **MCP** `/mcp`     | GitHub OAuth 2.1 in the browser, or a code entered at `/activate` | No `MACHINE_MEMORY_DB_TOKEN`. Cookie signing uses `MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY` on the Worker. |
+| **CLI** `--remote` | Worker URL + bearer token                                    | Needs keychain **or** repo-root `.env` (below).                                                          |
 
 MCP clients never read your local keychain or `.env` token. If OAuth fails, see [MCP troubleshooting](/troubleshooting/mcp).
 
@@ -41,7 +41,7 @@ If the keychain is unreachable, the CLI suggests `.env` instead of forcing `remo
 ## MCP-only in a sandbox
 
 1. Worker already [provisioned](/infrastructure/overview) and [MCP enabled](/docs/mcp/enable) from a machine that can deploy.
-2. In the sandbox, connect the MCP client to `https://<worker-url>/mcp` and finish browser OAuth (device must open the auth URL).
+2. In the sandbox, connect the MCP client to `https://<worker-url>/mcp`. A browser on that machine can finish OAuth directly. A headless client prints a code; enter it at `https://<worker-url>/activate` from a browser you already have. See [Enable MCP](/docs/mcp/enable).
 3. Install agent instructions without the CLI:
 
    ```sh

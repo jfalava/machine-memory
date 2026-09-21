@@ -3,11 +3,26 @@ import { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import {
+  ACTIVATE_PATH,
+  beginDeviceActivation,
+  DEVICE_START_PATH,
+  pollDeviceLogin,
+  startDeviceLogin,
+} from "./auth/device-login";
 import { createOauthProvider, type OAuthEnv } from "./auth/oauth-provider";
 
 const INTERNAL_ERROR = "Internal server error.";
 
-const OAUTH_PATHS = ["/mcp", "/authorize", "/callback", "/token", "/register"];
+const OAUTH_PATHS = [
+  "/mcp",
+  "/authorize",
+  ACTIVATE_PATH,
+  "/callback",
+  DEVICE_START_PATH,
+  "/token",
+  "/register",
+];
 
 export type OAuthResources = {
   readonly api: Fetcher;
@@ -117,6 +132,37 @@ export function handleOAuthPath(
     const execCtx = yield* Cloudflare.WorkerExecutionContext;
     const webRequest = yield* HttpServerRequest.toWeb(request);
     const provider = yield* Effect.promise(() => createOauthProvider());
+    const url = new URL(webRequest.url);
+    if (url.pathname === DEVICE_START_PATH) {
+      return yield* Effect.promise(() =>
+        startDeviceLogin(webRequest, oauthEnv.OAUTH_KV),
+      );
+    }
+    if (url.pathname === "/token") {
+      const pending = yield* Effect.promise(() =>
+        pollDeviceLogin(webRequest, oauthEnv.OAUTH_KV),
+      );
+      if (pending !== undefined) {
+        return pending;
+      }
+    }
+    if (url.pathname === ACTIVATE_PATH) {
+      const activation = yield* Effect.promise(() =>
+        beginDeviceActivation(webRequest, oauthEnv.OAUTH_KV),
+      );
+      if (activation.kind === "response") {
+        return activation.response;
+      }
+      // Follow into the provider-owned /authorize handler so it injects
+      // OAUTH_PROVIDER before rendering the existing GitHub consent page.
+      const authorize = new Request(activation.location, {
+        headers: webRequest.headers,
+        method: "GET",
+      });
+      return yield* Effect.promise(() =>
+        provider.fetch(authorize, oauthEnv, execCtx.raw),
+      );
+    }
     return yield* Effect.promise(() =>
       provider.fetch(webRequest, oauthEnv, execCtx.raw),
     );

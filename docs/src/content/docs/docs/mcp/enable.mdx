@@ -66,6 +66,17 @@ CI=1 bun run deploy
 
 Point an MCP client at `https://<router-url>/mcp`. Complete the browser OAuth flow once. Tokens carry `mcp:read` and `mcp:write`.
 
+## Headless clients
+
+A sandbox that cannot open a browser can still use the same GitHub allowlist. The client starts the login and prints a short code; you approve that code in a browser you already have.
+
+1. On the headless machine, register a public client (`token_endpoint_auth_method=none`) with an HTTP loopback `redirect_uri`, then start a listener on that URI.
+2. `POST /device/start` with `client_id`, `redirect_uri`, and an S256 `code_challenge`. The response has `user_code`, `device_code`, `verification_uri`, and `interval`.
+3. Open `verification_uri` (`https://<router-url>/activate`), enter `user_code`, and finish the GitHub login. The page says approved. It does not show a token.
+4. Poll `POST /token` with `grant_type=urn:machine-memory:grant-type:device-code`, `device_code`, and `client_id` until the response is no longer `authorization_pending`. Then exchange the authorization code delivered to the loopback listener at `POST /token` with `grant_type=authorization_code` and the PKCE `code_verifier`.
+
+The printed code expires in 10 minutes, is single-use, and is not an access token. Do not send `MACHINE_MEMORY_DB_TOKEN` to an MCP client. `mcp-remote --device-code` does not apply: this server does not advertise RFC 8628 device authorization.
+
 Next: [Init](/docs/mcp/init) for agent instructions, then [Tools](/docs/mcp/tools).
 
 ## If something fails

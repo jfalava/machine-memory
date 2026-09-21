@@ -4,6 +4,7 @@ import type {
 } from "@cloudflare/workers-oauth-provider";
 import { Schema } from "effect";
 import type { OAuthEnv } from "./oauth-provider";
+import { claimDeviceApproval, deviceApprovedPage } from "./device-login";
 import {
   addApprovedClient,
   bindStateToSession,
@@ -379,29 +380,103 @@ async function handleCallback(
     );
   }
 
-  const { redirectTo } = await helpers.completeAuthorization({
-    metadata: {
-      label: user.name,
-    },
-    // SAFETY: the literal sets every GitHubAuthProps field explicitly.
-    props: {
-      accessToken,
-      email: user.email,
-      githubUserId: user.id,
-      login: user.login,
-      name: user.name,
-    } as GitHubAuthProps,
-    request: oauthReqInfo,
-    scope: oauthReqInfo.scope,
-    userId: user.login,
+  return respondToCompletedGrant({
+    accessToken,
+    clearSessionCookie,
+    env,
+    helpers,
+    oauthReqInfo,
+    user,
   });
+}
 
-  const headers = new Headers({ Location: redirectTo });
+function respondToCompletedGrant(input: {
+  accessToken: string;
+  clearSessionCookie: string;
+  env: OAuthEnv;
+  helpers: OAuthHelpers;
+  oauthReqInfo: AuthRequest;
+  user: { id: number; login: string; name: string; email: string };
+}): Promise<Response> {
+  const { accessToken, clearSessionCookie, env, helpers, oauthReqInfo, user } =
+    input;
+  return deviceSessionApproved(env, oauthReqInfo).then(async (approved) => {
+    const redirectTo = await completeGrant(
+      helpers,
+      oauthReqInfo,
+      user,
+      accessToken,
+    );
+    if (approved) {
+      return finishDeviceApproval(redirectTo, clearSessionCookie);
+    }
+    const headers = new Headers({ Location: redirectTo });
+    if (clearSessionCookie) {
+      headers.set("Set-Cookie", clearSessionCookie);
+    }
+    return new Response(null, { status: 302, headers });
+  });
+}
+
+function completeGrant(
+  helpers: OAuthHelpers,
+  oauthReqInfo: AuthRequest,
+  user: { id: number; login: string; name: string; email: string },
+  accessToken: string,
+): Promise<string> {
+  return helpers
+    .completeAuthorization({
+      metadata: {
+        label: user.name,
+      },
+      // SAFETY: the literal sets every GitHubAuthProps field explicitly.
+      props: {
+        accessToken,
+        email: user.email,
+        githubUserId: user.id,
+        login: user.login,
+        name: user.name,
+      } as GitHubAuthProps,
+      request: oauthReqInfo,
+      scope: oauthReqInfo.scope,
+      userId: user.login,
+    })
+    .then((completed) => completed.redirectTo);
+}
+
+function finishDeviceApproval(
+  redirectTo: string,
+  clearSessionCookie: string,
+): Response {
+  // The provider redirect carries the authorization code to the client's
+  // loopback listener. The browser that approved the code must not follow
+  // it, or the code lands in the person's address bar instead.
+  void notifyLoopback(redirectTo);
+  const approved = deviceApprovedPage();
   if (clearSessionCookie) {
-    headers.set("Set-Cookie", clearSessionCookie);
+    approved.headers.set("Set-Cookie", clearSessionCookie);
   }
+  return approved;
+}
 
-  return new Response(null, { status: 302, headers });
+function deviceSessionApproved(
+  env: OAuthEnv,
+  oauthReqInfo: AuthRequest,
+): Promise<boolean> {
+  return claimDeviceApproval(
+    env.OAUTH_KV,
+    oauthReqInfo.state,
+    oauthReqInfo.clientId,
+    oauthReqInfo.redirectUri,
+    oauthReqInfo.codeChallenge,
+  );
+}
+
+function notifyLoopback(redirectTo: string): Promise<void> {
+  return fetch(redirectTo, { redirect: "manual" }).then(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 export const githubHandler: ExportedHandler<OAuthEnv> = {
