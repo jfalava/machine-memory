@@ -66,6 +66,7 @@ const nimbusConfig = defineNimbusConfig({
         items: [
           { label: "Overview", link: "/docs/mcp/overview" },
           { label: "Enable MCP", link: "/docs/mcp/enable" },
+          { label: "Headless login", link: "/docs/mcp/headless" },
           { label: "Init", link: "/docs/mcp/init" },
           { label: "Tools", link: "/docs/mcp/tools" },
         ],
