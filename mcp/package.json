@@ -25,6 +25,8 @@
   "devDependencies": {
     "@modelcontextprotocol/client": "2.0.0",
     "bun-types": "catalog:types",
+    "esbuild": "0.28.2",
+    "miniflare": "4.20260730.0",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",

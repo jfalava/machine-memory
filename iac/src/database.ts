@@ -1,4 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+
 import { databaseName, oauthKvName } from "./config";
 
 /**
@@ -17,3 +18,12 @@ export const Database = Cloudflare.D1.Database("machine-memory-db", {
 export const OAuthKv = Cloudflare.KV.Namespace("machine-memory-oauth-kv", {
   title: oauthKvName,
 });
+
+/** Atomic, short-lived headless approvals; separate from project memory data. */
+export const OAuthDevices = Cloudflare.D1.Database(
+  "machine-memory-oauth-devices",
+  {
+    name: `${oauthKvName}-devices`,
+    migrations: "./oauth-migrations",
+  },
+);

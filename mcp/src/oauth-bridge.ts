@@ -1,14 +1,13 @@
-import * as Cloudflare from "alchemy/Cloudflare";
 import { RuntimeContext } from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
 import {
   ACTIVATE_PATH,
-  beginDeviceActivation,
   DEVICE_START_PATH,
-  pollDeviceLogin,
-  startDeviceLogin,
+  DEVICE_POLL_PATH,
 } from "./auth/device-login";
 import { createOauthProvider, type OAuthEnv } from "./auth/oauth-provider";
 
@@ -20,6 +19,7 @@ const OAUTH_PATHS = [
   ACTIVATE_PATH,
   "/callback",
   DEVICE_START_PATH,
+  DEVICE_POLL_PATH,
   "/token",
   "/register",
 ];
@@ -28,6 +28,9 @@ export type OAuthResources = {
   readonly api: Fetcher;
   readonly apiToken: string;
   readonly oauthKv: {
+    readonly raw: Effect.Effect<unknown, never, RuntimeContext>;
+  };
+  readonly oauthDevices: {
     readonly raw: Effect.Effect<unknown, never, RuntimeContext>;
   };
   readonly githubClientId: string | undefined;
@@ -113,13 +116,18 @@ export function handleOAuthPath(
   }
 
   const buildOAuthEnv = Effect.gen(function* () {
-    const [rawKv] = yield* Effect.all([resources.oauthKv.raw]);
+    const [rawKv, rawDevices] = yield* Effect.all([
+      resources.oauthKv.raw,
+      resources.oauthDevices.raw,
+    ]);
     // SAFETY: worker.ts provides this resource from the real Cloudflare
     // binding; alchemy's RuntimeContext types raw values as unknown only.
     return {
       api: resources.api,
       apiToken: resources.apiToken,
       OAUTH_KV: rawKv as KVNamespace,
+      // SAFETY: worker.ts supplies the dedicated D1 binding through Alchemy.
+      OAUTH_DEVICES: rawDevices as D1Database,
       MACHINE_MEMORY_GITHUB_CLIENT_ID: config.githubClientId,
       MACHINE_MEMORY_GITHUB_CLIENT_SECRET: config.githubClientSecret,
       MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: config.githubAllowedUserId,
@@ -132,37 +140,6 @@ export function handleOAuthPath(
     const execCtx = yield* Cloudflare.WorkerExecutionContext;
     const webRequest = yield* HttpServerRequest.toWeb(request);
     const provider = yield* Effect.promise(() => createOauthProvider());
-    const url = new URL(webRequest.url);
-    if (url.pathname === DEVICE_START_PATH) {
-      return yield* Effect.promise(() =>
-        startDeviceLogin(webRequest, oauthEnv.OAUTH_KV),
-      );
-    }
-    if (url.pathname === "/token") {
-      const pending = yield* Effect.promise(() =>
-        pollDeviceLogin(webRequest, oauthEnv.OAUTH_KV),
-      );
-      if (pending !== undefined) {
-        return pending;
-      }
-    }
-    if (url.pathname === ACTIVATE_PATH) {
-      const activation = yield* Effect.promise(() =>
-        beginDeviceActivation(webRequest, oauthEnv.OAUTH_KV),
-      );
-      if (activation.kind === "response") {
-        return activation.response;
-      }
-      // Follow into the provider-owned /authorize handler so it injects
-      // OAUTH_PROVIDER before rendering the existing GitHub consent page.
-      const authorize = new Request(activation.location, {
-        headers: webRequest.headers,
-        method: "GET",
-      });
-      return yield* Effect.promise(() =>
-        provider.fetch(authorize, oauthEnv, execCtx.raw),
-      );
-    }
     return yield* Effect.promise(() =>
       provider.fetch(webRequest, oauthEnv, execCtx.raw),
     );

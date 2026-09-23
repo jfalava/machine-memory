@@ -3,9 +3,25 @@ import type {
   OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import { Schema } from "effect";
-import type { OAuthEnv } from "./oauth-provider";
-import { claimDeviceApproval, deviceApprovedPage } from "./device-login";
+
 import {
+  ACTIVATE_PATH,
+  DEVICE_START_PATH,
+  DEVICE_POLL_PATH,
+  beginDeviceActivation,
+  startDeviceLogin,
+  pollDeviceLogin,
+  deviceApprovedPage,
+} from "./device-login";
+import {
+  claimDeviceApproval,
+  finishDeviceApproval,
+  rejectDeviceLogin,
+  DEVICE_STATE_PREFIX,
+} from "./device-store";
+import type { OAuthEnv } from "./oauth-provider";
+import {
+  AuthRequestSchema,
   addApprovedClient,
   bindStateToSession,
   createOAuthState,
@@ -29,20 +45,6 @@ export type GitHubAuthProps = {
 const GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_USER_URL = "https://api.github.com/user";
-
-const AuthRequestSchema = Schema.Struct({
-  responseType: Schema.String,
-  clientId: Schema.String,
-  redirectUri: Schema.String,
-  scope: Schema.mutable(Schema.Array(Schema.String)),
-  state: Schema.String,
-  codeChallenge: Schema.optional(Schema.String),
-  codeChallengeMethod: Schema.optional(Schema.String),
-  resource: Schema.optional(
-    Schema.Union([Schema.String, Schema.mutable(Schema.Array(Schema.String))]),
-  ),
-  issuer: Schema.optional(Schema.String),
-});
 
 const EncodedStateSchema = Schema.Struct({
   oauthReqInfo: AuthRequestSchema,
@@ -192,12 +194,27 @@ async function handleAuthorizeGet(
 ): Promise<Response> {
   const helpers = requireOAuthHelpers(env);
   const oauthReqInfo = await helpers.parseAuthRequest(request);
+  return authorizeRequest(request, env, oauthReqInfo);
+}
+
+async function authorizeRequest(
+  request: Request,
+  env: OAuthEnv,
+  oauthReqInfo: AuthRequest,
+): Promise<Response> {
+  const helpers = requireOAuthHelpers(env);
   const { clientId } = oauthReqInfo;
   if (!clientId) {
     return new Response("Invalid request", { status: 400 });
   }
 
-  if (await isClientApproved(request, clientId, env.MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY)) {
+  if (
+    await isClientApproved(
+      request,
+      clientId,
+      env.MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY,
+    )
+  ) {
     return redirectToGithubFromState(request, env, oauthReqInfo, clientId);
   }
 
@@ -252,16 +269,10 @@ async function handleAuthorizePost(
     const { setCookie: sessionBindingCookie } =
       await bindStateToSession(stateToken);
 
-    const headers = new Headers();
-    headers.append("Set-Cookie", approvedClientCookie);
-    headers.append("Set-Cookie", sessionBindingCookie);
-
-    return redirectToGithub(
-      request,
-      env,
-      stateToken,
-      Object.fromEntries(headers),
-    );
+    const response = redirectToGithub(request, env, stateToken);
+    response.headers.append("Set-Cookie", approvedClientCookie);
+    response.headers.append("Set-Cookie", sessionBindingCookie);
+    return response;
   } catch (error) {
     console.error("POST /authorize error:", error);
     if (error instanceof OAuthError) {
@@ -277,8 +288,7 @@ async function handleAuthorizePost(
 async function fetchOrError(
   accessToken: string,
 ): Promise<
-  | { id: number; login: string; name: string; email: string }
-  | Response
+  { id: number; login: string; name: string; email: string } | Response
 > {
   try {
     return await fetchGithubUser(accessToken);
@@ -349,8 +359,6 @@ async function handleCallback(
   request: Request,
   env: OAuthEnv,
 ): Promise<Response> {
-  const helpers = requireOAuthHelpers(env);
-
   const resolved = await resolveOAuthState(request, env);
   if (resolved instanceof Response) {
     return resolved;
@@ -362,6 +370,10 @@ async function handleCallback(
     return new Response("Invalid OAuth request data", { status: 400 });
   }
 
+  if (new URL(request.url).searchParams.get("error") === "access_denied") {
+    await denyDeviceLogin(env, oauthReqInfo);
+    return new Response("Sign-in was denied.", { status: 403 });
+  }
   const exchanged = await exchangeCodeForUser(request, env);
   if (exchanged.kind === "error") {
     return exchanged.response;
@@ -369,53 +381,75 @@ async function handleCallback(
   const { accessToken, user } = exchanged;
 
   if (
-    !isAllowedGithubUserId(
-      user.id,
-      env.MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID,
-    )
+    !isAllowedGithubUserId(user.id, env.MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID)
   ) {
+    await denyDeviceLogin(env, oauthReqInfo);
     return new Response(
       "This GitHub user is not authorized to access machine-memory.",
       { status: 403 },
     );
   }
 
-  return respondToCompletedGrant({
-    accessToken,
-    clearSessionCookie,
+  const response = await respondToCompletedGrant(
     env,
-    helpers,
     oauthReqInfo,
     user,
-  });
+    accessToken,
+  );
+  response.headers.set("Set-Cookie", clearSessionCookie);
+  return response;
 }
 
-function respondToCompletedGrant(input: {
-  accessToken: string;
-  clearSessionCookie: string;
-  env: OAuthEnv;
-  helpers: OAuthHelpers;
-  oauthReqInfo: AuthRequest;
-  user: { id: number; login: string; name: string; email: string };
-}): Promise<Response> {
-  const { accessToken, clearSessionCookie, env, helpers, oauthReqInfo, user } =
-    input;
-  return deviceSessionApproved(env, oauthReqInfo).then(async (approved) => {
+async function denyDeviceLogin(
+  env: OAuthEnv,
+  request: AuthRequest,
+): Promise<void> {
+  if (request.state.startsWith(DEVICE_STATE_PREFIX)) {
+    await rejectDeviceLogin(env.OAUTH_DEVICES, request, "denied");
+  }
+}
+
+async function respondToCompletedGrant(
+  env: OAuthEnv,
+  request: AuthRequest,
+  user: { id: number; login: string; name: string; email: string },
+  accessToken: string,
+): Promise<Response> {
+  const device = request.state.startsWith(DEVICE_STATE_PREFIX);
+  if (device && !(await claimDeviceApproval(env.OAUTH_DEVICES, request))) {
+    return new Response(
+      "Device login expired, already used, or mismatched. Start again.",
+      { status: 400 },
+    );
+  }
+  try {
     const redirectTo = await completeGrant(
-      helpers,
-      oauthReqInfo,
+      requireOAuthHelpers(env),
+      request,
       user,
       accessToken,
     );
-    if (approved) {
-      return finishDeviceApproval(redirectTo, clearSessionCookie);
+    if (!device) {
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirectTo },
+      });
     }
-    const headers = new Headers({ Location: redirectTo });
-    if (clearSessionCookie) {
-      headers.set("Set-Cookie", clearSessionCookie);
+    const code = new URL(redirectTo).searchParams.get("code");
+    if (
+      code === null ||
+      !(await finishDeviceApproval(env.OAUTH_DEVICES, request.state, code))
+    ) {
+      throw new Error("Device approval could not be persisted.");
     }
-    return new Response(null, { status: 302, headers });
-  });
+    return deviceApprovedPage();
+  } catch (error) {
+    if (!device) {
+      throw error;
+    }
+    await rejectDeviceLogin(env.OAUTH_DEVICES, request, "failed");
+    return new Response("Device login failed. Start again.", { status: 500 });
+  }
 }
 
 function completeGrant(
@@ -444,41 +478,6 @@ function completeGrant(
     .then((completed) => completed.redirectTo);
 }
 
-function finishDeviceApproval(
-  redirectTo: string,
-  clearSessionCookie: string,
-): Response {
-  // The provider redirect carries the authorization code to the client's
-  // loopback listener. The browser that approved the code must not follow
-  // it, or the code lands in the person's address bar instead.
-  void notifyLoopback(redirectTo);
-  const approved = deviceApprovedPage();
-  if (clearSessionCookie) {
-    approved.headers.set("Set-Cookie", clearSessionCookie);
-  }
-  return approved;
-}
-
-function deviceSessionApproved(
-  env: OAuthEnv,
-  oauthReqInfo: AuthRequest,
-): Promise<boolean> {
-  return claimDeviceApproval(
-    env.OAUTH_KV,
-    oauthReqInfo.state,
-    oauthReqInfo.clientId,
-    oauthReqInfo.redirectUri,
-    oauthReqInfo.codeChallenge,
-  );
-}
-
-function notifyLoopback(redirectTo: string): Promise<void> {
-  return fetch(redirectTo, { redirect: "manual" }).then(
-    () => undefined,
-    () => undefined,
-  );
-}
-
 export const githubHandler: ExportedHandler<OAuthEnv> = {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -487,6 +486,25 @@ export const githubHandler: ExportedHandler<OAuthEnv> = {
     const isAuthorize = url.pathname === "/authorize";
     const isCallback = url.pathname === "/callback";
 
+    if (url.pathname === DEVICE_START_PATH) {
+      return startDeviceLogin(
+        request,
+        env.OAUTH_DEVICES,
+        requireOAuthHelpers(env),
+      );
+    }
+    if (url.pathname === DEVICE_POLL_PATH) {
+      return pollDeviceLogin(request, env.OAUTH_DEVICES);
+    }
+    if (url.pathname === ACTIVATE_PATH) {
+      const activation = await beginDeviceActivation(
+        request,
+        env.OAUTH_DEVICES,
+      );
+      return activation instanceof Response
+        ? activation
+        : authorizeRequest(request, env, activation);
+    }
     if (isAuthorize && isGet) {
       return handleAuthorizeGet(request, env);
     }

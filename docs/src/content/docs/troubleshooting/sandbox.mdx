@@ -41,7 +41,7 @@ If the keychain is unreachable, the CLI suggests `.env` instead of forcing `remo
 ## MCP-only in a sandbox
 
 1. Worker already [provisioned](/infrastructure/overview) and [MCP enabled](/docs/mcp/enable) from a machine that can deploy.
-2. In the sandbox, connect the MCP client to `https://<worker-url>/mcp`. A browser on that machine can finish OAuth directly. A headless client prints a code; enter it at `https://<worker-url>/activate` from a browser you already have. See [Enable MCP](/docs/mcp/enable).
+2. In the sandbox, connect the MCP client to `https://<worker-url>/mcp`. A browser on that machine can finish OAuth directly. Clients implementing Machine Memory's headless protocol can print a code for approval at `https://<worker-url>/activate`, then retrieve the authorization code by polling. No loopback listener is needed. This is not automatic support in existing MCP clients; see [Enable MCP](/docs/mcp/enable).
 3. Install agent instructions without the CLI:
 
    ```sh

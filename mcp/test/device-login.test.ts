@@ -1,345 +1,492 @@
-import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { readFile } from "node:fs/promises";
+
+import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
+import { build } from "esbuild";
+import { Miniflare } from "miniflare";
 import {
-  beginDeviceActivation,
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+  vi,
+} from "vitest";
+
+import {
   claimDeviceApproval,
-  DEVICE_GRANT_TYPE,
-  pollDeviceLogin,
-  startDeviceLogin,
-} from "../src/auth/device-login";
-import { githubHandler } from "../src/auth/github-handler";
-import {
-  bindStateToSession,
-  createOAuthState,
-} from "../src/auth/oauth-utils";
-import type { OAuthEnv } from "../src/auth/oauth-provider";
-import type { ApiFetcher } from "../src/mcp/product-client";
+  finishDeviceApproval,
+  readDeviceActivation,
+  readDevicePoll,
+  rejectDeviceLogin,
+  storeDeviceLogin,
+} from "../src/auth/device-store";
 
-type Stored = Map<string, string>;
+const ORIGIN = "https://memory.test";
+const REDIRECT = "http://127.0.0.1:43123/callback";
+const VERIFIER = "a-verifier-kept-only-on-the-headless-machine-12345";
+let mf: Miniflare;
+let db: D1Database;
+let githubUserId = 42;
+let challenge: string;
+const outbound: string[] = [];
 
-function testKv(values: Stored): KVNamespace {
-  return {
-    delete: async (key: string) => {
-      values.delete(key);
-      return true;
-    },
-    get: async (key: string) => values.get(key) ?? null,
-    put: async (key: string, value: string) => {
-      values.set(key, value);
-    },
-  } as unknown as KVNamespace;
+async function bundle(entry: string) {
+  const result = await build({
+    entryPoints: [entry],
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "neutral",
+    conditions: ["workerd", "worker", "browser"],
+    mainFields: ["module", "main"],
+    external: ["cloudflare:*", "node:*"],
+    target: "es2022",
+  });
+  return result.outputFiles[0].text;
 }
 
-function clientRecord(): string {
-  return JSON.stringify({
-    clientId: "headless-client",
-    redirectUris: ["http://127.0.0.1/callback"],
-    tokenEndpointAuthMethod: "none",
+beforeAll(async () => {
+  challenge = Buffer.from(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(VERIFIER)),
+  ).toString("base64url");
+  const [router, oauth] = await Promise.all([
+    bundle("../router/src/index.ts"),
+    bundle("test/fixtures/oauth-worker.ts"),
+  ]);
+  mf = new Miniflare({
+    host: "127.0.0.1",
+    workers: [
+      {
+        name: "router",
+        modules: true,
+        script: router,
+        compatibilityDate: "2026-07-30",
+        serviceBindings: {
+          MCP: "mcp",
+          API: async () => new Response("Unexpected API call", { status: 500 }),
+        },
+      },
+      {
+        name: "mcp",
+        modules: true,
+        script: oauth,
+        compatibilityDate: "2026-07-30",
+        compatibilityFlags: ["nodejs_compat"],
+        kvNamespaces: ["OAUTH_KV"],
+        d1Databases: ["OAUTH_DEVICES"],
+        bindings: {
+          apiToken: "test-only",
+          MACHINE_MEMORY_GITHUB_CLIENT_ID: "test-client",
+          MACHINE_MEMORY_GITHUB_CLIENT_SECRET: "test-secret",
+          MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: "42",
+          MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "test-cookie-signing-key",
+        },
+        serviceBindings: {
+          api: async () => new Response("Unexpected API call", { status: 500 }),
+        },
+        outboundService: async (request: Request) => {
+          outbound.push(request.url);
+          if (request.url === "https://github.com/login/oauth/access_token") {
+            return new Response("access_token=github-test-token", {
+              headers: { "content-type": "application/x-www-form-urlencoded" },
+            });
+          }
+          if (request.url === "https://api.github.com/user") {
+            return Response.json({
+              id: githubUserId,
+              login: "test-user",
+              name: "Test",
+              email: "test@example.com",
+            });
+          }
+          throw new Error(`Unexpected outbound fetch: ${request.url}`);
+        },
+      },
+    ],
+  });
+  db = (await mf.getD1Database(
+    "OAUTH_DEVICES",
+    "mcp",
+  )) as unknown as D1Database;
+  const migration = await readFile(
+    "../iac/oauth-migrations/0001_device_sessions.sql",
+    "utf8",
+  );
+  await db.batch(
+    migration
+      .split(";")
+      .map((sql) => sql.trim())
+      .filter(Boolean)
+      .map((sql) => db.prepare(sql)),
+  );
+}, 30_000);
+
+afterAll(async () => {
+  await mf?.dispose();
+});
+beforeEach(async () => {
+  githubUserId = 42;
+  outbound.length = 0;
+  vi.restoreAllMocks();
+  await db.prepare("DELETE FROM device_sessions").run();
+});
+
+async function request(
+  path: string,
+  body?: Record<string, string>,
+  cookie?: string,
+) {
+  const headers = new Headers();
+  if (cookie) headers.set("Cookie", cookie);
+  if (body) headers.set("content-type", "application/x-www-form-urlencoded");
+  return mf.dispatchFetch(`${ORIGIN}${path}`, {
+    method: body ? "POST" : "GET",
+    headers,
+    body: body ? new URLSearchParams(body).toString() : undefined,
+    redirect: "manual",
   });
 }
 
-function startBody(overrides: Record<string, string> = {}): string {
-  const params = new URLSearchParams({
-    client_id: "headless-client",
-    code_challenge: "challenge-from-verifier",
+async function register() {
+  const response = await mf.dispatchFetch(`${ORIGIN}/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "Headless integration test",
+      redirect_uris: [REDIRECT],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+    }),
+  });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { client_id: string }).client_id;
+}
+
+async function start(overrides: Record<string, string> = {}) {
+  const clientId = await register();
+  const response = await request("/device/start", {
+    client_id: clientId,
+    redirect_uri: REDIRECT,
+    code_challenge: challenge,
     code_challenge_method: "S256",
-    redirect_uri: "http://127.0.0.1:43123/callback",
+    resource: `${ORIGIN}/mcp`,
     ...overrides,
   });
-  return params.toString();
+  return { clientId, response };
 }
 
-async function start(
-  kv: KVNamespace,
-  body = startBody(),
-): Promise<Response> {
-  return startDeviceLogin(
-    new Request("https://mcp.test/device/start", {
-      body,
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      method: "POST",
-    }),
-    kv,
+type Session = { user_code: string; device_code: string; clientId: string };
+async function session(): Promise<Session> {
+  const { clientId, response } = await start();
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const body = (await response.json()) as Session;
+  return { ...body, clientId };
+}
+
+function hidden(html: string, name: string): string {
+  const match = html.match(new RegExp(`name="${name}" value="([^"]+)"`));
+  expect(match, `missing ${name} in ${html}`).not.toBeNull();
+  return match![1];
+}
+
+async function consent(login: Session, mutate?: (auth: AuthRequest) => void) {
+  const page = await request("/activate");
+  const form = await page.text();
+  const activation = await request(
+    "/activate",
+    {
+      user_code: login.user_code.toLowerCase(),
+      csrf_token: hidden(form, "csrf_token"),
+    },
+    page.headers.get("set-cookie")!,
+  );
+  expect(activation.status).toBe(200);
+  const html = await activation.text();
+  const state = JSON.parse(atob(hidden(html, "state"))) as {
+    oauthReqInfo: AuthRequest;
+  };
+  mutate?.(state.oauthReqInfo);
+  const approval = await request(
+    "/authorize",
+    {
+      state: btoa(JSON.stringify(state)),
+      csrf_token: hidden(html, "csrf_token"),
+    },
+    activation.headers.get("set-cookie")!,
+  );
+  expect(approval.status).toBe(302);
+  expect(approval.headers.getSetCookie()).toHaveLength(2);
+  const upstream = new URL(approval.headers.get("location")!);
+  const cookie = approval.headers
+    .getSetCookie()
+    .map((value) => value.split(";")[0])
+    .join("; ");
+  return { state: upstream.searchParams.get("state")!, cookie };
+}
+
+async function callback(
+  approval: Awaited<ReturnType<typeof consent>>,
+  denied = false,
+) {
+  return request(
+    `/callback?state=${approval.state}&${denied ? "error=access_denied" : "code=github-code"}`,
+    undefined,
+    approval.cookie,
   );
 }
 
-describe("headless MCP activation", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
+async function poll(login: Session) {
+  return request("/device/poll", {
+    client_id: login.clientId,
+    device_code: login.device_code,
   });
+}
 
-  test("rejects a non-loopback redirect before storing a code", async () => {
-    const values = new Map<string, string>([
-      ["client:headless-client", clientRecord()],
-    ]);
-    const response = await start(
-      testKv(values),
-      startBody({ redirect_uri: "https://evil.example/callback" }),
+describe("headless login through the public router and real OAuth provider", () => {
+  test("approves without loopback, retrieves once, exchanges with PKCE, and authenticates MCP", async () => {
+    const login = await session();
+    const stored = JSON.stringify(
+      (await db.prepare("SELECT * FROM device_sessions").all()).results,
     );
-
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({
-      error: "invalid_request",
-    });
-    expect([...values.keys()].filter((key) => key.startsWith("device:"))).toEqual(
-      [],
-    );
-  });
-
-  test("stores only hashes and polls pending until the user code is claimed", async () => {
-    const values = new Map<string, string>([
-      ["client:headless-client", clientRecord()],
-    ]);
-    const kv = testKv(values);
-    const started = await start(kv);
-    expect(started.status).toBe(200);
-    const body = (await started.json()) as {
-      device_code: string;
-      user_code: string;
-      verification_uri: string;
-    };
-    expect(body.user_code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
-    expect(body.verification_uri).toBe("https://mcp.test/activate");
-    expect([...values.values()].join("\n")).not.toContain(body.device_code);
-    expect([...values.values()].join("\n")).not.toContain(
-      body.user_code.replace("-", ""),
-    );
-
-    const pending = await pollDeviceLogin(
-      new Request("https://mcp.test/token", {
-        body: new URLSearchParams({
-          client_id: "headless-client",
-          device_code: body.device_code,
-          grant_type: DEVICE_GRANT_TYPE,
-        }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        method: "POST",
-      }),
-      kv,
-    );
-    expect(pending?.status).toBe(400);
-    expect(await pending?.json()).toMatchObject({
+    expect(stored).not.toContain(login.user_code.replace("-", ""));
+    expect(stored).not.toContain(login.device_code);
+    expect(await (await poll(login)).json()).toEqual({
       error: "authorization_pending",
     });
-
-    const claimed = await claimDeviceApproval(
-      kv,
-      `device:${body.user_code.replace("-", "")}`,
-      "headless-client",
-      "http://127.0.0.1:43123/callback",
-      "challenge-from-verifier",
-    );
-    expect(claimed).toBe(true);
-
-    const replay = await pollDeviceLogin(
-      new Request("https://mcp.test/token", {
-        body: new URLSearchParams({
-          client_id: "headless-client",
-          device_code: body.device_code,
-          grant_type: DEVICE_GRANT_TYPE,
-        }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        method: "POST",
-      }),
-      kv,
-    );
-    expect(await replay?.json()).toMatchObject({ error: "expired_token" });
-
-    const wrongClient = await claimDeviceApproval(
-      kv,
-      `device:${body.user_code.replace("-", "")}`,
-      "other-client",
-      "http://127.0.0.1:43123/callback",
-      "challenge-from-verifier",
-    );
-    expect(wrongClient).toBe(false);
-  });
-
-  test("the activate form binds the typed code to the pending client request", async () => {
-    const values = new Map<string, string>([
-      ["client:headless-client", clientRecord()],
+    const approved = await callback(await consent(login));
+    expect(approved.status).toBe(200);
+    expect(approved.headers.get("location")).toBeNull();
+    expect(await approved.text()).toContain("Approved");
+    expect(outbound).toEqual([
+      "https://github.com/login/oauth/access_token",
+      "https://api.github.com/user",
     ]);
-    const kv = testKv(values);
-    const started = await start(kv);
-    const body = (await started.json()) as { user_code: string };
-
-    const activation = await beginDeviceActivation(
-      new Request("https://mcp.test/activate", {
-        body: new URLSearchParams({ user_code: body.user_code.toLowerCase() }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        method: "POST",
-      }),
-      kv,
-    );
-
-    expect(activation.kind).toBe("redirect");
-    if (activation.kind !== "redirect") {
-      return;
-    }
-    const location = new URL(activation.location);
-    expect(location.pathname).toBe("/authorize");
-    expect(location.searchParams.get("client_id")).toBe("headless-client");
-    expect(location.searchParams.get("redirect_uri")).toBe(
-      "http://127.0.0.1:43123/callback",
-    );
-    expect(location.searchParams.get("code_challenge")).toBe(
-      "challenge-from-verifier",
-    );
-    expect(location.searchParams.get("state")).toBe(
-      `device:${body.user_code.replace("-", "")}`,
-    );
-
-    const missing = await beginDeviceActivation(
-      new Request("https://mcp.test/activate", {
-        body: new URLSearchParams({ user_code: "ZZZZ-ZZZZ" }),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        method: "POST",
-      }),
-      kv,
-    );
-    expect(missing.kind).toBe("response");
-  });
-
-  test("a denied GitHub user never claims the device code or completes the grant", async () => {
-    const values = new Map<string, string>([
-      ["client:headless-client", clientRecord()],
-    ]);
-    const kv = testKv(values);
-    const started = await start(kv);
-    const body = (await started.json()) as { user_code: string };
-    const userCode = body.user_code.replace("-", "");
-    const oauthReqInfo = {
-      clientId: "headless-client",
-      codeChallenge: "challenge-from-verifier",
-      codeChallengeMethod: "S256" as const,
-      redirectUri: "http://127.0.0.1:43123/callback",
-      responseType: "code",
-      scope: ["mcp:read", "mcp:write"],
-      state: `device:${userCode}`,
-    };
-    const { stateToken } = await createOAuthState(oauthReqInfo, kv);
-    const { setCookie } = await bindStateToSession(stateToken);
-    const completeAuthorization = vi.fn(async () => ({
-      redirectTo: "http://127.0.0.1:43123/callback?code=should-not-issue",
-    }));
-    vi.stubGlobal(
-      "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(
-          new Response("access_token=github-access-token", {
-            headers: { "content-type": "application/x-www-form-urlencoded" },
-          }),
-        )
-        .mockResolvedValueOnce(
-          Response.json({
-            email: "denied@example.com",
-            id: 43,
-            login: "denied",
-            name: "Denied",
-          }),
-        ),
-    );
-    const fetchHandler = githubHandler.fetch;
-    if (fetchHandler === undefined) {
-      throw new Error("GitHub handler does not expose fetch");
-    }
-    const env: OAuthEnv = {
-      api: { fetch: vi.fn() } as unknown as ApiFetcher,
-      apiToken: "api-token",
-      MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "cookie-secret",
-      MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: "42",
-      MACHINE_MEMORY_GITHUB_CLIENT_ID: "client-id",
-      MACHINE_MEMORY_GITHUB_CLIENT_SECRET: "client-secret",
-      OAUTH_KV: kv,
-      OAUTH_PROVIDER: {
-        completeAuthorization,
-      } as unknown as OAuthHelpers,
-    };
-    const response = await fetchHandler(
-      new Request(`https://mcp.test/callback?code=oauth-code&state=${stateToken}`, {
-        headers: { Cookie: setCookie },
-      }) as Parameters<typeof fetchHandler>[0],
-      env,
-      {} as ExecutionContext,
-    );
-
-    expect(response.status).toBe(403);
-    expect(completeAuthorization).not.toHaveBeenCalled();
-    expect(values.has(`device:user:${userCode}`)).toBe(true);
-  });
-
-  test("an approved device login notifies loopback and shows no token to the browser", async () => {
-    const values = new Map<string, string>([
-      ["client:headless-client", clientRecord()],
-    ]);
-    const kv = testKv(values);
-    const started = await start(kv);
-    const body = (await started.json()) as { user_code: string };
-    const userCode = body.user_code.replace("-", "");
-    const oauthReqInfo = {
-      clientId: "headless-client",
-      codeChallenge: "challenge-from-verifier",
-      codeChallengeMethod: "S256" as const,
-      redirectUri: "http://127.0.0.1:43123/callback",
-      responseType: "code",
-      scope: ["mcp:read", "mcp:write"],
-      state: `device:${userCode}`,
-    };
-    const { stateToken } = await createOAuthState(oauthReqInfo, kv);
-    const { setCookie } = await bindStateToSession(stateToken);
-    const completeAuthorization = vi.fn(async () => ({
-      redirectTo:
-        "http://127.0.0.1:43123/callback?code=provider-auth-code&state=device",
-    }));
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response("access_token=github-access-token", {
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({
-          email: "allowed@example.com",
-          id: 42,
-          login: "allowed",
-          name: "Allowed",
-        }),
-      )
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
-    vi.stubGlobal("fetch", fetchMock);
-    const fetchHandler = githubHandler.fetch;
-    if (fetchHandler === undefined) {
-      throw new Error("GitHub handler does not expose fetch");
-    }
-    const response = await fetchHandler(
-      new Request(`https://mcp.test/callback?code=oauth-code&state=${stateToken}`, {
-        headers: { Cookie: setCookie },
-      }) as Parameters<typeof fetchHandler>[0],
-      {
-        api: { fetch: vi.fn() } as unknown as ApiFetcher,
-        apiToken: "api-token",
-        MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "cookie-secret",
-        MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: "42",
-        MACHINE_MEMORY_GITHUB_CLIENT_ID: "client-id",
-        MACHINE_MEMORY_GITHUB_CLIENT_SECRET: "client-secret",
-        OAUTH_KV: kv,
-        OAUTH_PROVIDER: {
-          completeAuthorization,
-        } as unknown as OAuthHelpers,
-      },
-      {} as ExecutionContext,
-    );
-
+    // Advance only the rate-limit deadline, not session expiry.
+    await db.prepare("UPDATE device_sessions SET next_poll_at = 0").run();
+    const response = await poll(login);
     expect(response.status).toBe(200);
-    expect(response.headers.get("location")).toBeNull();
-    expect(await response.text()).not.toContain("provider-auth-code");
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "http://127.0.0.1:43123/callback?code=provider-auth-code&state=device",
-      { redirect: "manual" },
-    );
-    expect(values.has(`device:user:${userCode}`)).toBe(false);
+    const { code } = (await response.json()) as { code: string };
+    expect(code).toBeTruthy();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await (await poll(login)).json()).toEqual({
+      error: "expired_token",
+    });
+    const tokenBody = {
+      grant_type: "authorization_code",
+      client_id: login.clientId,
+      code,
+      redirect_uri: REDIRECT,
+      code_verifier: VERIFIER,
+      resource: `${ORIGIN}/mcp`,
+    };
+    const wrong = await request("/token", {
+      ...tokenBody,
+      code_verifier: "wrong-verifier",
+    });
+    expect(wrong.status).toBe(400);
+    const tokenResponse = await request("/token", tokenBody);
+    expect(tokenResponse.status).toBe(200);
+    const tokens = (await tokenResponse.json()) as {
+      access_token: string;
+      refresh_token: string;
+    };
+    expect(tokens.access_token).toBeTruthy();
+    expect(tokens.refresh_token).toBeTruthy();
+    const initialized = await mf.dispatchFetch(`${ORIGIN}/mcp`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokens.access_token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-03-26",
+          capabilities: {},
+          clientInfo: { name: "headless-test", version: "1" },
+        },
+      }),
+    });
+    expect(initialized.status).toBe(200);
+    expect(await initialized.text()).toContain("protocolVersion");
+    // Replaying an authorization code revokes the provider grant, so test
+    // replay only after demonstrating that its token can authenticate MCP.
+    expect((await request("/token", tokenBody)).status).toBe(400);
+  });
+
+  test.each<Record<string, string>>([
+    { code_challenge: "short" },
+    { code_challenge_method: "plain" },
+    { redirect_uri: "https://unregistered.example/callback" },
+    { scope: "admin" },
+  ])(
+    "rejects invalid start parameters %j without storing a session",
+    async (input) => {
+      const { response } = await start(input);
+      expect(response.status).toBe(400);
+      expect(
+        await db
+          .prepare("SELECT count(*) AS count FROM device_sessions")
+          .first("count"),
+      ).toBe(0);
+    },
+  );
+
+  test("activation requires CSRF protection", async () => {
+    const login = await session();
+    expect(
+      (await request("/activate", { user_code: login.user_code })).status,
+    ).toBe(403);
+  });
+
+  test("persistence failure never reports approval or leaves polling pending", async () => {
+    const login = await session();
+    const approval = await consent(login);
+    await db
+      .prepare(`CREATE TRIGGER fail_approval BEFORE UPDATE OF status ON device_sessions
+      WHEN NEW.status = 'approved' BEGIN SELECT RAISE(FAIL, 'injected write failure'); END`)
+      .run();
+    try {
+      const response = await callback(approval);
+      expect(response.status).toBe(500);
+      expect(response.headers.get("location")).toBeNull();
+      expect(await response.text()).not.toContain("Approved");
+      expect(await (await poll(login)).json()).toEqual({
+        error: "server_error",
+      });
+    } finally {
+      await db.prepare("DROP TRIGGER fail_approval").run();
+    }
+  });
+
+  test.each(["github", "allowlist"])(
+    "propagates %s denial to polling",
+    async (reason) => {
+      const login = await session();
+      const approval = await consent(login);
+      if (reason === "allowlist") githubUserId = 43;
+      expect((await callback(approval, reason === "github")).status).toBe(403);
+      expect(await (await poll(login)).json()).toEqual({
+        error: "access_denied",
+      });
+    },
+  );
+
+  test.each(["expired", "used", "scope", "pkce", "resource"])(
+    "fails closed for %s device approval",
+    async (reason) => {
+      const login = await session();
+      const approval = await consent(login, (auth) => {
+        if (reason === "scope") auth.scope = ["mcp:read"];
+        if (reason === "pkce") auth.codeChallenge = "x".repeat(43);
+        if (reason === "resource") auth.resource = "https://other.example/mcp";
+      });
+      if (reason === "expired")
+        await db.prepare("UPDATE device_sessions SET expires_at = 0").run();
+      if (reason === "used")
+        await db
+          .prepare("UPDATE device_sessions SET status = 'approving'")
+          .run();
+      const response = await callback(approval);
+      expect(response.status).toBe(400);
+      expect(response.headers.get("location")).toBeNull();
+      expect(
+        await db
+          .prepare("SELECT authorization_code FROM device_sessions")
+          .first("authorization_code"),
+      ).toBeNull();
+    },
+  );
+});
+
+describe("atomic D1 device state", () => {
+  const auth: AuthRequest = {
+    responseType: "code",
+    clientId: "client-a",
+    redirectUri: REDIRECT,
+    scope: ["mcp:read"],
+    state: "device:test-session",
+    codeChallenge: "x".repeat(43),
+    codeChallengeMethod: "S256",
+  };
+
+  test("one concurrent claimant and one concurrent recipient win", async () => {
+    await storeDeviceLogin(db, auth, "ABCD1234", "secret-a");
+    expect(
+      (
+        await Promise.all([
+          claimDeviceApproval(db, auth),
+          claimDeviceApproval(db, auth),
+        ])
+      ).sort(),
+    ).toEqual([false, true]);
+    expect(await readDevicePoll(db, "wrong-secret", auth.clientId)).toEqual({
+      error: "expired_token",
+    });
+    expect(await readDevicePoll(db, "secret-a", "wrong-client")).toEqual({
+      error: "expired_token",
+    });
+    expect(await finishDeviceApproval(db, auth.state, "real-code")).toBe(true);
+    const polls = await Promise.all([
+      readDevicePoll(db, "secret-a", auth.clientId),
+      readDevicePoll(db, "secret-a", auth.clientId),
+    ]);
+    expect(polls.filter((value) => "code" in value)).toEqual([
+      { code: "real-code" },
+    ]);
+    expect(
+      await db
+        .prepare("SELECT count(*) FROM device_sessions")
+        .first("count(*)"),
+    ).toBe(0);
+  });
+
+  test("expiry and poll interval enforce both sides of their boundaries", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(100_000);
+    await storeDeviceLogin(db, auth, "ABCD1234", "secret-a");
+    expect(await readDevicePoll(db, "secret-a", auth.clientId)).toEqual({
+      error: "authorization_pending",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(104_999);
+    expect(await readDevicePoll(db, "secret-a", auth.clientId)).toEqual({
+      error: "slow_down",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(105_000);
+    expect(await readDevicePoll(db, "secret-a", auth.clientId)).toEqual({
+      error: "authorization_pending",
+    });
+    vi.spyOn(Date, "now").mockReturnValue(699_999);
+    expect(await readDeviceActivation(db, "ABCD1234")).toEqual(auth);
+    vi.spyOn(Date, "now").mockReturnValue(700_000);
+    expect(await readDeviceActivation(db, "ABCD1234")).toBeNull();
+    expect(await claimDeviceApproval(db, auth)).toBe(false);
+    expect(await readDevicePoll(db, "secret-a", auth.clientId)).toEqual({
+      error: "expired_token",
+    });
+  });
+
+  test("collisions cannot overwrite a session and failed issuance is terminal", async () => {
+    expect(await storeDeviceLogin(db, auth, "ABCD1234", "secret-a")).toBe(true);
+    expect(
+      await storeDeviceLogin(
+        db,
+        { ...auth, state: "device:other" },
+        "ABCD1234",
+        "secret-b",
+      ),
+    ).toBe(false);
+    expect(await readDeviceActivation(db, "ABCD1234")).toEqual(auth);
+    expect(await claimDeviceApproval(db, auth)).toBe(true);
+    await rejectDeviceLogin(db, auth, "failed");
+    expect(await readDevicePoll(db, "secret-a", auth.clientId)).toEqual({
+      error: "server_error",
+    });
+    expect(await finishDeviceApproval(db, auth.state, "late-code")).toBe(false);
   });
 });

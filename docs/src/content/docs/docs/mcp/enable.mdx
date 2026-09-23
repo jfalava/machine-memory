@@ -68,14 +68,17 @@ Point an MCP client at `https://<router-url>/mcp`. Complete the browser OAuth fl
 
 ## Headless clients
 
-A sandbox that cannot open a browser can still use the same GitHub allowlist. The client starts the login and prints a short code; you approve that code in a browser you already have.
+A sandbox that cannot open a browser can still use the same GitHub allowlist. This requires a client that implements the following Machine Memory protocol; ordinary MCP clients do not automatically use it.
 
-1. On the headless machine, register a public client (`token_endpoint_auth_method=none`) with an HTTP loopback `redirect_uri`, then start a listener on that URI.
-2. `POST /device/start` with `client_id`, `redirect_uri`, and an S256 `code_challenge`. The response has `user_code`, `device_code`, `verification_uri`, and `interval`.
+1. Register a public client (`token_endpoint_auth_method=none`) at `/register` with a `redirect_uri`, such as `http://127.0.0.1/callback`. No listener, inbound connection, or tunnel is needed. Retain a random PKCE `code_verifier` on the headless machine.
+2. Send an `application/x-www-form-urlencoded` `POST /device/start` with `client_id`, `redirect_uri`, `code_challenge_method=S256`, and the base64url-encoded SHA-256 `code_challenge`. Include `resource=https://<router-url>/mcp`. The response has `user_code`, `device_code`, `verification_uri`, `expires_in`, and `interval`.
 3. Open `verification_uri` (`https://<router-url>/activate`), enter `user_code`, and finish the GitHub login. The page says approved. It does not show a token.
-4. Poll `POST /token` with `grant_type=urn:machine-memory:grant-type:device-code`, `device_code`, and `client_id` until the response is no longer `authorization_pending`. Then exchange the authorization code delivered to the loopback listener at `POST /token` with `grant_type=authorization_code` and the PKCE `code_verifier`.
+4. Poll `POST /device/poll` with form-encoded `device_code` and `client_id`, waiting at least `interval` seconds between requests. HTTP 400 `authorization_pending` means keep waiting; `slow_down` means wait at least another interval. HTTP 200 returns `{ "code": "..." }` exactly once. `access_denied`, `expired_token`, or HTTP 500 `server_error` ends the attempt.
+5. Exchange that code at `POST /token` with `grant_type=authorization_code`, `code`, `client_id`, the same `redirect_uri`, `resource`, and the retained `code_verifier`. The standard OAuth provider issues the access and refresh tokens.
 
-The printed code expires in 10 minutes, is single-use, and is not an access token. Do not send `MACHINE_MEMORY_DB_TOKEN` to an MCP client. `mcp-remote --device-code` does not apply: this server does not advertise RFC 8628 device authorization.
+The session expires 10 minutes after it starts. Approval and code retrieval are single-use; if the successful poll response is lost, start a new login. Keep `device_code` and `code_verifier` private; only `user_code` belongs in the browser. Do not send `MACHINE_MEMORY_DB_TOKEN` to an MCP client. This replaces the old custom device grant at `/token`; it is not RFC 8628, and `mcp-remote --device-code` does not apply.
+
+Deployment creates a dedicated `${oauthKvName}-devices` D1 database and applies `iac/oauth-migrations` for atomic device approvals. It does not use the project-memory database. OAuth clients and tokens remain in the provider's KV namespace. Expired device rows are removed when a new login starts, and expiry is enforced on every read and transition.
 
 Next: [Init](/docs/mcp/init) for agent instructions, then [Tools](/docs/mcp/tools).
 

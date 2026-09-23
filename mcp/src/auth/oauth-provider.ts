@@ -3,6 +3,7 @@ import type {
   OAuthProvider,
 } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
+
 import { createMemoryServer, type McpBindings } from "../mcp";
 import { githubHandler } from "./github-handler";
 import { isAllowedGithubUserId } from "./oauth-utils";
@@ -20,6 +21,7 @@ export const CLIENT_REGISTRATION_ENDPOINT = "/register";
  */
 export type OAuthEnv = McpBindings & {
   readonly OAUTH_KV: KVNamespace;
+  readonly OAUTH_DEVICES: D1Database;
   readonly MACHINE_MEMORY_GITHUB_CLIENT_ID: string;
   readonly MACHINE_MEMORY_GITHUB_CLIENT_SECRET: string;
   readonly MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: string;
@@ -79,9 +81,11 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
               { status: 403 },
             );
           }
-          return createMcpHandler(() =>
-            createMemoryServer(env, props?.login),
-          )(request, env, ctx);
+          return createMcpHandler(() => createMemoryServer(env, props?.login))(
+            request,
+            env,
+            ctx,
+          );
         },
       },
       defaultHandler: githubHandler,

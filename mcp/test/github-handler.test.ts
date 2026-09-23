@@ -3,14 +3,15 @@ import type {
   OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { ApiFetcher } from "../src/mcp/product-client";
-import type { OAuthEnv } from "../src/auth/oauth-provider";
+
 import { githubHandler } from "../src/auth/github-handler";
+import type { OAuthEnv } from "../src/auth/oauth-provider";
 import {
   bindStateToSession,
   createOAuthState,
   isAllowedGithubUserId,
 } from "../src/auth/oauth-utils";
+import type { ApiFetcher } from "../src/mcp/product-client";
 
 type StoredValues = Map<string, string>;
 
@@ -35,6 +36,12 @@ function testEnv(
   return {
     api: { fetch: vi.fn() } as unknown as ApiFetcher,
     apiToken: "api-token",
+    // Ordinary browser OAuth must never touch the device database.
+    OAUTH_DEVICES: {
+      prepare: () => {
+        throw new Error("Unexpected device database access");
+      },
+    } as unknown as D1Database,
     MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "cookie-secret",
     MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: allowedUserId,
     MACHINE_MEMORY_GITHUB_CLIENT_ID: "client-id",

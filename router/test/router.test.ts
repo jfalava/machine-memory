@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import router, { type Env, type ServiceFetcher } from "../src/index";
 
 interface RecordedRequest {
@@ -50,6 +51,26 @@ const request = (path: string, withDocs = true) => {
 };
 
 describe("router", () => {
+  it.each(["/device/start", "/device/poll", "/activate"])(
+    "%s forwards POST bodies to MCP",
+    async (path) => {
+      const { calls, env } = makeEnv();
+      const response = await router.request(
+        `https://mm.example${path}`,
+        {
+          method: "POST",
+          body: "client_id=test",
+        },
+        env,
+      );
+      expect(response.status).toBe(200);
+      expect(calls.MCP).toEqual([
+        { pathname: path, search: "", method: "POST" },
+      ]);
+      expect(calls.DOCS_WORKER).toEqual([]);
+    },
+  );
+
   it("/mcp goes to MCP with path intact", async () => {
     const { response, calls } = request("https://mm.example/mcp");
     await response;

@@ -1,70 +1,161 @@
-import { Schema } from "effect";
+import type {
+  AuthRequest,
+  OAuthHelpers,
+} from "@cloudflare/workers-oauth-provider";
 
-/**
- * Headless MCP login. The client starts a pending session and prints a short
- * code. A person enters that code at `/activate`, which reuses the GitHub
- * login. Approval completes the provider's authorization-code grant against a
- * loopback redirect the client is already listening on, so token issuance
- * stays inside `@cloudflare/workers-oauth-provider` instead of a parallel
- * minter. The code is an approval handle, never a bearer token.
- */
+import {
+  DEVICE_POLL_INTERVAL_SECONDS,
+  DEVICE_STATE_PREFIX,
+  DEVICE_TTL_SECONDS,
+  readDeviceActivation,
+  readDevicePoll,
+  storeDeviceLogin,
+} from "./device-store";
+import {
+  generateCSRFProtection,
+  sanitizeText,
+  validateCSRFToken,
+  OAuthError,
+} from "./oauth-utils";
 
-export const DEVICE_GRANT_TYPE = "urn:machine-memory:grant-type:device-code";
 export const ACTIVATE_PATH = "/activate";
 export const DEVICE_START_PATH = "/device/start";
-export const DEVICE_TTL_SECONDS = 600;
-export const DEVICE_POLL_INTERVAL_SECONDS = 5;
+export const DEVICE_POLL_PATH = "/device/poll";
 
-const USER_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const USER_CODE_LENGTH = 8;
+const NO_STORE = { "Cache-Control": "no-store", Pragma: "no-cache" };
+// 32 symbols, so each random byte maps without modulo bias.
+const USER_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-const DeviceRecordSchema = Schema.Struct({
-  clientId: Schema.String,
-  codeChallenge: Schema.String,
-  redirectUri: Schema.String,
-  scope: Schema.mutable(Schema.Array(Schema.String)),
-  secretHash: Schema.String,
-  status: Schema.Literals(["pending", "denied"]),
-});
+function randomUserCode(): string {
+  return Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) =>
+    USER_CODE_ALPHABET.charAt(byte % USER_CODE_ALPHABET.length),
+  ).join("");
+}
 
-export type DeviceRecord = {
-  readonly clientId: string;
-  readonly codeChallenge: string;
-  readonly redirectUri: string;
-  readonly scope: readonly string[];
-  readonly secretHash: string;
-  readonly status: "pending" | "denied";
-};
-
-type RegisteredClient = {
-  readonly clientId: string;
-  readonly redirectUris: readonly string[];
-  readonly tokenEndpointAuthMethod: string;
-};
-
-type DeviceStart = {
-  readonly device_code: string;
-  readonly user_code: string;
-  readonly verification_uri: string;
-  readonly expires_in: number;
-  readonly interval: number;
-};
-
-export type DeviceLoginResult =
-  | { readonly kind: "response"; readonly response: Response }
-  | { readonly kind: "redirect"; readonly location: string };
+function formValue(form: FormData, name: string): string {
+  const value = form.get(name);
+  return value === null || value instanceof File ? "" : value.trim();
+}
 
 function oauthError(
   error: string,
   description: string,
-  status: number,
+  status = 400,
 ): Response {
   return Response.json(
     { error, error_description: description },
+    { status, headers: NO_STORE },
+  );
+}
+
+async function readForm(request: Request): Promise<FormData | Response> {
+  if (request.method !== "POST") {
+    return oauthError("invalid_request", "POST is required.", 405);
+  }
+  if (
+    !request.headers
+      .get("content-type")
+      ?.startsWith("application/x-www-form-urlencoded")
+  ) {
+    return oauthError(
+      "invalid_request",
+      "Body must be application/x-www-form-urlencoded.",
+    );
+  }
+  try {
+    return await request.formData();
+  } catch {
+    return oauthError("invalid_request", "Invalid form body.");
+  }
+}
+
+async function deviceAuthRequest(
+  request: Request,
+  form: FormData,
+  helpers: OAuthHelpers,
+): Promise<AuthRequest | Response> {
+  const clientId = formValue(form, "client_id");
+  const challenge = formValue(form, "code_challenge");
+  if (
+    !/^[A-Za-z0-9_-]{43}$/.test(challenge) ||
+    formValue(form, "code_challenge_method") !== "S256"
+  ) {
+    return oauthError(
+      "invalid_request",
+      "A valid S256 code_challenge is required.",
+    );
+  }
+  const client = await helpers.lookupClient(clientId);
+  if (client === null || client.tokenEndpointAuthMethod !== "none") {
+    return oauthError(
+      "invalid_client",
+      "A registered public client is required.",
+      401,
+    );
+  }
+  const scope = formValue(form, "scope") || "mcp:read mcp:write";
+  if (
+    scope
+      .split(" ")
+      .filter(Boolean)
+      .some((item) => item !== "mcp:read" && item !== "mcp:write")
+  ) {
+    return oauthError("invalid_scope", "Unsupported scope.");
+  }
+  const url = new URL("/authorize", request.url);
+  url.search = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: formValue(form, "redirect_uri"),
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    scope,
+    state: `${DEVICE_STATE_PREFIX}${crypto.randomUUID()}`,
+  }).toString();
+  for (const resource of form.getAll("resource")) {
+    if (!(resource instanceof File)) {
+      url.searchParams.append("resource", resource);
+    }
+  }
+  // Delegate redirect, PKCE, resource and client capability validation to the
+  // provider. Never follow its redirect here: this endpoint is machine-facing.
+  try {
+    return await helpers.parseAuthRequest(new Request(url));
+  } catch (error) {
+    if (error instanceof Error && error.name === "AuthorizationError") {
+      return oauthError("invalid_request", "Invalid authorization request.");
+    }
+    throw error;
+  }
+}
+
+export async function startDeviceLogin(
+  request: Request,
+  db: D1Database,
+  helpers: OAuthHelpers,
+): Promise<Response> {
+  const form = await readForm(request);
+  if (form instanceof Response) {
+    return form;
+  }
+  const auth = await deviceAuthRequest(request, form, helpers);
+  if (auth instanceof Response) {
+    return auth;
+  }
+  const deviceCode = crypto.randomUUID();
+  let userCode: string;
+  do {
+    userCode = randomUserCode();
+  } while (!(await storeDeviceLogin(db, auth, userCode, deviceCode)));
+  return Response.json(
     {
-      status,
-      headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+      device_code: deviceCode,
+      user_code: `${userCode.slice(0, 4)}-${userCode.slice(4)}`,
+      verification_uri: new URL(ACTIVATE_PATH, request.url).href,
+      expires_in: DEVICE_TTL_SECONDS,
+      interval: DEVICE_POLL_INTERVAL_SECONDS,
     },
+    { headers: NO_STORE },
   );
 }
 
@@ -72,314 +163,19 @@ function htmlResponse(body: string, status = 200): Response {
   return new Response(body, {
     status,
     headers: {
+      ...NO_STORE,
       "Content-Security-Policy":
         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
       "Content-Type": "text/html; charset=utf-8",
       "X-Frame-Options": "DENY",
+      "Referrer-Policy": "no-referrer",
     },
   });
 }
 
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(value),
-  );
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function randomUserCode(): string {
-  const bytes = new Uint8Array(USER_CODE_LENGTH);
-  crypto.getRandomValues(bytes);
-  const chars = Array.from(bytes, (byte) => {
-    const index = byte % USER_CODE_ALPHABET.length;
-    return USER_CODE_ALPHABET[index] ?? "A";
-  });
-  return `${chars.slice(0, 4).join("")}-${chars.slice(4).join("")}`;
-}
-
-export function normalizeUserCode(value: string): string {
-  return value.replace(/[\s-]/g, "").toUpperCase();
-}
-
-function formatUserCode(normalized: string): string {
-  return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
-}
-
-function isLoopbackRedirect(uri: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(uri);
-  } catch {
-    return false;
-  }
-  const host = parsed.hostname.toLowerCase();
-  const loopback =
-    host === "localhost" ||
-    host === "::1" ||
-    host === "[::1]" ||
-    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-  return parsed.protocol === "http:" && loopback && parsed.username === "";
-}
-
-function redirectMatches(
-  requested: string,
-  registered: readonly string[],
-): boolean {
-  return registered.some((candidate) => {
-    if (candidate === requested) {
-      return true;
-    }
-    if (!isLoopbackRedirect(requested) || !isLoopbackRedirect(candidate)) {
-      return false;
-    }
-    const left = new URL(requested);
-    const right = new URL(candidate);
-    return (
-      left.protocol === right.protocol &&
-      left.hostname === right.hostname &&
-      left.pathname === right.pathname &&
-      left.search === right.search
-    );
-  });
-}
-
-async function readRegisteredClient(
-  kv: KVNamespace,
-  clientId: string,
-): Promise<RegisteredClient | undefined> {
-  const raw = await kv.get(`client:${clientId}`);
-  if (raw === null) {
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  const decoded = Schema.decodeUnknownExit(
-    Schema.Struct({
-      clientId: Schema.String,
-      redirectUris: Schema.Array(Schema.String),
-      tokenEndpointAuthMethod: Schema.String,
-    }),
-  )(parsed);
-  if (decoded._tag === "Failure") {
-    return undefined;
-  }
-  return decoded.value;
-}
-
-function userKey(userCode: string): string {
-  return `device:user:${userCode}`;
-}
-
-function secretKey(deviceCodeHash: string): string {
-  return `device:secret:${deviceCodeHash}`;
-}
-
-async function readRecord(
-  kv: KVNamespace,
-  key: string,
-): Promise<DeviceRecord | undefined> {
-  const raw = await kv.get(key);
-  if (raw === null) {
-    return undefined;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
-  }
-  const decoded = Schema.decodeUnknownExit(DeviceRecordSchema)(parsed);
-  if (decoded._tag === "Failure") {
-    return undefined;
-  }
-  return decoded.value;
-}
-
-async function writeRecord(
-  kv: KVNamespace,
-  userCode: string,
-  deviceCodeHash: string,
-  record: DeviceRecord,
-): Promise<void> {
-  const stored = JSON.stringify(record);
-  const options = { expirationTtl: DEVICE_TTL_SECONDS };
-  await kv.put(userKey(userCode), stored, options);
-  await kv.put(secretKey(deviceCodeHash), stored, options);
-}
-
-function formValue(form: FormData, name: string): string {
-  const value = form.get(name);
-  if (value instanceof File || value === null) {
-    return "";
-  }
-  return value.trim();
-}
-
-type DeviceStartInput = {
-  readonly clientId: string;
-  readonly codeChallenge: string;
-  readonly redirectUri: string;
-  readonly scope: string;
-};
-
-function parseDeviceStart(form: FormData): DeviceStartInput | Response {
-  const clientId = formValue(form, "client_id");
-  const redirectUri = formValue(form, "redirect_uri");
-  const codeChallenge = formValue(form, "code_challenge");
-  const codeChallengeMethod = formValue(form, "code_challenge_method");
-  if (
-    clientId === "" ||
-    redirectUri === "" ||
-    codeChallenge === "" ||
-    codeChallengeMethod !== "S256"
-  ) {
-    return oauthError(
-      "invalid_request",
-      "client_id, redirect_uri, and an S256 code_challenge are required.",
-      400,
-    );
-  }
-  if (!isLoopbackRedirect(redirectUri)) {
-    return oauthError(
-      "invalid_request",
-      "redirect_uri must be an HTTP loopback URI.",
-      400,
-    );
-  }
-  return {
-    clientId,
-    codeChallenge,
-    redirectUri,
-    scope: formValue(form, "scope"),
-  };
-}
-
-async function authorizeDeviceClient(
-  kv: KVNamespace,
-  input: DeviceStartInput,
-): Promise<readonly string[] | Response> {
-  const client = await readRegisteredClient(kv, input.clientId);
-  if (client === undefined) {
-    return oauthError("invalid_client", "Client not found.", 401);
-  }
-  if (client.tokenEndpointAuthMethod !== "none") {
-    return oauthError(
-      "invalid_client",
-      "Headless login requires a public client.",
-      401,
-    );
-  }
-  if (!redirectMatches(input.redirectUri, client.redirectUris)) {
-    return oauthError(
-      "invalid_request",
-      "redirect_uri is not registered for this client.",
-      400,
-    );
-  }
-  const scopes =
-    input.scope === ""
-      ? ["mcp:read", "mcp:write"]
-      : input.scope.split(" ").filter(Boolean);
-  if (scopes.some((item) => item !== "mcp:read" && item !== "mcp:write")) {
-    return oauthError("invalid_scope", "Unsupported scope.", 400);
-  }
-  return scopes;
-}
-
-export async function startDeviceLogin(
-  request: Request,
-  kv: KVNamespace,
-): Promise<Response> {
-  if (request.method !== "POST") {
-    return oauthError("invalid_request", "POST is required.", 405);
-  }
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return oauthError(
-      "invalid_request",
-      "Body must be application/x-www-form-urlencoded.",
-      400,
-    );
-  }
-
-  const parsed = parseDeviceStart(form);
-  if (parsed instanceof Response) {
-    return parsed;
-  }
-  const scopes = await authorizeDeviceClient(kv, parsed);
-  if (scopes instanceof Response) {
-    return scopes;
-  }
-
-  const deviceCode = crypto.randomUUID();
-  const normalized = normalizeUserCode(randomUserCode());
-  const secretHash = await sha256Hex(deviceCode);
-  await writeRecord(kv, normalized, secretHash, {
-    clientId: parsed.clientId,
-    codeChallenge: parsed.codeChallenge,
-    redirectUri: parsed.redirectUri,
-    scope: scopes,
-    secretHash,
-    status: "pending",
-  });
-
-  const body: DeviceStart = {
-    device_code: deviceCode,
-    expires_in: DEVICE_TTL_SECONDS,
-    interval: DEVICE_POLL_INTERVAL_SECONDS,
-    user_code: formatUserCode(normalized),
-    verification_uri: new URL(ACTIVATE_PATH, request.url).href,
-  };
-  return Response.json(body, {
-    headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
-  });
-}
-
-async function readActivation(
-  request: Request,
-  kv: KVNamespace,
-): Promise<DeviceRecord | Response> {
-  let form: FormData;
-  try {
-    form = await request.formData();
-  } catch {
-    return activatePage("Enter the code from the headless client.", 400);
-  }
-  const normalized = normalizeUserCode(formValue(form, "user_code"));
-  if (normalized.length !== USER_CODE_LENGTH) {
-    return activatePage("That code is not valid.", 400);
-  }
-  const record = await readRecord(kv, userKey(normalized));
-  if (record === undefined || record.status !== "pending") {
-    return activatePage("That code is expired or already used.", 400);
-  }
-  return { ...record, secretHash: normalized };
-}
-
-function activatePage(message: string, status = 200): Response {
-  const notice =
-    message === ""
-      ? ""
-      : `<p class="notice">${escapeHtml(message)}</p>`;
-  return htmlResponse(
+function activatePage(message = "", status = 200): Response {
+  const csrf = generateCSRFProtection();
+  const response = htmlResponse(
     `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -401,8 +197,9 @@ function activatePage(message: string, status = 200): Response {
   <main>
     <h1>Activate Machine Memory</h1>
     <p>Enter the code shown by the headless client. You will sign in with GitHub before it is approved.</p>
-    ${notice}
+    ${message === "" ? "" : `<p class="notice">${sanitizeText(message)}</p>`}
     <form method="post" action="${ACTIVATE_PATH}">
+      <input type="hidden" name="csrf_token" value="${csrf.token}">
       <label for="user_code">Code</label>
       <input id="user_code" name="user_code" autocomplete="off" spellcheck="false" required>
       <button type="submit">Continue</button>
@@ -412,91 +209,54 @@ function activatePage(message: string, status = 200): Response {
 </html>`,
     status,
   );
+  response.headers.set("Set-Cookie", csrf.setCookie);
+  return response;
 }
 
 export async function beginDeviceActivation(
   request: Request,
-  kv: KVNamespace,
-): Promise<DeviceLoginResult> {
+  db: D1Database,
+): Promise<AuthRequest | Response> {
   if (request.method === "GET") {
-    return { kind: "response", response: activatePage("") };
+    return activatePage();
   }
-  if (request.method !== "POST") {
-    return {
-      kind: "response",
-      response: activatePage("Use the form to continue.", 405),
-    };
+  const form = await readForm(request);
+  if (form instanceof Response) {
+    return form;
   }
-
-  const record = await readActivation(request, kv);
-  if (record instanceof Response) {
-    return { kind: "response", response: record };
+  try {
+    validateCSRFToken(form, request);
+  } catch (error) {
+    if (error instanceof OAuthError) {
+      return activatePage("Reload the form and try again.", 403);
+    }
+    throw error;
   }
-
-  const location = new URL("/authorize", request.url);
-  location.searchParams.set("response_type", "code");
-  location.searchParams.set("client_id", record.clientId);
-  location.searchParams.set("redirect_uri", record.redirectUri);
-  location.searchParams.set("code_challenge", record.codeChallenge);
-  location.searchParams.set("code_challenge_method", "S256");
-  location.searchParams.set("scope", record.scope.join(" "));
-  location.searchParams.set("state", `device:${record.secretHash}`);
-  return { kind: "redirect", location: location.href };
-}
-
-/**
- * Called after GitHub login succeeds for a device-started authorization.
- * Confirms the pending code still matches the client and PKCE challenge, then
- * tells the caller to finish the provider grant. The loopback redirect carries
- * the authorization code to the client that is polling for it.
- */
-export async function claimDeviceApproval(
-  kv: KVNamespace,
-  state: string,
-  clientId: string,
-  redirectUri: string,
-  codeChallenge: string | undefined,
-): Promise<boolean> {
-  if (!state.startsWith("device:")) {
-    return false;
+  const userCode = formValue(form, "user_code")
+    .replace(/[\s-]/g, "")
+    .toUpperCase();
+  if (!/^[0-9A-HJKMNP-TV-Z]{8}$/.test(userCode)) {
+    return activatePage("That code is not valid.", 400);
   }
-  const userCode = state.slice("device:".length);
-  const record = await readRecord(kv, userKey(userCode));
-  if (
-    record === undefined ||
-    record.status !== "pending" ||
-    record.clientId !== clientId ||
-    record.redirectUri !== redirectUri ||
-    record.codeChallenge !== codeChallenge
-  ) {
-    return false;
-  }
-  await kv.delete(userKey(userCode));
-  await kv.delete(secretKey(record.secretHash));
-  return true;
+  const auth = await readDeviceActivation(db, userCode);
+  return auth ?? activatePage("That code is expired or already used.", 400);
 }
 
 export function deviceApprovedPage(): Response {
-  return htmlResponse(
-    `<!DOCTYPE html>
+  return htmlResponse(`<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Approved</title></head>
 <body><main><h1>Approved</h1><p>Return to the headless client. This page did not receive a token.</p></main></body>
-</html>`,
-  );
+</html>`);
 }
 
-async function readDevicePoll(
+export async function pollDeviceLogin(
   request: Request,
-): Promise<{ deviceCode: string; clientId: string } | Response | undefined> {
-  let form: FormData;
-  try {
-    form = await request.clone().formData();
-  } catch {
-    return undefined;
-  }
-  if (form.get("grant_type") !== DEVICE_GRANT_TYPE) {
-    return undefined;
+  db: D1Database,
+): Promise<Response> {
+  const form = await readForm(request);
+  if (form instanceof Response) {
+    return form;
   }
   const deviceCode = formValue(form, "device_code");
   const clientId = formValue(form, "client_id");
@@ -504,41 +264,10 @@ async function readDevicePoll(
     return oauthError(
       "invalid_request",
       "device_code and client_id are required.",
-      400,
     );
   }
-  return { clientId, deviceCode };
-}
-
-export async function pollDeviceLogin(
-  request: Request,
-  kv: KVNamespace,
-): Promise<Response | undefined> {
-  const url = new URL(request.url);
-  if (url.pathname !== "/token" || request.method !== "POST") {
-    return undefined;
-  }
-  const contentType = request.headers.get("content-type") ?? "";
-  if (!contentType.includes("application/x-www-form-urlencoded")) {
-    return undefined;
-  }
-  const polled = await readDevicePoll(request);
-  if (polled === undefined || polled instanceof Response) {
-    return polled;
-  }
-  const record = await readRecord(
-    kv,
-    secretKey(await sha256Hex(polled.deviceCode)),
-  );
-  if (record === undefined || record.clientId !== polled.clientId) {
-    return oauthError("expired_token", "The device code has expired.", 400);
-  }
-  if (record.status === "denied") {
-    return oauthError("access_denied", "The sign-in was denied.", 400);
-  }
-  return oauthError(
-    "authorization_pending",
-    "Enter the code at the verification page.",
-    400,
-  );
+  const result = await readDevicePoll(db, deviceCode, clientId);
+  const status =
+    "error" in result ? (result.error === "server_error" ? 500 : 400) : 200;
+  return Response.json(result, { status, headers: NO_STORE });
 }

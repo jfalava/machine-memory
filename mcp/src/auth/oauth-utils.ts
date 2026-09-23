@@ -4,6 +4,20 @@ import type {
 } from "@cloudflare/workers-oauth-provider";
 import { Schema } from "effect";
 
+export const AuthRequestSchema = Schema.Struct({
+  responseType: Schema.String,
+  clientId: Schema.String,
+  redirectUri: Schema.String,
+  scope: Schema.mutable(Schema.Array(Schema.String)),
+  state: Schema.String,
+  codeChallenge: Schema.optional(Schema.String),
+  codeChallengeMethod: Schema.optional(Schema.String),
+  resource: Schema.optional(
+    Schema.Union([Schema.String, Schema.mutable(Schema.Array(Schema.String))]),
+  ),
+  issuer: Schema.optional(Schema.String),
+});
+
 /**
  * OAuth 2.1 compliant error class with standardized error codes and
  * descriptions.
@@ -323,7 +337,7 @@ async function getApprovedClientsFromCookie(
   }
 }
 
-async function sha256Hex(value: string): Promise<string> {
+export async function sha256Hex(value: string): Promise<string> {
   const encoder = new TextEncoder();
   const hashBuffer = await crypto.subtle.digest(
     "SHA-256",
