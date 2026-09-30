@@ -15,13 +15,27 @@ CREATE INDEX memory_vector_sync_pending ON memory_vector_sync(next_attempt_at);
 INSERT INTO memory_vector_sync(memory_id, repository)
 SELECT id, repository FROM memories;
 
--- Keep complete triggers on one line for the D1 HTTP SQL parser.
-CREATE TRIGGER memory_vector_insert AFTER INSERT ON memories BEGIN INSERT INTO memory_vector_sync(memory_id, repository) VALUES (NEW.id, NEW.repository) ON CONFLICT(memory_id) DO UPDATE SET repository = excluded.repository, generation = generation + 1, next_attempt_at = 0, attempts = 0, last_error = NULL; END;
-CREATE TRIGGER memory_vector_update AFTER UPDATE ON memories BEGIN INSERT INTO memory_vector_sync(memory_id, repository) VALUES (NEW.id, NEW.repository) ON CONFLICT(memory_id) DO UPDATE SET repository = excluded.repository, generation = generation + 1, next_attempt_at = 0, attempts = 0, last_error = NULL; END;
-CREATE TRIGGER memory_vector_delete AFTER DELETE ON memories BEGIN INSERT INTO memory_vector_sync(memory_id, repository) VALUES (OLD.id, OLD.repository) ON CONFLICT(memory_id) DO UPDATE SET generation = generation + 1, next_attempt_at = 0, attempts = 0, last_error = NULL; END;
+CREATE TRIGGER memory_vector_insert AFTER INSERT ON memories BEGIN
+  INSERT INTO memory_vector_sync(memory_id, repository) VALUES (NEW.id, NEW.repository)
+  ON CONFLICT(memory_id) DO UPDATE SET repository = excluded.repository,
+    generation = generation + 1, next_attempt_at = 0, attempts = 0, last_error = NULL;
+END;
+CREATE TRIGGER memory_vector_update AFTER UPDATE ON memories BEGIN
+  INSERT INTO memory_vector_sync(memory_id, repository) VALUES (NEW.id, NEW.repository)
+  ON CONFLICT(memory_id) DO UPDATE SET repository = excluded.repository,
+    generation = generation + 1, next_attempt_at = 0, attempts = 0, last_error = NULL;
+END;
+CREATE TRIGGER memory_vector_delete AFTER DELETE ON memories BEGIN
+  INSERT INTO memory_vector_sync(memory_id, repository) VALUES (OLD.id, OLD.repository)
+  ON CONFLICT(memory_id) DO UPDATE SET generation = generation + 1,
+    next_attempt_at = 0, attempts = 0, last_error = NULL;
+END;
 
 -- Identity is immutable; moving records would invalidate references and vectors.
-CREATE TRIGGER memories_identity BEFORE UPDATE OF id, repository ON memories WHEN NEW.id != OLD.id OR NEW.repository != OLD.repository BEGIN SELECT RAISE(ABORT, 'memory identity is immutable'); END;
+CREATE TRIGGER memories_identity BEFORE UPDATE OF id, repository ON memories
+WHEN NEW.id != OLD.id OR NEW.repository != OLD.repository BEGIN
+  SELECT RAISE(ABORT, 'memory identity is immutable');
+END;
 
 CREATE TABLE memory_migration_sources (
   repository TEXT NOT NULL,

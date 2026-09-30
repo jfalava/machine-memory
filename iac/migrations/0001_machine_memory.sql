@@ -20,16 +20,36 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
 USING fts5(content, tags, context, content='memories', content_rowid='id');
 
--- Keep complete triggers on one line for the D1 HTTP SQL parser.
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN INSERT INTO memories_fts(rowid, content, tags, context) VALUES (new.id, new.content, new.tags, new.context); END;
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+  INSERT INTO memories_fts(rowid, content, tags, context)
+  VALUES (new.id, new.content, new.tags, new.context);
+END;
 
 CREATE INDEX IF NOT EXISTS memories_repository_idx
 ON memories(repository);
 
-CREATE TRIGGER IF NOT EXISTS memories_repository_required BEFORE INSERT ON memories WHEN trim(NEW.repository) = '' BEGIN SELECT RAISE(ABORT, 'repository is required'); END;
+CREATE TRIGGER IF NOT EXISTS memories_repository_required
+BEFORE INSERT ON memories
+WHEN trim(NEW.repository) = ''
+BEGIN
+  SELECT RAISE(ABORT, 'repository is required');
+END;
 
-CREATE TRIGGER IF NOT EXISTS memories_repository_update_required BEFORE UPDATE OF repository ON memories WHEN trim(NEW.repository) = '' BEGIN SELECT RAISE(ABORT, 'repository is required'); END;
+CREATE TRIGGER IF NOT EXISTS memories_repository_update_required
+BEFORE UPDATE OF repository ON memories
+WHEN trim(NEW.repository) = ''
+BEGIN
+  SELECT RAISE(ABORT, 'repository is required');
+END;
 
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags, context) VALUES ('delete', old.id, old.content, old.tags, old.context); END;
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+  INSERT INTO memories_fts(memories_fts, rowid, content, tags, context)
+  VALUES ('delete', old.id, old.content, old.tags, old.context);
+END;
 
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN INSERT INTO memories_fts(memories_fts, rowid, content, tags, context) VALUES ('delete', old.id, old.content, old.tags, old.context); INSERT INTO memories_fts(rowid, content, tags, context) VALUES (new.id, new.content, new.tags, new.context); END;
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+  INSERT INTO memories_fts(memories_fts, rowid, content, tags, context)
+  VALUES ('delete', old.id, old.content, old.tags, old.context);
+  INSERT INTO memories_fts(rowid, content, tags, context)
+  VALUES (new.id, new.content, new.tags, new.context);
+END;

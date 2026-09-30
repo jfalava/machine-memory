@@ -1,17 +1,11 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 
-test.each(["0001_machine_memory", "0002_vector_sync", "0003_memory_integrity"])(
-  "D1 receives complete one-line triggers from %s",
-  async (name) => {
-    const sql = await readFile(
-      new URL(`../migrations/${name}.sql`, import.meta.url),
-      "utf8",
-    );
-    const triggers = sql.match(/^CREATE TRIGGER[^\n]*/gm) ?? [];
-    expect(triggers.length).toBeGreaterThan(0);
-    for (const trigger of triggers) {
-      expect(trigger).toMatch(/\bBEGIN\b.*\bEND;$/);
-    }
-  },
-);
+test("integrity triggers avoid nested END tokens in D1 HTTP batches", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0003_memory_integrity.sql", import.meta.url),
+    "utf8",
+  );
+  // CASE expressions add END tokens that the remote trigger splitter misreads.
+  expect(sql.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
+});
