@@ -1,6 +1,5 @@
 {
   "name": "@machine-memory/monorepo",
-  "version": "0.21.1",
   "workspaces": {
     "packages": [
       "contract",
