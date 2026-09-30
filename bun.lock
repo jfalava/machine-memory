@@ -13,7 +13,7 @@
     },
     "api": {
       "name": "@machine-memory/api",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
@@ -35,7 +35,7 @@
     },
     "cli": {
       "name": "@machine-memory/cli",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "bin": {
         "machine-memory": "src/app.ts",
       },
@@ -58,7 +58,7 @@
     },
     "contract": {
       "name": "@machine-memory/contract",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "effect": "catalog:effect",
       },
@@ -73,7 +73,7 @@
     },
     "docs": {
       "name": "@machine-memory/docs",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@cloudflare/nimbus-docs": "0.14.1",
         "@fontsource/google-sans-code": "5.3.1",
@@ -114,7 +114,7 @@
     },
     "iac": {
       "name": "@machine-memory/iac",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
@@ -133,7 +133,7 @@
     },
     "mcp": {
       "name": "@machine-memory/mcp",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@cloudflare/workers-oauth-provider": "0.10.3",
         "@cloudflare/workers-types": "catalog:types",
@@ -160,7 +160,7 @@
     },
     "router": {
       "name": "@machine-memory/router",
-      "version": "0.21.0",
+      "version": "0.21.1",
       "dependencies": {
         "@cloudflare/workers-types": "5.20260920.1",
         "hono": "4.13.8",

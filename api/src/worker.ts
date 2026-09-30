@@ -1970,17 +1970,16 @@ export default Cloudflare.Worker<{}>()(
       "MACHINE_MEMORY_DB_TOKEN",
     ).pipe(Effect.orDie);
     const coordinator = yield* VectorCoordinator;
-    const wake = coordinator
-      .getByName("memory-index")
-      .wake()
-      .pipe(
-        Effect.catchCause((cause) =>
-          Effect.logError(
-            "Vector coordinator wake failed; cron will retry.",
-            cause,
-          ),
+    const wake = Effect.suspend(() =>
+      coordinator.getByName("memory-index").wake(),
+    ).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError(
+          "Vector coordinator wake failed; cron will retry.",
+          cause,
         ),
-      );
+      ),
+    );
     yield* Cloudflare.Workers.cron("*/5 * * * *", () => wake);
     const restHandlers = yield* createApiHandlers({
       d1,
