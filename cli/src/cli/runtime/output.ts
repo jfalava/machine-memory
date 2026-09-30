@@ -1,4 +1,4 @@
-import { Flag, GlobalFlag } from "effect/unstable/cli";
+import { Flag, GlobalFlag } from "effect/cli";
 import { printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";

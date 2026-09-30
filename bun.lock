@@ -114,7 +114,6 @@
     },
     "iac": {
       "name": "@machine-memory/iac",
-      "version": "0.21.1",
       "dependencies": {
         "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
@@ -177,6 +176,7 @@
   },
   "patchedDependencies": {
     "alchemy@2.0.0-beta.79": "patches/alchemy@2.0.0-beta.79.patch",
+    "effect@4.0.0-rc.118": "patches/effect@4.0.0-rc.118.patch",
   },
   "catalogs": {
     "build": {

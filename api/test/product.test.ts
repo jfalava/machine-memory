@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { EMBEDDING_DIMENSIONS, type JsonValue } from "@machine-memory/contract";
 import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Redacted } from "effect";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 

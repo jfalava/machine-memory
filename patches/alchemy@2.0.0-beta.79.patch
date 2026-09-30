@@ -1,0 +1,310 @@
+diff --git a/lib/Auth/OAuthFlow.js b/lib/Auth/OAuthFlow.js
+index 7bc6ac8e5e0f022906f14c415f3bb8957b34e9fc..03aa841949fbf6a0b0263eb940ef95e69f0f02cf 100644
+--- a/lib/Auth/OAuthFlow.js
++++ b/lib/Auth/OAuthFlow.js
+@@ -1,7 +1,7 @@
+ import * as Data from "effect/Data";
+ import * as Clock from "effect/Clock";
+ import * as Crypto from "effect/Crypto";
+-import * as Encoding from "effect/Encoding";
++import * as Base64Url from "effect/encoding/Base64Url";
+ import * as Effect from "effect/Effect";
+ import * as Redacted from "effect/Redacted";
+ import * as Schema from "effect/Schema";
+@@ -43,7 +43,7 @@ const randomText = Effect.fn(function* (length) {
+         error: "crypto_error",
+         errorDescription: `Secure random generation failed: ${cause}`,
+     })));
+-    return Encoding.encodeBase64Url(bytes);
++    return Base64Url.encode(bytes);
+ });
+ const generatePKCE = Effect.fn(function* (length = 96) {
+     const crypto = yield* Crypto.Crypto;
+@@ -54,7 +54,7 @@ const generatePKCE = Effect.fn(function* (length = 96) {
+         error: "crypto_error",
+         errorDescription: `PKCE digest failed: ${cause}`,
+     })));
+-    return { verifier, challenge: Encoding.encodeBase64Url(challenge) };
++    return { verifier, challenge: Base64Url.encode(challenge) };
+ });
+ const TokenResponse = Schema.Struct({
+     access_token: Schema.String,
+diff --git a/lib/Cloudflare/Workers/WorkerProvider.js b/lib/Cloudflare/Workers/WorkerProvider.js
+index f862a041293f6b2fb21ce46653ed3f0fac58849a..646a7600ec3bfd6751fd35d1e5dc9c947891694f 100644
+--- a/lib/Cloudflare/Workers/WorkerProvider.js
++++ b/lib/Cloudflare/Workers/WorkerProvider.js
+@@ -3901,10 +3901,8 @@ export const LiveWorkerProvider = () => Provider.effect(Worker, Effect.gen(funct
+                         yield* getWorkerSettingsWithDurableObjects(name, doClasses, dispatchNamespace));
+                 }
+             }
+-            if (existingSettings && doClasses.length > 0) {
+-                ({ durableObjectNamespaces } =
+-                    yield* getWorkerSettingsWithDurableObjects(name, doClasses, dispatchNamespace));
+-            }
++            // Existing scripts may not have newly declared classes yet. Preserve
++            // their live namespaces here; reconcile uploads and verifies new ones.
+             /**
+              * Precreate publishes the stable `https://{name}.{subdomain}.workers.dev`
+              * URL when `workersDev` is enabled (the default). Cycle peers that
+diff --git a/lib/Docker/Docker.js b/lib/Docker/Docker.js
+index dc890e1b923c3dd4ab734e54b92a047d9582315f..551e3d82e5c3f95b0faccad0d798dafb6790932b 100644
+--- a/lib/Docker/Docker.js
++++ b/lib/Docker/Docker.js
+@@ -1,7 +1,7 @@
+ import * as Config from "effect/Config";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as FileSystem from "effect/FileSystem";
+ import { flow } from "effect/Function";
+ import * as Layer from "effect/Layer";
+@@ -18,7 +18,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
+ import { createPhysicalName } from "../PhysicalName.js";
+ import { classifyDockerRegistryError, } from "./RegistryError.js";
+ const RegistryAuth = Schema.String.pipe(Schema.check(Schema.makeFilter((value) => {
+-    const decoded = Encoding.decodeBase64(value);
++    const decoded = Base64.decode(value);
+     return Result.isSuccess(decoded) && decoded.success.indexOf(58) > 0;
+ })));
+ const decodeRegistryAuthConfig = Schema.Struct({
+@@ -86,7 +86,7 @@ export const DockerLive = Layer.effect(Docker, Effect.gen(function* () {
+         const password = Redacted.isRedacted(credentials.password)
+             ? Redacted.value(credentials.password)
+             : credentials.password;
+-        const auth = Encoding.encodeBase64(`${credentials.username}:${password}`);
++        const auth = Base64.encode(`${credentials.username}:${password}`);
+         // Preserve Docker's file/helper fallback, contexts, and builders.
+         return {
+             DOCKER_AUTH_CONFIG: JSON.stringify({
+diff --git a/lib/Git/GitHubCompat.js b/lib/Git/GitHubCompat.js
+index aba073de00fa3015588f1dc4924db41f5c3a63b6..fd2ba4207170fc978142fd1a60391e91858d100f 100644
+--- a/lib/Git/GitHubCompat.js
++++ b/lib/Git/GitHubCompat.js
+@@ -31,7 +31,7 @@
+  * compute content diffs; fetch blobs and diff client-side).
+  */
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as Layer from "effect/Layer";
+ import * as Result from "effect/Result";
+ import * as HttpRouter from "effect/unstable/http/HttpRouter";
+@@ -322,7 +322,7 @@ export const gitHubCompatRoutes = (options) => {
+                 path,
+                 sha: file.oid,
+                 url: `${repoUrl}/contents/${path}`,
+-                content: Encoding.encodeBase64(file.content),
++                content: Base64.encode(file.content),
+             });
+         })),
+         /** `GET /api/v3/repos/:owner/:repo/pulls` */
+diff --git a/lib/Git/Jobs/Fork.js b/lib/Git/Jobs/Fork.js
+index 493a93b8af46c4112609f77f139c91163c1e8d1b..bb437e0d0ed0eca795b86a3efe11824152ed1131 100644
+--- a/lib/Git/Jobs/Fork.js
++++ b/lib/Git/Jobs/Fork.js
+@@ -20,14 +20,14 @@ import { LIVE_OBJECTS } from "../Store/ObjectStore.js";
+  * re-streaming from the start and skipping already-copied rows.
+  */
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as Option from "effect/Option";
+ import * as Result from "effect/Result";
+ import * as Stream from "effect/Stream";
+ import { StoreError } from "../Protocol/Store.js";
+ /** Decodes a snapshot row's base64 `zdata` back into bytes. */
+ const decodeZData = (row) => {
+-    const decoded = Encoding.decodeBase64(row.zdata ?? "");
++    const decoded = Base64.decode(row.zdata ?? "");
+     return Result.isSuccess(decoded)
+         ? Effect.succeed(decoded.success)
+         : Effect.fail(new StoreError({ reason: `fork: corrupt zdata for ${row.oid}` }));
+@@ -78,7 +78,7 @@ export const snapshotStream = (sql) => {
+                 location: row.location,
+                 zdata: row.zdata === null
+                     ? null
+-                    : Encoding.encodeBase64(new Uint8Array(row.zdata)),
++                    : Base64.encode(new Uint8Array(row.zdata)),
+                 r2_key: row.r2_key,
+                 pack_id: row.pack_id,
+                 pack_offset: row.pack_offset,
+diff --git a/lib/Git/Operations.js b/lib/Git/Operations.js
+index cc66c7e8543d799314bd6062e10eab2b1a4930c6..2b0770feaf84fafaa4bc0649ddfac3db6ca00160 100644
+--- a/lib/Git/Operations.js
++++ b/lib/Git/Operations.js
+@@ -1,6 +1,6 @@
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as Layer from "effect/Layer";
+ import { CommitDiff, CommitInfo, Comparison, DiffEntry, ImportFailed, MergeResult, ObjectStats, ObjectTooLarge, Pull, PullDetail, PushStats, Ref, Repo, RepoAlreadyExists, RepoCreated, RepoNotFound, RepoNotReady, TreeEntry, } from "./Api.js";
+ import { parseCommit, parseTree, treeEntryKind, } from "./Protocol/ObjectCodec.js";
+@@ -545,7 +545,7 @@ export const makeOperations = Effect.gen(function* () {
+                 oid: params.oid,
+                 size: data.size,
+                 encoding: "base64",
+-                content: Encoding.encodeBase64(data.content),
++                content: Base64.encode(data.content),
+             };
+         }),
+         diff: ({ params, }) => Effect.gen(function* () {
+diff --git a/src/Auth/OAuthFlow.ts b/src/Auth/OAuthFlow.ts
+index 34117ec9a88c4c300c1948554c9b906edc65f73a..b506cb5766211ce795079eb600daf4150d1def19 100644
+--- a/src/Auth/OAuthFlow.ts
++++ b/src/Auth/OAuthFlow.ts
+@@ -1,7 +1,7 @@
+ import * as Data from "effect/Data";
+ import * as Clock from "effect/Clock";
+ import * as Crypto from "effect/Crypto";
+-import * as Encoding from "effect/Encoding";
++import * as Base64Url from "effect/encoding/Base64Url";
+ import * as Effect from "effect/Effect";
+ import * as Redacted from "effect/Redacted";
+ import * as Schema from "effect/Schema";
+@@ -153,7 +153,7 @@ const randomText = Effect.fn(function* (length: number) {
+         }),
+     ),
+   );
+-  return Encoding.encodeBase64Url(bytes);
++  return Base64Url.encode(bytes);
+ });
+ 
+ const generatePKCE = Effect.fn(function* (length = 96) {
+@@ -170,7 +170,7 @@ const generatePKCE = Effect.fn(function* (length = 96) {
+           }),
+       ),
+     );
+-  return { verifier, challenge: Encoding.encodeBase64Url(challenge) };
++  return { verifier, challenge: Base64Url.encode(challenge) };
+ });
+ 
+ const TokenResponse = Schema.Struct({
+diff --git a/src/Cloudflare/Workers/WorkerProvider.ts b/src/Cloudflare/Workers/WorkerProvider.ts
+index 555f5897a3a1e6e742daf1520e9dc5d34665d43e..510889fb71bce24483a9a63f0417c555ada866c2 100644
+--- a/src/Cloudflare/Workers/WorkerProvider.ts
++++ b/src/Cloudflare/Workers/WorkerProvider.ts
+@@ -5259,14 +5259,8 @@ export const LiveWorkerProvider = () =>
+             }
+           }
+ 
+-          if (existingSettings && doClasses.length > 0) {
+-            ({ durableObjectNamespaces } =
+-              yield* getWorkerSettingsWithDurableObjects(
+-                name,
+-                doClasses,
+-                dispatchNamespace,
+-              ));
+-          }
++          // Existing scripts may not have newly declared classes yet. Preserve
++          // their live namespaces here; reconcile uploads and verifies new ones.
+ 
+           /**
+            * Precreate publishes the stable `https://{name}.{subdomain}.workers.dev`
+diff --git a/src/Docker/Docker.ts b/src/Docker/Docker.ts
+index ef0f9ffa1641f8a4c2003d19030dd9ec6cacc852..a3bd725543370d691dc4e5cea6f509fc050d3790 100644
+--- a/src/Docker/Docker.ts
++++ b/src/Docker/Docker.ts
+@@ -1,7 +1,7 @@
+ import * as Config from "effect/Config";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as FileSystem from "effect/FileSystem";
+ import { flow } from "effect/Function";
+ import * as Layer from "effect/Layer";
+@@ -39,7 +39,7 @@ export interface RegistryCredentials {
+ const RegistryAuth = Schema.String.pipe(
+   Schema.check(
+     Schema.makeFilter((value) => {
+-      const decoded = Encoding.decodeBase64(value);
++      const decoded = Base64.decode(value);
+       return Result.isSuccess(decoded) && decoded.success.indexOf(58) > 0;
+     }),
+   ),
+@@ -617,7 +617,7 @@ export const DockerLive = Layer.effect(
+             const password = Redacted.isRedacted(credentials.password)
+               ? Redacted.value(credentials.password)
+               : credentials.password;
+-            const auth = Encoding.encodeBase64(
++            const auth = Base64.encode(
+               `${credentials.username}:${password}`,
+             );
+             // Preserve Docker's file/helper fallback, contexts, and builders.
+diff --git a/src/Git/GitHubCompat.ts b/src/Git/GitHubCompat.ts
+index 052224dcbfa355f54846deaa7c613a7e0e8dd8ae..52382116140d125f987b33d72d9f259f159f4efb 100644
+--- a/src/Git/GitHubCompat.ts
++++ b/src/Git/GitHubCompat.ts
+@@ -31,7 +31,7 @@
+  * compute content diffs; fetch blobs and diff client-side).
+  */
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as Layer from "effect/Layer";
+ import * as Result from "effect/Result";
+ import * as HttpRouter from "effect/unstable/http/HttpRouter";
+@@ -542,7 +542,7 @@ export const gitHubCompatRoutes = (options: GitHubCompatOptions) => {
+             path,
+             sha: file.oid,
+             url: `${repoUrl}/contents/${path}`,
+-            content: Encoding.encodeBase64(file.content),
++            content: Base64.encode(file.content),
+           });
+         }),
+       ),
+diff --git a/src/Git/Jobs/Fork.ts b/src/Git/Jobs/Fork.ts
+index eda058cc4a82be0523b4f0976ffd1aeec99074c1..83e996de3489956053e77937525c2222ac90ed73 100644
+--- a/src/Git/Jobs/Fork.ts
++++ b/src/Git/Jobs/Fork.ts
+@@ -20,7 +20,7 @@ import { LIVE_OBJECTS } from "../Store/ObjectStore.ts";
+  * re-streaming from the start and skipping already-copied rows.
+  */
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as Option from "effect/Option";
+ import * as Result from "effect/Result";
+ import * as Stream from "effect/Stream";
+@@ -104,7 +104,7 @@ export type SnapshotChunk =
+ const decodeZData = (
+   row: SnapshotObjectRow,
+ ): Effect.Effect<Uint8Array, StoreError> => {
+-  const decoded = Encoding.decodeBase64(row.zdata ?? "");
++  const decoded = Base64.decode(row.zdata ?? "");
+   return Result.isSuccess(decoded)
+     ? Effect.succeed(decoded.success)
+     : Effect.fail(
+@@ -187,7 +187,7 @@ export const snapshotStream = (
+             zdata:
+               row.zdata === null
+                 ? null
+-                : Encoding.encodeBase64(new Uint8Array(row.zdata)),
++                : Base64.encode(new Uint8Array(row.zdata)),
+             r2_key: row.r2_key,
+             pack_id: row.pack_id,
+             pack_offset: row.pack_offset,
+diff --git a/src/Git/Operations.ts b/src/Git/Operations.ts
+index a54e7e257a9f602e3dd73bbdb3ddf2ff05c28878..e69cda666624fe496c5aa42ad14c8ced4a6e98c7 100644
+--- a/src/Git/Operations.ts
++++ b/src/Git/Operations.ts
+@@ -3,7 +3,7 @@ import type * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
+ 
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+-import * as Encoding from "effect/Encoding";
++import * as Base64 from "effect/encoding/Base64";
+ import * as Layer from "effect/Layer";
+ import type {
+   CompactRepo,
+@@ -864,7 +864,7 @@ export const makeOperations = Effect.gen(function* () {
+           oid: params.oid,
+           size: data.size,
+           encoding: "base64" as const,
+-          content: Encoding.encodeBase64(data.content),
++          content: Base64.encode(data.content),
+         };
+       }),
+     diff: ({

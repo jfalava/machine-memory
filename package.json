@@ -51,5 +51,9 @@
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:build",
     "vite-tsconfig-paths": "6.1.1"
+  },
+  "patchedDependencies": {
+    "effect@4.0.0-rc.118": "patches/effect@4.0.0-rc.118.patch",
+    "alchemy@2.0.0-beta.79": "patches/alchemy@2.0.0-beta.79.patch"
   }
 }

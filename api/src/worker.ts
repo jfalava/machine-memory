@@ -53,8 +53,8 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import { apiName } from "../../iac/src/config";
 import { Database } from "../../iac/src/database";

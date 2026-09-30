@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
 import type { DatabaseBackendFlags } from "../../database-config";
 import type { DbAccessMode } from "../../db";

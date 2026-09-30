@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect } from "effect";
-import { CliError, CliOutput, Command } from "effect/unstable/cli";
+import { CliError, CliOutput, Command } from "effect/cli";
 import pc from "picocolors";
 
 import { printJson } from "../cli-utils";

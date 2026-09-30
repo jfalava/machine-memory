@@ -1,0 +1,73 @@
+diff --git a/node_modules/effect/dist/Encoding.d.ts b/dist/Encoding.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..75c16060cf590c0874ce18ad0a10600b003fcba4
+--- /dev/null
++++ b/dist/Encoding.d.ts
+@@ -0,0 +1,10 @@
++import type * as Base64 from "./encoding/Base64.js";
++import type * as Base64Url from "./encoding/Base64Url.js";
++import type * as Hex from "./encoding/Hex.js";
++
++export declare const encodeBase64: typeof Base64.encode;
++export declare const decodeBase64: typeof Base64.decode;
++export declare const encodeBase64Url: typeof Base64Url.encode;
++export declare const decodeBase64Url: typeof Base64Url.decode;
++export declare const encodeHex: typeof Hex.encode;
++export declare const decodeHex: typeof Hex.decode;
+diff --git a/node_modules/effect/dist/Encoding.js b/dist/Encoding.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..476a8037860a12cbbdfeded473af3cd8c72d12f0
+--- /dev/null
++++ b/dist/Encoding.js
+@@ -0,0 +1,10 @@
++import * as Base64 from "./encoding/Base64.js";
++import * as Base64Url from "./encoding/Base64Url.js";
++import * as Hex from "./encoding/Hex.js";
++
++export const encodeBase64 = Base64.encode;
++export const decodeBase64 = Base64.decode;
++export const encodeBase64Url = Base64Url.encode;
++export const decodeBase64Url = Base64Url.decode;
++export const encodeHex = Hex.encode;
++export const decodeHex = Hex.decode;
+diff --git a/package.json b/package.json
+index 6ff391d2f3b97e3362ce6d9fda75f8b8a22ca7d8..0e2f4f1fccf15b83113b7828f6ec734910ba336c 100644
+--- a/package.json
++++ b/package.json
+@@ -39,6 +39,7 @@
+     "./devtools": "./dist/devtools/index.js",
+     "./encoding": "./dist/encoding/index.js",
+     "./eventlog": "./dist/eventlog/index.js",
++    "./Encoding": "./dist/Encoding.js",
+     "./http": "./dist/http/index.js",
+     "./http-api": "./dist/http-api/index.js",
+     "./net": "./dist/net/index.js",
+@@ -52,6 +53,28 @@
+     "./sql": "./dist/sql/index.js",
+     "./workflow": "./dist/workflow/index.js",
+     "./workers": "./dist/workers/index.js",
++    "./unstable/ai": "./dist/ai/index.js",
++    "./unstable/ai/*": "./dist/ai/*.js",
++    "./unstable/cli": "./dist/cli/index.js",
++    "./unstable/cli/*": "./dist/cli/*.js",
++    "./unstable/encoding": "./dist/encoding/index.js",
++    "./unstable/encoding/*": "./dist/encoding/*.js",
++    "./unstable/http": "./dist/http/index.js",
++    "./unstable/http/*": "./dist/http/*.js",
++    "./unstable/httpapi": "./dist/http-api/index.js",
++    "./unstable/httpapi/*": "./dist/http-api/*.js",
++    "./unstable/observability": "./dist/observability/index.js",
++    "./unstable/observability/*": "./dist/observability/*.js",
++    "./unstable/persistence": "./dist/persistence/index.js",
++    "./unstable/persistence/*": "./dist/persistence/*.js",
++    "./unstable/process": "./dist/process/index.js",
++    "./unstable/process/*": "./dist/process/*.js",
++    "./unstable/rpc": "./dist/rpc/index.js",
++    "./unstable/rpc/*": "./dist/rpc/*.js",
++    "./unstable/socket": "./dist/socket/index.js",
++    "./unstable/socket/*": "./dist/socket/*.js",
++    "./unstable/sql": "./dist/sql/index.js",
++    "./unstable/sql/*": "./dist/sql/*.js",
+     "./*": "./dist/*.js",
+     "./internal/*": null,
+     "./cli/internal/*": null,
