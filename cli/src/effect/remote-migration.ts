@@ -6,6 +6,7 @@ import {
   type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
+
 import {
   jsonObject,
   jsonString,
@@ -147,13 +148,14 @@ export function migrateRemoteRows(
   queryUrl: string,
   token: string | undefined,
   repository: string,
+  source: string,
   rows: RemoteMigrationRow[],
 ): Effect.Effect<RemoteMigrationBatchResult, MemoryDatabaseError> {
   return request(
     queryUrl,
     token,
     "/migrate",
-    { repository, rows },
+    { repository, source, rows },
     "remote/migrate",
   ).pipe(
     Effect.flatMap((response) =>

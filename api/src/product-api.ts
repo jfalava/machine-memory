@@ -33,7 +33,7 @@ export function vectorFilter(filters: ProductFilters): VectorFilter {
 
 export type ProductQuery = {
   readonly sql: string;
-  readonly params: (string | number)[];
+  readonly params: (string | number | null)[];
 };
 
 export function filterClauses(
@@ -55,8 +55,8 @@ export function filterClauses(
     params.push(filters.certainty);
   }
   if (filters.tags !== undefined) {
-    clauses.push(`${prefix}tags LIKE ?`);
-    params.push(`%${filters.tags}%`);
+    clauses.push(`INSTR(LOWER(COALESCE(${prefix}tags, '')), LOWER(?)) > 0`);
+    params.push(filters.tags);
   }
   return { sql: clauses.join(" AND "), params };
 }
@@ -210,13 +210,13 @@ export type UpdateFields = {
   readonly memory_type?: string;
   readonly certainty?: string;
   readonly status?: string;
-  readonly expires_after_days?: number;
+  readonly expires_after_days?: number | null;
   readonly superseded_by?: number;
 };
 
 export function updateSets(fields: UpdateFields): ProductQuery | undefined {
   const sets: string[] = [];
-  const params: (string | number)[] = [];
+  const params: (string | number | null)[] = [];
   if (fields.content !== undefined) {
     sets.push("content = ?");
     params.push(fields.content);
@@ -242,9 +242,9 @@ export function updateSets(fields: UpdateFields): ProductQuery | undefined {
 
 function finishUpdateSets(
   sets: string[],
-  params: (string | number)[],
+  params: (string | number | null)[],
   fields: UpdateFields,
-): ProductQuery | undefined {
+): { sql: string; params: (string | number | null)[] } | undefined {
   if (fields.status !== undefined) {
     sets.push("status = ?");
     params.push(fields.status);

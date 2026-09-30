@@ -30,6 +30,7 @@ let db: D1Database;
 let githubUserId = 42;
 let challenge: string;
 const outbound: string[] = [];
+const productCalls: string[] = [];
 
 async function bundle(entry: string) {
   const result = await build({
@@ -83,7 +84,35 @@ beforeAll(async () => {
           MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "test-cookie-signing-key",
         },
         serviceBindings: {
-          api: async () => new Response("Unexpected API call", { status: 500 }),
+          api: async (request: Request) => {
+            const path = new URL(request.url).pathname;
+            productCalls.push(path);
+            if (path === "/product/delete") {
+              return Response.json({
+                ok: true,
+                result: {
+                  deleted_from: "o/r",
+                  id: 7,
+                  deleted: true,
+                  existed: true,
+                },
+              });
+            }
+            if (path === "/product/list-repositories") {
+              return Response.json({
+                ok: true,
+                result: {
+                  repositories: [],
+                  count: 0,
+                  total_count: 0,
+                  offset: 0,
+                  limit: 100,
+                  has_more: false,
+                },
+              });
+            }
+            return new Response("Unexpected API call", { status: 500 });
+          },
         },
         outboundService: async (request: Request) => {
           outbound.push(request.url);
@@ -128,6 +157,7 @@ afterAll(async () => {
 beforeEach(async () => {
   githubUserId = 42;
   outbound.length = 0;
+  productCalls.length = 0;
   vi.restoreAllMocks();
   await db.prepare("DELETE FROM device_sessions").run();
 });
@@ -178,8 +208,8 @@ async function start(overrides: Record<string, string> = {}) {
 }
 
 type Session = { user_code: string; device_code: string; clientId: string };
-async function session(): Promise<Session> {
-  const { clientId, response } = await start();
+async function session(scope?: string): Promise<Session> {
+  const { clientId, response } = await start(scope ? { scope } : {});
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
   const body = (await response.json()) as Session;
@@ -245,7 +275,94 @@ async function poll(login: Session) {
   });
 }
 
+async function issueToken(scope: string) {
+  const login = await session(scope);
+  expect((await callback(await consent(login))).status).toBe(200);
+  await db.prepare("UPDATE device_sessions SET next_poll_at = 0").run();
+  const { code } = (await (await poll(login)).json()) as { code: string };
+  const response = await request("/token", {
+    grant_type: "authorization_code",
+    client_id: login.clientId,
+    code,
+    redirect_uri: REDIRECT,
+    code_verifier: VERIFIER,
+    resource: `${ORIGIN}/mcp`,
+  });
+  expect(response.status).toBe(200);
+  const tokens = (await response.json()) as {
+    access_token: string;
+    refresh_token: string;
+    scope: string;
+  };
+  return { ...tokens, clientId: login.clientId };
+}
+
+async function callTool(token: string, name: string) {
+  const response = await mf.dispatchFetch(`${ORIGIN}/mcp`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name,
+        arguments: name === "memory_delete" ? { repository: "o/r", id: 7 } : {},
+      },
+    }),
+  });
+  expect(response.status).toBe(200);
+  return response.text();
+}
+
 describe("headless login through the public router and real OAuth provider", () => {
+  test("read-only access tokens deny delete before the API call but allow reads", async () => {
+    const tokens = await issueToken("mcp:read");
+    expect(tokens.scope).toBe("mcp:read");
+    const denied = await callTool(tokens.access_token, "memory_delete");
+    expect(denied).toContain('"isError":true');
+    expect(denied).toContain("mcp:write required");
+    expect(productCalls).toEqual([]);
+    expect(
+      await callTool(tokens.access_token, "list_repositories"),
+    ).not.toContain('"isError":true');
+    expect(productCalls).toEqual(["/product/list-repositories"]);
+  });
+
+  test("write succeeds, but a refreshed/downscoped token cannot inherit grant writes", async () => {
+    const tokens = await issueToken("mcp:read mcp:write");
+    const written = await callTool(tokens.access_token, "memory_delete");
+    expect(written).not.toContain('"isError":true');
+    expect(written).toContain("deleted_from");
+    expect(productCalls).toEqual(["/product/delete"]);
+    const refreshed = await request("/token", {
+      grant_type: "refresh_token",
+      client_id: tokens.clientId,
+      refresh_token: tokens.refresh_token,
+      scope: "mcp:read",
+      resource: `${ORIGIN}/mcp`,
+    });
+    expect(refreshed.status).toBe(200);
+    const readOnly = (await refreshed.json()) as {
+      access_token: string;
+      scope: string;
+    };
+    expect(readOnly.scope).toBe("mcp:read");
+    productCalls.length = 0;
+    const denied = await callTool(readOnly.access_token, "memory_delete");
+    expect(denied).toContain('"isError":true');
+    expect(denied).toContain("mcp:write required");
+    expect(productCalls).toEqual([]);
+    expect(
+      await callTool(readOnly.access_token, "list_repositories"),
+    ).not.toContain('"isError":true');
+    expect(productCalls).toEqual(["/product/list-repositories"]);
+  });
+
   test("approves without loopback, retrieves once, exchanges with PKCE, and authenticates MCP", async () => {
     const login = await session();
     const stored = JSON.stringify(

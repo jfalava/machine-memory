@@ -64,7 +64,7 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
     return new mod.OAuthProvider<OAuthEnv>({
       apiRoute: "/mcp",
       apiHandler: {
-        fetch: (request, env, ctx) => {
+        fetch: async (request, env, ctx) => {
           // SAFETY: only these optional fields are read from provider-owned
           // grant props; a missing githubUserId fails closed below.
           const props = ctx.props as
@@ -81,11 +81,21 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
               { status: 403 },
             );
           }
-          return createMcpHandler(() => createMemoryServer(env, props?.login))(
-            request,
-            env,
-            ctx,
-          );
+          // Grant props contain identity, not effective scopes. Unwrap the
+          // access token so refreshed/downscoped tokens cannot inherit the
+          // original grant's write permission. Never use the internal default.
+          const bearer = request.headers
+            .get("authorization")
+            ?.match(/^Bearer\s+(\S+)$/i)?.[1];
+          const token = bearer
+            ? await env.OAUTH_PROVIDER?.unwrapToken(bearer)
+            : null;
+          if (!token) {
+            return new Response("Unauthorized", { status: 401 });
+          }
+          return createMcpHandler(() =>
+            createMemoryServer(env, props?.login, token.scope),
+          )(request, env, ctx);
         },
       },
       defaultHandler: githubHandler,

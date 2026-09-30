@@ -1,21 +1,25 @@
 import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import pc from "picocolors";
-import { handleLocalExport } from "./remote-migrate";
+
 import {
   booleanFlag,
   booleanSpec,
   effectCommand,
   positionalArgs,
+  stringFlag,
+  stringSpec,
 } from "../runtime/command";
+import { handleLocalExport } from "./remote-migrate";
 
 const localExportCommand = effectCommand(
   "export",
   {
     args: positionalArgs(),
     remote: booleanFlag("remote"),
+    "source-id": stringFlag("source-id"),
   },
-  [booleanSpec("remote")],
+  [booleanSpec("remote"), stringSpec("source-id")],
   undefined,
   handleLocalExport,
 );

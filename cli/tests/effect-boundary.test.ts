@@ -1,11 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
 import { Cause, Effect } from "effect";
-import { MemoryDatabase, type MemoryDatabaseApi } from "@/effect/database";
-import { MemoryDatabaseError } from "@/effect/errors";
-import { remoteLayer } from "@/effect/remote-database";
+import { describe, expect, it, vi } from "vitest";
+
 import { handleReindexCommand } from "@/cli/commands/reindex";
-import type { CommandContext } from "@/cli/runtime/context";
 import { compareFact } from "@/cli/features/memory/compare";
+import type { CommandContext } from "@/cli/runtime/context";
 import {
   combineHybridResults,
   deriveNeighborhoodFromFiles,
@@ -19,6 +17,9 @@ import {
   normalizeRemoteUrl,
   validateDatabaseBackendFlags,
 } from "@/database-config";
+import { MemoryDatabase, type MemoryDatabaseApi } from "@/effect/database";
+import { MemoryDatabaseError } from "@/effect/errors";
+import { remoteLayer } from "@/effect/remote-database";
 
 describe("Effect application boundaries", () => {
   it("preserves the existing pure memory semantics", () => {
@@ -94,14 +95,14 @@ describe("Effect application boundaries", () => {
     }
   });
 
-  it("reports failed reindex upserts before failing, including quiet mode", async () => {
+  it("fails if server-side reindex queueing fails, including quiet mode", async () => {
     const failure = new MemoryDatabaseError({
       operation: "vectorize/upsert",
       message: "Vectorize unavailable",
       cause: undefined,
     });
     const database: MemoryDatabaseApi = {
-      run: () => Effect.succeed(undefined),
+      run: () => Effect.fail(failure),
       get: () => Effect.succeed(null),
       all: () =>
         Effect.succeed([
@@ -113,7 +114,7 @@ describe("Effect application boundaries", () => {
         ]),
       vectorize: {
         upsert: () => Effect.fail(failure),
-        delete: () => Effect.succeed({ id: "1", mutationId: "mutation" }),
+        delete: () => Effect.succeed({ id: "1", indexing: "queued" }),
         search: () => Effect.succeed({ count: 0, matches: [] }),
       },
     };
@@ -140,7 +141,7 @@ describe("Effect application boundaries", () => {
         handleReindexCommand(context({ jsonMin: true, quiet: false })),
       );
       expect(jsonExit._tag).toBe("Failure");
-      expect(info).toHaveBeenCalledWith(expect.stringContaining('"failed":1'));
+      expect(info).not.toHaveBeenCalled();
 
       info.mockClear();
       const quietExit = await Effect.runPromiseExit(
@@ -154,23 +155,24 @@ describe("Effect application boundaries", () => {
         handleReindexCommand(context({ jsonMin: false, quiet: false })),
       );
       expect(humanExit._tag).toBe("Failure");
-      const humanOutput = info.mock.calls.flat().join("\n");
-      expect(humanOutput).toContain("Vectorize unavailable");
-      expect(humanOutput).not.toContain("Cause(");
+      expect(info).not.toHaveBeenCalled();
     } finally {
       info.mockRestore();
     }
   });
 
-  it("retries only rate-limited reindex upserts", async () => {
+  it("queues reindex atomically on the server without indexing client snapshots", async () => {
     let upsertCalls = 0;
     const rateLimit = new MemoryDatabaseError({
       operation: "vectorize/upsert",
       message: "Too Many Requests",
       cause: undefined,
     });
+    const run = vi.fn((_sql: string, _params?: unknown[]) =>
+      Effect.succeed({ changes: 1 }),
+    );
     const database: MemoryDatabaseApi = {
-      run: () => Effect.succeed(undefined),
+      run,
       get: () => Effect.succeed(null),
       all: () =>
         Effect.succeed([
@@ -185,9 +187,9 @@ describe("Effect application boundaries", () => {
           upsertCalls += 1;
           return upsertCalls === 1
             ? Effect.fail(rateLimit)
-            : Effect.succeed({ id: "1", mutationId: "mutation" });
+            : Effect.succeed({ id: "1", indexing: "queued" });
         },
-        delete: () => Effect.succeed({ id: "1", mutationId: "mutation" }),
+        delete: () => Effect.succeed({ id: "1", indexing: "queued" }),
         search: () => Effect.succeed({ count: 0, matches: [] }),
       },
     };
@@ -214,8 +216,11 @@ describe("Effect application boundaries", () => {
       const exit = await exitPromise;
 
       expect(exit._tag).toBe("Success");
-      expect(upsertCalls).toBe(2);
-      expect(info).toHaveBeenCalledWith(expect.stringContaining('"failed":0'));
+      expect(upsertCalls).toBe(0);
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(run.mock.calls[0]?.[0]).toContain("UPDATE memory_vector_sync");
+      expect(run.mock.calls[0]?.[0]).toContain("WHERE repository = ?");
+      expect(info).toHaveBeenCalledWith(expect.stringContaining('"queued":1'));
     } finally {
       vi.useRealTimers();
       info.mockRestore();

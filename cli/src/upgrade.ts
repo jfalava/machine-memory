@@ -1,6 +1,10 @@
-import { Effect, FileSystem, PlatformError } from "effect";
 import { createHash } from "node:crypto";
+import { realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute } from "node:path";
 import { inflateRawSync } from "node:zlib";
+
+import { Effect, FileSystem, PlatformError } from "effect";
+
 import { REPO, VERSION } from "./constants";
 import { jsonString, type JsonObject } from "./json";
 
@@ -47,8 +51,55 @@ function apiBase(): string {
   );
 }
 
-function binaryPath(): string {
-  return process.env["MACHINE_MEMORY_BIN_PATH"] ?? process.execPath;
+function binaryPath(): Effect.Effect<string, UpgradeError> {
+  return promiseEffect("Invalid upgrade target", async () => {
+    const explicit = process.env["MACHINE_MEMORY_BIN_PATH"];
+    const entrypoint = Bun.main;
+    const compiled = /^(?:\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(
+      entrypoint,
+    );
+    if (!explicit && !compiled) {
+      throw new Error(
+        "Self-upgrade requires a compiled executable; running from Bun source would overwrite Bun. Set MACHINE_MEMORY_BIN_PATH to a validated machine-memory executable instead.",
+      );
+    }
+    const target = explicit ?? process.execPath;
+    if (
+      explicit &&
+      (!isAbsolute(target) ||
+        !/^machine-memory(?:\.exe|-(?:linux|darwin|windows)-(?:arm64|x64)(?:\.exe)?)?$/.test(
+          basename(target),
+        ))
+    ) {
+      throw new Error(
+        "MACHINE_MEMORY_BIN_PATH must be an absolute path to a machine-memory executable.",
+      );
+    }
+    return validateBinaryTarget(target, compiled);
+  });
+}
+
+async function validateBinaryTarget(
+  target: string,
+  compiled: boolean,
+): Promise<string> {
+  const resolved = await realpath(target);
+  const currentExecutable = await realpath(process.execPath);
+  const info = await stat(resolved);
+  if (
+    !info.isFile() ||
+    (process.platform !== "win32" && (info.mode & 0o111) === 0) ||
+    (!compiled && resolved === currentExecutable) ||
+    (!(compiled && resolved === currentExecutable) &&
+      !/^machine-memory(?:\.exe|-(?:linux|darwin|windows)-(?:arm64|x64)(?:\.exe)?)?$/.test(
+        basename(resolved),
+      ))
+  ) {
+    throw new Error(
+      "Refusing to replace a non-executable target or the Bun runtime.",
+    );
+  }
+  return resolved;
 }
 
 function requestTimeoutMs(): number {
@@ -276,9 +327,8 @@ function expectedChecksumFor(
           }),
         );
       }
-      const content = yield* promiseEffect(
-        "Failed to decode checksums",
-        () => response.text(),
+      const content = yield* promiseEffect("Failed to decode checksums", () =>
+        response.text(),
       );
       const expected = parseChecksums(content).get(asset.name);
       if (!expected) {
@@ -520,12 +570,12 @@ function downloadToTemp(
 
 function replaceBinary(
   tempPath: string,
+  targetPath: string,
 ): Effect.Effect<
   void,
   UpgradeError | PlatformError.PlatformError,
   FileSystem.FileSystem
 > {
-  const targetPath = binaryPath();
   const backupPath = `${targetPath}.bak`;
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -601,6 +651,7 @@ export function upgrade(
   FileSystem.FileSystem
 > {
   return Effect.gen(function* () {
+    const targetPath = yield* binaryPath();
     options.onProgress?.({ phase: "checking" });
     const release = yield* fetchLatestRelease(requestTimeoutMs());
     const latest = release.tag_name.replace(/^v/, "");
@@ -615,11 +666,11 @@ export function upgrade(
     }
 
     const asset = yield* selectAsset(release);
-    const tempPath = `${binaryPath()}.tmp`;
+    const tempPath = `${targetPath}.tmp`;
     options.onProgress?.({ phase: "downloading", assetName: asset.name });
     yield* downloadToTemp(release, asset, tempPath, requestTimeoutMs());
     options.onProgress?.({ phase: "installing" });
-    yield* replaceBinary(tempPath);
+    yield* replaceBinary(tempPath, targetPath);
     return { message: "Upgraded", from: VERSION, to: latest };
   });
 }

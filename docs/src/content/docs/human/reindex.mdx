@@ -14,16 +14,13 @@ machine-memory reindex --remote --json-min
 machine-memory reindex --remote --quiet
 ```
 
-`reindex` reads all memories for the current repository from D1, generates embeddings through the remote Worker, and upserts them into Vectorize. Run it after remote provisioning, after migrating to a new embedding index, or when vectors need to be repaired. It is scoped to the current Git repository.
+`reindex` queues all retained memory IDs for the current repository, including deletion tombstones. The API's vector coordinator reads current D1 rows, embeds active memories, and removes inactive or deleted memories from Vectorize. Run it after remote provisioning, after migrating to a new embedding index, or when vectors need to be repaired.
 
 New and updated memories synchronize automatically, so reindexing is normally a backfill or recovery operation rather than part of every write.
 
 The command requires `--remote`; local databases do not have a Vectorize binding.
 
-Reindex requests are paced to avoid bursts. A rate-limited memory is retried up
-to three times with exponential backoff; other failures are reported without
-being retried. Re-running the command is safe because Vectorize operations are
-upserts.
+Success means the work is durably queued, not that semantic search already reflects it. The coordinator retries failed delivery with exponential backoff and periodically repairs delivered entries. Re-running the command is safe; it never indexes a client-side snapshot.
 
 ## Output
 
@@ -32,10 +29,8 @@ upserts.
 ```json
 {
   "repository": "owner/repository",
-  "total": 24,
-  "upserted": 24,
-  "failed": 0,
-  "failures": []
+  "queued": 24,
+  "indexing": "queued"
 }
 ```
 

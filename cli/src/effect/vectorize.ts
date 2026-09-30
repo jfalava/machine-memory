@@ -8,6 +8,7 @@ import {
   type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
+
 import {
   jsonObject,
   jsonString,
@@ -15,12 +16,12 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../json";
-import { MemoryDatabaseError } from "./errors";
 import {
   composeEmbeddingText,
   validateBgeEmbeddingText,
   type EmbeddingTextPart,
 } from "./bge-tokenizer";
+import { MemoryDatabaseError } from "./errors";
 
 export type MemoryVectorDocument = {
   readonly id: string;
@@ -36,7 +37,7 @@ export type MemoryVectorDocument = {
 export type MemoryVectorMutation = {
   readonly id: string;
   readonly namespace?: string;
-  readonly mutationId: string;
+  readonly indexing: "queued";
 };
 
 export type MemoryVectorMatch = {
@@ -226,7 +227,7 @@ function parseUpsertMutation(value: JsonValue): MemoryVectorMutation {
   return {
     id: decoded.id,
     namespace: decoded.namespace,
-    mutationId: decoded.mutationId,
+    indexing: decoded.indexing,
   };
 }
 
@@ -241,7 +242,7 @@ function parseDeleteMutation(value: JsonValue): MemoryVectorMutation {
   }
   return {
     id: decoded.id,
-    mutationId: decoded.mutationId,
+    indexing: decoded.indexing,
   };
 }
 

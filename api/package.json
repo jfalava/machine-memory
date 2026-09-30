@@ -1,12 +1,13 @@
 {
   "name": "@machine-memory/api",
-  "version": "0.20.1",
+  "version": "0.21.0",
   "private": true,
   "type": "module",
   "scripts": {
     "check": "oxlint --fix",
     "format": "oxfmt",
     "lint": "oxlint",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,9 +21,11 @@
   },
   "devDependencies": {
     "bun-types": "catalog:types",
+    "miniflare": "4.20260730.0",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
-    "typescript": "catalog:build"
+    "typescript": "catalog:build",
+    "vitest": "catalog:maintenance"
   }
 }

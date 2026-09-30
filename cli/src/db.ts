@@ -1,12 +1,15 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
-import { Schema } from "effect";
-import { dirname } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
+import { Schema } from "effect";
+
+import integritySql from "../../iac/migrations/0003_memory_integrity.sql" with { type: "text" };
 import { DB_PATH } from "./constants";
 import { jsonObject, jsonString } from "./json";
 import { repositoryForCurrentDirectory } from "./repository";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const BUSY_TIMEOUT_MS = Number(
   process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
 );
@@ -202,7 +205,8 @@ function migrateSchema(database: Database) {
         "INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')",
       );
     }
-    runWithRetry(database, `PRAGMA user_version = ${SCHEMA_VERSION}`);
+    // SQLite and D1 enforce the same write invariants, including concurrent writes.
+    database.exec(`${integritySql}\nPRAGMA user_version = ${SCHEMA_VERSION};`);
     runWithRetry(database, "COMMIT");
   } catch (err) {
     try {

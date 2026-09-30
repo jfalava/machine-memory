@@ -1,8 +1,8 @@
-import { Effect } from "effect";
-import type {
-  MemoryDatabaseApi,
-  MemoryDatabaseError,
-} from "../../effect/database";
+import { resolve } from "node:path";
+
+import { Effect, Schema } from "effect";
+
+import { printJson, usageError } from "../../cli-utils";
 import {
   CERTAINTY_LEVELS,
   MEMORY_TYPES,
@@ -10,6 +10,13 @@ import {
   type MemoryStatus,
   type MemoryType,
 } from "../../constants";
+import { assertBgeBreakdown } from "../../effect/bge-tokenizer";
+import type {
+  MemoryDatabaseApi,
+  MemoryDatabaseError,
+} from "../../effect/database";
+import { commandError, type CommandError } from "../../effect/errors";
+import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
 import {
   jsonNumber,
   jsonObject,
@@ -20,10 +27,13 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../../json";
+import { repositoryForCurrentDirectory } from "../../repository";
+import { measureEmbeddingFit } from "../features/memory/size-report";
+import { requireDatabase, type CommandContext } from "../runtime/context";
+import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 import {
   canonicalizeCertainty,
   detectPotentialConflicts,
-  findExactDuplicate,
   getMemoryById,
   isMemoryStatus,
   isMemoryType,
@@ -35,12 +45,6 @@ import {
   sqliteDateToMs,
   stringValue,
 } from "../shared";
-import { syncMemoryVector } from "../../effect/vector-sync";
-import { requireDatabase, type CommandContext } from "../runtime/context";
-import { repositoryForCurrentDirectory } from "../../repository";
-import { resolve } from "node:path";
-import { printJson, usageError } from "../../cli-utils";
-import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 
 type ImportNormalized = {
   content: string;
@@ -174,12 +178,53 @@ function parseImportMetadata(entry: JsonObject) {
   };
 }
 
+const positiveImportInt = Schema.Int.check(Schema.isGreaterThan(0));
+const ImportMetadataSchema = Schema.Struct({
+  id: Schema.optionalKey(positiveImportInt),
+  superseded_by: Schema.optionalKey(Schema.NullOr(positiveImportInt)),
+  update_count: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  ),
+  expires_after_days: Schema.optionalKey(Schema.NullOr(positiveImportInt)),
+  tags: Schema.optionalKey(Schema.String),
+  context: Schema.optionalKey(Schema.String),
+  memory_type: Schema.optionalKey(Schema.String),
+  certainty: Schema.optionalKey(Schema.String),
+  status: Schema.optionalKey(Schema.String),
+  source_agent: Schema.optionalKey(Schema.String),
+  last_updated_by: Schema.optionalKey(Schema.String),
+  repository: Schema.optionalKey(Schema.String),
+  refs: Schema.optionalKey(
+    Schema.Union([
+      Schema.Array(Schema.String),
+      Schema.fromJsonString(Schema.Array(Schema.String)),
+    ]),
+  ),
+});
+
+function validateImportMetadata(entry: JsonObject): ImportSkip | undefined {
+  try {
+    Schema.decodeUnknownSync(ImportMetadataSchema)(entry);
+  } catch {
+    return importSkip("invalid_metadata");
+  }
+  for (const field of ["created_at", "updated_at"]) {
+    if (entry[field] !== undefined && !parseImportTimestamp(entry[field])) {
+      return importSkip(`invalid_${field}`);
+    }
+  }
+  return undefined;
+}
+
 function normalizeImportEntry(rawEntry: JsonValue): ImportParseResult {
   const entry = importObject(rawEntry);
   if (!entry) {
     return importSkip("invalid_entry");
   }
-
+  const invalid = validateImportMetadata(entry);
+  if (invalid) {
+    return invalid;
+  }
   const content = parseImportContent(entry);
   if (!content) {
     return importSkip("missing_content");
@@ -191,6 +236,9 @@ function normalizeImportEntry(rawEntry: JsonValue): ImportParseResult {
   }
 
   const metadata = parseImportMetadata(entry);
+  if (metadata.expiresAfterDays !== null && enums.memoryTypeRaw !== "status") {
+    return importSkip("expiry_requires_status");
+  }
   return {
     status: "ok",
     value: {
@@ -205,53 +253,47 @@ function runImportInsert(
   database: MemoryDatabaseApi,
   value: ImportNormalized,
 ): Effect.Effect<JsonValue, MemoryDatabaseError> {
-  if (value.createdAt && value.updatedAt) {
-    return database.run(
-      `INSERT INTO memories (
-       repository, content, tags, context, memory_type, status, superseded_by, source_agent,
-       last_updated_by, update_count, certainty, refs, expires_after_days,
-       created_at, updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        repositoryForCurrentDirectory(),
-        value.content,
-        value.tags,
-        value.memoContext,
-        value.memoryTypeRaw,
-        value.statusRaw,
-        value.supersededBy,
-        value.sourceAgent,
-        value.lastUpdatedBy,
-        value.updateCount,
-        value.certaintyNormalized,
-        JSON.stringify(value.refs),
-        value.expiresAfterDays,
-        value.createdAt,
-        value.updatedAt,
-      ],
-    );
+  const columns = [
+    "repository",
+    "content",
+    "tags",
+    "context",
+    "memory_type",
+    "status",
+    "superseded_by",
+    "source_agent",
+    "last_updated_by",
+    "update_count",
+    "certainty",
+    "refs",
+    "expires_after_days",
+  ];
+  const params: (string | number | null)[] = [
+    repositoryForCurrentDirectory(),
+    value.content,
+    value.tags,
+    value.memoContext,
+    value.memoryTypeRaw,
+    value.statusRaw,
+    value.supersededBy,
+    value.sourceAgent,
+    value.lastUpdatedBy,
+    value.updateCount,
+    value.certaintyNormalized,
+    JSON.stringify(value.refs),
+    value.expiresAfterDays,
+  ];
+  if (value.createdAt) {
+    columns.push("created_at");
+    params.push(value.createdAt);
   }
-
+  if (value.updatedAt) {
+    columns.push("updated_at");
+    params.push(value.updatedAt);
+  }
   return database.run(
-    `INSERT INTO memories (
-     repository, content, tags, context, memory_type, status, superseded_by, source_agent,
-     last_updated_by, update_count, certainty, refs, expires_after_days
-   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      repositoryForCurrentDirectory(),
-      value.content,
-      value.tags,
-      value.memoContext,
-      value.memoryTypeRaw,
-      value.statusRaw,
-      value.supersededBy,
-      value.sourceAgent,
-      value.lastUpdatedBy,
-      value.updateCount,
-      value.certaintyNormalized,
-      JSON.stringify(value.refs),
-      value.expiresAfterDays,
-    ],
+    `INSERT INTO memories (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+    params,
   );
 }
 
@@ -335,58 +377,146 @@ function ingestMemoryStats(accumulator: StatsAccumulator, memory: JsonObject) {
   updateStaleCount(accumulator, memory);
 }
 
-function processImportEntry(
-  database: MemoryDatabaseApi,
-  index: number,
-  rawEntry: JsonValue,
-): Effect.Effect<JsonObject, MemoryDatabaseError> {
-  const normalized = normalizeImportEntry(rawEntry);
-  if (normalized.status === "skip") {
-    return Effect.succeed({
-      index,
-      status: "skip",
-      reason: normalized.reason,
-      ...normalized.extra,
-    } satisfies JsonObject);
-  }
+type ImportPlan = {
+  index: number;
+  value: ImportNormalized;
+  sourceId?: number;
+  sourceRepository: string;
+  targetId?: number;
+  replacement?: ImportPlan;
+};
 
-  const value = normalized.value;
+function preflightImport(
+  database: MemoryDatabaseApi,
+  parsed: JsonValue[],
+  results: JsonObject[],
+): Effect.Effect<ImportPlan[], MemoryDatabaseError | CommandError> {
   return Effect.gen(function* () {
-    const duplicate = yield* findExactDuplicate(database, {
-      content: value.content,
-      tags: value.tags,
-      context: value.memoContext,
+    const plans: ImportPlan[] = [],
+      sources = new Map<number, ImportPlan>();
+    for (const [index, rawEntry] of parsed.entries()) {
+      const normalized = normalizeImportEntry(rawEntry);
+      if (normalized.status === "skip") {
+        results[index] = {
+          index,
+          status: "skip",
+          reason: normalized.reason,
+          ...normalized.extra,
+        };
+        return yield* Effect.fail(
+          commandError(
+            "import",
+            `Import preflight failed at index ${index}: ${normalized.reason}`,
+          ),
+        );
+      }
+      const plan: ImportPlan = {
+        index,
+        value: normalized.value,
+        sourceId: jsonNumber(jsonObject(rawEntry)?.id),
+        sourceRepository:
+          jsonString(jsonObject(rawEntry)?.repository) ??
+          repositoryForCurrentDirectory(),
+      };
+      if (plan.sourceId !== undefined) {
+        if (sources.has(plan.sourceId)) {
+          return yield* Effect.fail(
+            commandError("import", `Duplicate source id ${plan.sourceId}.`),
+          );
+        }
+        sources.set(plan.sourceId, plan);
+      }
+      if (plan.value.statusRaw === "active") {
+        const size = yield* measureEmbeddingFit(
+          memoryVectorEmbeddingParts({
+            id: "0",
+            repository: repositoryForCurrentDirectory(),
+            content: plan.value.content,
+            tags: plan.value.tags,
+            context: plan.value.memoContext,
+            memory_type: plan.value.memoryTypeRaw,
+            status: plan.value.statusRaw,
+            certainty: plan.value.certaintyNormalized,
+          }),
+        );
+        yield* Effect.try({
+          try: () => assertBgeBreakdown(size, `Import index ${index}`),
+          catch: (cause) =>
+            commandError(
+              "import",
+              cause instanceof Error
+                ? cause.message
+                : "Embedding validation failed.",
+              cause,
+            ),
+        });
+      }
+      if (!plan.targetId && plan.value.statusRaw === "active") {
+        const conflicts = yield* detectPotentialConflicts(database, {
+          content: plan.value.content,
+          tags: plan.value.tags,
+          context: plan.value.memoContext,
+        });
+        if (conflicts.length) {
+          results[index] = {
+            index,
+            status: "conflict",
+            potential_conflicts: conflicts,
+          };
+        }
+      }
+      plans.push(plan);
+    }
+    return yield* Effect.try({
+      try: () => orderImportPlans(plans, sources, results),
+      catch: (cause) => commandError("import", String(cause), cause),
     });
-    if (duplicate) {
-      return {
-        index,
-        status: "skip",
-        reason: "exact_duplicate",
-        existing_id: duplicate.id,
-      } satisfies JsonObject;
-    }
-    const conflicts =
-      value.statusRaw === "active"
-        ? yield* detectPotentialConflicts(database, {
-            content: value.content,
-            tags: value.tags,
-            context: value.memoContext,
-          })
-        : [];
-    if (conflicts.length > 0) {
-      return {
-        index,
-        status: "conflict",
-        potential_conflicts: conflicts,
-      } satisfies JsonObject;
-    }
-    const insert = yield* runImportInsert(database, value);
-    return {
-      index,
-      status: "success",
-      id: jsonObject(insert)?.lastInsertRowid ?? null,
-    } satisfies JsonObject;
   });
+}
+
+function orderImportPlans(
+  plans: ImportPlan[],
+  sources: Map<number, ImportPlan>,
+  results: JsonObject[],
+): ImportPlan[] {
+  for (const plan of plans) {
+    if (plan.value.supersededBy === null) {
+      continue;
+    }
+    const replacement = sources.get(plan.value.supersededBy);
+    if (
+      !replacement ||
+      replacement === plan ||
+      replacement.sourceRepository !== plan.sourceRepository ||
+      results[replacement.index]?.status === "conflict"
+    ) {
+      throw new Error(
+        `Invalid, unresolved, cross-repository or self superseded_by at index ${plan.index}.`,
+      );
+    }
+    plan.replacement = replacement;
+  }
+  // Insert replacements first: even a partial import never commits a dangling source link.
+  const ordered: ImportPlan[] = [];
+  const visiting = new Set<ImportPlan>();
+  const visited = new Set<ImportPlan>();
+  const visit = (plan: ImportPlan): void => {
+    if (visited.has(plan)) {
+      return;
+    }
+    if (visiting.has(plan)) {
+      throw new Error("Cyclic superseded_by links in import.");
+    }
+    visiting.add(plan);
+    if (plan.replacement) {
+      visit(plan.replacement);
+    }
+    visiting.delete(plan);
+    visited.add(plan);
+    ordered.push(plan);
+  };
+  plans.forEach(visit);
+  return ordered;
 }
 
 export function handleStatsCommand(commandCtx: CommandContext) {
@@ -423,34 +553,99 @@ export function handleImportCommand(commandCtx: CommandContext) {
       commandCtx.args[0],
       commandCtx.fileSystem,
     );
-    const results: JsonObject[] = [];
+    const results: JsonObject[] = parsed.map((_, index) => ({
+      index,
+      status: "unprocessed",
+    }));
     const database = requireDatabase(commandCtx);
-    for (const [index, rawEntry] of parsed.entries()) {
-      const result = yield* processImportEntry(database, index, rawEntry);
-      results.push(result);
-      if (result.status === "success") {
-        const id = Number(result.id);
-        const memory = yield* getMemoryById(database, id);
-        if (memory) {
-          yield* syncMemoryVector(database, memory);
+    let error: string | undefined;
+    const preflight = yield* preflightImport(database, parsed, results).pipe(
+      Effect.match({
+        onFailure: (cause) => ({
+          error: cause.message,
+          plans: Array<ImportPlan>(),
+        }),
+        onSuccess: (plans) => ({ error: undefined, plans }),
+      }),
+    );
+    error = preflight.error;
+    if (!error) {
+      for (const plan of preflight.plans) {
+        if (results[plan.index]?.status !== "unprocessed") {
+          continue;
+        }
+        const outcome = yield* Effect.gen(function* () {
+          const replacementId = plan.replacement?.targetId;
+          if (
+            plan.replacement &&
+            (replacementId === undefined ||
+              !(yield* getMemoryById(database, replacementId)))
+          ) {
+            return yield* Effect.fail(
+              commandError(
+                "import",
+                `Replacement disappeared before index ${plan.index}.`,
+              ),
+            );
+          }
+          const inserted = yield* runImportInsert(database, {
+            ...plan.value,
+            supersededBy: replacementId ?? null,
+          });
+          const id = jsonNumber(jsonObject(inserted)?.lastInsertRowid);
+          results[plan.index] = {
+            index: plan.index,
+            status: "success",
+            id: id ?? null,
+          };
+          plan.targetId = id;
+          if (id === undefined) {
+            return yield* Effect.fail(
+              commandError(
+                "import",
+                "Insert committed but returned no allocated id; stopping import.",
+              ),
+            );
+          }
+        }).pipe(
+          Effect.match({
+            onFailure: (cause) => cause.message,
+            onSuccess: () => undefined,
+          }),
+        );
+        if (outcome) {
+          error = outcome;
+          break;
         }
       }
     }
     yield* Effect.sync(() => {
-      if (commandCtx.outputMode.quiet) {
+      if (error || results.some((result) => result.status === "conflict")) {
+        process.exitCode = 1;
+      }
+      if (commandCtx.outputMode.quiet && !error) {
         return;
       }
       if (hasMinimalOutput(commandCtx.outputMode)) {
-        printJson({
+        const payload: JsonObject = {
           imported: results.filter((result) => result.status === "success")
             .length,
           failed: results.filter((result) => result.status !== "success")
             .length,
           count: results.length,
-        });
+          results,
+        };
+        if (error) {
+          payload.error = error;
+        }
+        printJson(payload);
         return;
       }
-      printCommandOutput(commandCtx, { results });
+      const payload: JsonObject = { results };
+      if (error) {
+        payload.error = error;
+      }
+      printCommandOutput(commandCtx, payload);
     });
   });
 }

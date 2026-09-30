@@ -1,22 +1,34 @@
-import pc from "picocolors";
-import { Effect } from "effect";
+import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
+import { hostname } from "node:os";
 import { resolve } from "node:path";
+
+import {
+  decodeRequest,
+  MigrationRequestInputSchema,
+  normalizeMigrationRequest,
+} from "@machine-memory/contract";
+import { Effect } from "effect";
+import pc from "picocolors";
+
+import { getFlagValue } from "../../cli-utils";
 import {
   loadDatabaseConfig,
   validateDatabaseBackendFlags,
 } from "../../database-config";
+import { commandError } from "../../effect/errors";
 import {
   migrateRemoteLinks,
   migrateRemoteRows,
   type RemoteMigrationBatchResult,
 } from "../../effect/remote-migration";
-import { commandError } from "../../effect/errors";
 import {
   readLocalMigrationRows,
   resolveMigrationSourcePath,
 } from "../../remote-migration";
 import { repositoryForCurrentDirectory } from "../../repository";
 import type { CommandContext } from "../runtime/context";
+import { collectPositionalArgs } from "../shared";
 import { replaceMemoryBlock } from "./agents-md-content";
 
 const ROW_BATCH_SIZE = 50;
@@ -31,7 +43,7 @@ function migrationCommandError(
 }
 
 function positionalSourcePath(args: string[]): string | undefined {
-  return args.find((arg) => !arg.startsWith("--"));
+  return collectPositionalArgs(args, ["--source-id"])[0];
 }
 
 function chunks<A>(values: A[], size: number): A[][] {
@@ -107,8 +119,43 @@ export function handleLocalExport(context: CommandContext) {
           "Run the command from a Git repository.",
         ),
     });
-    const rows = yield* Effect.try({
-      try: () => readLocalMigrationRows(sourcePath, repository),
+    const { rows, source } = yield* Effect.try({
+      try: () => {
+        const sourceRows = readLocalMigrationRows(sourcePath, repository);
+        const sourceId =
+          getFlagValue(context.args, "--source-id") ??
+          createHash("sha256")
+            .update(`${hostname()}:${realpathSync(sourcePath)}`)
+            .digest("hex");
+        // Validate every batch before starting any remote writes.
+        for (const batch of chunks(sourceRows, ROW_BATCH_SIZE)) {
+          const input = decodeRequest(MigrationRequestInputSchema, {
+            repository,
+            source: sourceId,
+            rows: batch,
+          });
+          if (!input.ok) {
+            throw new Error(input.error);
+          }
+          const normalized = normalizeMigrationRequest(input.value);
+          if (!normalized.ok) {
+            throw new Error(normalized.error);
+          }
+        }
+        const ids = new Set(sourceRows.map((row) => row.source_id));
+        for (const row of sourceRows) {
+          if (
+            row.superseded_by_source_id !== null &&
+            (row.superseded_by_source_id === row.source_id ||
+              !ids.has(row.superseded_by_source_id))
+          ) {
+            throw new Error(
+              `Unresolved replacement for source id ${row.source_id}.`,
+            );
+          }
+        }
+        return { rows: sourceRows, source: sourceId };
+      },
       catch: (cause) =>
         migrationCommandError(
           cause instanceof Error
@@ -146,6 +193,7 @@ export function handleLocalExport(context: CommandContext) {
         remote.url,
         remote.token,
         repository,
+        source,
         batch,
       ).pipe(
         Effect.mapError((cause) =>
@@ -205,18 +253,21 @@ export function handleLocalExport(context: CommandContext) {
       console.info();
       console.info(pc.green(pc.bold("✓ Local export completed")));
       console.info(`${pc.dim("Source")}     ${sourcePath}`);
+      console.info(`${pc.dim("Source ID")}  ${source}`);
       console.info(`${pc.dim("Repository")} ${repository}`);
       console.info(`${pc.dim("Processed")}  ${summary.processed}`);
       console.info(`${pc.dim("Inserted")}   ${summary.inserted}`);
       console.info(
-        `${pc.dim("Skipped")}    ${summary.duplicates} exact duplicates`,
+        `${pc.dim("Skipped")}    ${summary.duplicates} previously imported source IDs`,
       );
       console.info(
         `${pc.dim("Links")}      ${links.length} superseded_by links updated`,
       );
       console.info(`${pc.dim("Agents")}     AGENTS.md updated for --remote`);
       console.info();
-      console.info(`${pc.dim("Next")}       machine-memory reindex --remote`);
+      console.info(
+        `${pc.dim("Indexing")}   queued automatically; search visibility is asynchronous`,
+      );
       console.info();
     });
   });

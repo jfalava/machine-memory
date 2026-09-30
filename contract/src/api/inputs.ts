@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 
+import { composeEmbeddingText, validateEmbeddingText } from "../embedding";
 import {
   MemoryDocumentInputSchema,
   normalizeMemoryDocument,
@@ -110,6 +111,7 @@ export function normalizeMigrationRow(input: MigrationRowInput): MigrationRow {
 /** POST /migrate */
 export const MigrationRequestInputSchema = Schema.Struct({
   repository: RepositorySchema,
+  source: Schema.NonEmptyString,
   rows: Schema.Array(MigrationRowInputSchema).check(
     Schema.isMaxLength(MAX_MIGRATION_ROWS),
   ),
@@ -118,6 +120,7 @@ export type MigrationRequestInput = typeof MigrationRequestInputSchema.Type;
 
 export type MigrationRequest = {
   readonly repository: string;
+  readonly source: string;
   readonly rows: MigrationRow[];
 };
 
@@ -152,11 +155,31 @@ export function normalizeMigrationRequest(
       };
     }
     sourceIds.add(row.source_id);
+    try {
+      Schema.decodeUnknownSync(
+        Schema.fromJsonString(Schema.Array(Schema.String)),
+      )(row.refs);
+      if (
+        row.expires_after_days !== null &&
+        (row.memory_type !== "status" || row.expires_after_days <= 0)
+      ) {
+        throw new Error("Expiry requires a status memory and positive days.");
+      }
+      if (row.status === "active") {
+        validateEmbeddingText(composeEmbeddingText(row), "Memory");
+      }
+    } catch (cause) {
+      return {
+        ok: false,
+        error: `Invalid source_id ${row.source_id}: ${cause instanceof Error ? cause.message : "Invalid memory."}`,
+      };
+    }
   }
   return {
     ok: true,
     value: {
       repository: input.repository,
+      source: input.source,
       rows,
     },
   };

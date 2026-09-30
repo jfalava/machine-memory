@@ -1,15 +1,16 @@
-import { Client } from "@modelcontextprotocol/client";
-import { InMemoryTransport } from "@modelcontextprotocol/server";
-import { describe, expect, test } from "vitest";
-import { createMemoryServer } from "../src/mcp";
-import type { ApiFetcher } from "../src/mcp/product-client";
-import { postProduct } from "../src/mcp/product-client";
 import {
   decodeRequest,
   encodeResponse,
   PRODUCT_OPERATIONS,
 } from "@machine-memory/contract";
+import { Client } from "@modelcontextprotocol/client";
+import { InMemoryTransport } from "@modelcontextprotocol/server";
+import { describe, expect, test } from "vitest";
+
 import { toProductRow } from "../../api/src/product-logic";
+import { createMemoryServer } from "../src/mcp";
+import type { ApiFetcher } from "../src/mcp/product-client";
+import { postProduct } from "../src/mcp/product-client";
 
 type SeenCall = {
   url: string;
@@ -78,10 +79,13 @@ const FULL_ROW = {
   updated_at: "2026-09-05 12:00:00",
 };
 
-async function linkedClient(bindings: { api: ApiFetcher; apiToken: string }) {
+async function linkedClient(
+  bindings: { api: ApiFetcher; apiToken: string },
+  scopes: readonly string[] | "trusted-internal" = "trusted-internal",
+) {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const server = createMemoryServer(bindings);
+  const server = createMemoryServer(bindings, undefined, scopes);
   await server.connect(serverTransport);
   const client = new Client({ name: "gateway-test", version: "0.0.0" });
   await client.connect(clientTransport);
@@ -99,6 +103,58 @@ function firstText(result: {
 }
 
 describe("mcp gateway to api product routes", () => {
+  test.each([
+    ["memory_add", { repository: "o/r", content: "new fact" }],
+    ["memory_update", { repository: "o/r", id: 7, content: "updated fact" }],
+    ["memory_deprecate", { repository: "o/r", ids: [7] }],
+    ["memory_delete", { repository: "o/r", id: 7 }],
+    ["memory_delete_many", { repository: "o/r", ids: [7] }],
+  ])("read scope denies %s without an API call", async (name, args) => {
+    const seen: SeenCall[] = [];
+    const client = await linkedClient(
+      { api: stubApi({}, seen), apiToken: "test-token" },
+      ["mcp:read"],
+    );
+    try {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError).toBe(true);
+      expect(firstText(result)).toContain("mcp:write required");
+      expect(seen).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test.each([
+    ["list_repositories", {}],
+    ["memory_query", { repository: "o/r", query: "fact" }],
+    ["memory_get", { repository: "o/r", id: 7 }],
+    ["memory_list", { repository: "o/r" }],
+    ["memory_doctor", { repository: "o/r" }],
+    ["memory_stats", { repository: "o/r" }],
+    ["memory_gc", { repository: "o/r" }],
+    ["memory_suggest", { repository: "o/r", files: "src/index.ts" }],
+    ["memory_verify", { repository: "o/r", id: 7, fact: "fact" }],
+    ["memory_diff", { repository: "o/r", id: 7, content: "fact" }],
+    ["memory_size", { repository: "o/r", content: "fact" }],
+  ])("%s requires read scope even with write scope", async (name, args) => {
+    for (const scopes of [[], ["mcp:write"]]) {
+      const seen: SeenCall[] = [];
+      const client = await linkedClient(
+        { api: stubApi({}, seen), apiToken: "test-token" },
+        scopes,
+      );
+      try {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError).toBe(true);
+        expect(firstText(result)).toContain("mcp:read required");
+        expect(seen).toEqual([]);
+      } finally {
+        await client.close();
+      }
+    }
+  });
+
   test("memory_get carries all metadata from database row through the gateway", async () => {
     const memory = toProductRow({
       ...FULL_ROW,

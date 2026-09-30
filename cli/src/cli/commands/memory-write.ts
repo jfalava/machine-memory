@@ -1,6 +1,22 @@
-import { Effect } from "effect";
 import { createInterface } from "node:readline/promises";
+
+import { Effect } from "effect";
+
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
+import {
+  assertBgeBreakdown,
+  type BgeTokenBreakdown,
+  type EmbeddingTextPart,
+} from "../../effect/bge-tokenizer";
+import type {
+  MemoryDatabaseApi,
+  MemoryDatabaseError,
+} from "../../effect/database";
+import { commandError, type CommandError } from "../../effect/errors";
+import {
+  memoryVectorEmbeddingParts,
+  type MemoryVectorDocument,
+} from "../../effect/vectorize";
 import {
   jsonNumber,
   jsonObject,
@@ -8,10 +24,22 @@ import {
   type JsonValue,
 } from "../../json";
 import { suggestTagsForPath } from "../../path-tags";
-import type {
-  MemoryDatabaseApi,
-  MemoryDatabaseError,
-} from "../../effect/database";
+import { repositoryForCurrentDirectory } from "../../repository";
+import { compareFact } from "../features/memory/compare";
+import {
+  embeddingSizeReport,
+  measureEmbeddingFit,
+} from "../features/memory/size-report";
+import {
+  ADD_FLAGS_WITH_VALUES,
+  ADD_USAGE,
+  DEPRECATE_FLAGS_WITH_VALUES,
+  DEPRECATE_USAGE,
+  UPDATE_FLAGS_WITH_VALUES,
+  UPDATE_USAGE,
+} from "../features/memory/usage";
+import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 import {
   collectPositionalArgs,
   detectPotentialConflicts,
@@ -28,33 +56,6 @@ import {
   requireMemoryType,
   stringValue,
 } from "../shared";
-import { compareFact } from "../features/memory/compare";
-import {
-  ADD_FLAGS_WITH_VALUES,
-  ADD_USAGE,
-  DEPRECATE_FLAGS_WITH_VALUES,
-  DEPRECATE_USAGE,
-  UPDATE_FLAGS_WITH_VALUES,
-  UPDATE_USAGE,
-} from "../features/memory/usage";
-import { repositoryForCurrentDirectory } from "../../repository";
-import { syncMemoryVector } from "../../effect/vector-sync";
-import {
-  assertBgeBreakdown,
-  type BgeTokenBreakdown,
-  type EmbeddingTextPart,
-} from "../../effect/bge-tokenizer";
-import {
-  memoryVectorEmbeddingParts,
-  type MemoryVectorDocument,
-} from "../../effect/vectorize";
-import { commandError, type CommandError } from "../../effect/errors";
-import { requireDatabase, type CommandContext } from "../runtime/context";
-import { printCommandOutput } from "../runtime/output";
-import {
-  embeddingSizeReport,
-  measureEmbeddingFit,
-} from "../features/memory/size-report";
 
 const UPSERT_MIN_SIMILARITY = 0.62;
 const UPSERT_MIN_SCORE = 32;
@@ -128,6 +129,12 @@ type UpdateTargets = {
 type UpdateSpec = {
   clause: string;
   value: string | number | null;
+};
+
+type ProspectiveUpdate = {
+  id: number;
+  updateCount: number;
+  document: MemoryVectorDocument;
 };
 
 /**
@@ -212,10 +219,7 @@ function prospectiveUpdateDocuments(
   database: MemoryDatabaseApi,
   targetIds: number[],
   content: string,
-): Effect.Effect<
-  Array<{ id: number; document: MemoryVectorDocument }>,
-  MemoryDatabaseError
-> {
+): Effect.Effect<ProspectiveUpdate[], MemoryDatabaseError> {
   const overrides = {
     tags: getFlagValue(args, "--tags"),
     context: getFlagValue(args, "--context"),
@@ -230,6 +234,7 @@ function prospectiveUpdateDocuments(
         }
         return {
           id,
+          updateCount: jsonNumber(row.update_count) ?? 0,
           document: {
             id: String(id),
             repository:
@@ -249,10 +254,7 @@ function prospectiveUpdateDocuments(
     ),
   ).pipe(
     Effect.map((entries) =>
-      entries.filter(
-        (entry): entry is { id: number; document: MemoryVectorDocument } =>
-          entry !== null,
-      ),
+      entries.filter((entry): entry is ProspectiveUpdate => entry !== null),
     ),
   );
 }
@@ -430,7 +432,8 @@ function updateFromAddPayload(
   targetId: number,
   content: string,
   metadata: AddMetadata,
-): Effect.Effect<unknown, MemoryDatabaseError> {
+  updateCount: number,
+): Effect.Effect<JsonValue | undefined, MemoryDatabaseError> {
   const sets = [
     "content = ?",
     "updated_at = datetime('now')",
@@ -441,9 +444,16 @@ function updateFromAddPayload(
     sets.push(spec.clause);
     params.push(spec.value);
   }
-  return database.run(
-    `UPDATE memories SET ${sets.join(", ")} WHERE repository = ? AND id = ?`,
-    [...params, repositoryForCurrentDirectory(), targetId],
+  if (
+    metadata.explicit.memoryType &&
+    metadata.memoryType !== "status" &&
+    !metadata.explicit.expiresAfterDays
+  ) {
+    sets.push("expires_after_days = NULL");
+  }
+  return database.get(
+    `UPDATE memories SET ${sets.join(", ")} WHERE repository = ? AND id = ? AND status = 'active' AND COALESCE(update_count, 0) = ? RETURNING *`,
+    [...params, repositoryForCurrentDirectory(), targetId, updateCount],
   );
 }
 
@@ -565,17 +575,38 @@ function runStrongUpsertUpdate(params: {
   return Effect.gen(function* () {
     const { database, matched, content, metadata, outputMode } = params;
     const matchedId = Number(matched.id);
+    const canonical = yield* getMemoryById(database, matchedId);
+    if (!canonical || canonical.status !== "active") {
+      return yield* Effect.fail(
+        commandError(
+          "add",
+          `Memory ${matchedId} is no longer active; retry the match.`,
+        ),
+      );
+    }
     const breakdown = yield* validateEmbeddingFit(
       "add",
       `Memory ${matchedId}`,
       memoryVectorEmbeddingParts(
-        addUpsertEmbeddingDocument(matched, content, metadata),
+        addUpsertEmbeddingDocument(canonical, content, metadata),
       ),
     );
-    yield* updateFromAddPayload(database, matchedId, content, metadata);
-    const updated = yield* getMemoryById(database, matchedId);
-    if (updated) {
-      yield* syncMemoryVector(database, updated);
+    const updated = jsonObject(
+      yield* updateFromAddPayload(
+        database,
+        matchedId,
+        content,
+        metadata,
+        jsonNumber(canonical.update_count) ?? 0,
+      ),
+    );
+    if (!updated) {
+      return yield* Effect.fail(
+        commandError(
+          "add",
+          `Memory ${matchedId} changed concurrently; retry the match.`,
+        ),
+      );
     }
     yield* Effect.sync(() =>
       printUpsertResult(
@@ -607,10 +638,6 @@ function runUpsertCreate(params: {
     const createdResult = yield* addInsert(database, content, metadata);
     const createdId =
       jsonNumber(jsonObject(createdResult)?.lastInsertRowid) ?? 0;
-    const created = yield* getMemoryById(database, createdId);
-    if (created) {
-      yield* syncMemoryVector(database, created);
-    }
     yield* Effect.sync(() =>
       printUpsertResult(
         outputMode,
@@ -901,9 +928,6 @@ function runPlainAddInsert(params: {
     const insertId = jsonNumber(jsonObject(result)?.lastInsertRowid) ?? 0;
     const created = yield* getMemoryById(database, insertId);
     const createdId = Number(created?.id ?? insertId);
-    if (created) {
-      yield* syncMemoryVector(database, created);
-    }
     const statusCascade =
       metadata.memoryType === "status"
         ? yield* findStatusCascadeCandidates(database, metadata.tags, createdId)
@@ -1083,34 +1107,74 @@ function updateSetsAndParams(args: string[], content: string) {
     sets.push(spec.clause);
     params.push(spec.value);
   }
+  const requestedType = requireMemoryType(args);
+  if (
+    requestedType !== undefined &&
+    requestedType !== "status" &&
+    !hasFlag(args, "--expires-after-days")
+  ) {
+    sets.push("expires_after_days = NULL");
+  }
   return { sets, params };
 }
 
 function runBatchMemoryUpdate(
   database: MemoryDatabaseApi,
   targetIds: number[],
-  sets: string[],
-  params: (string | number | null)[],
+  update: { sets: string[]; params: (string | number | null)[] },
+  snapshots: Map<number, number>,
+  activeOnly: boolean,
 ): Effect.Effect<
-  { rows: JsonObject[]; missingIds: number[] },
+  {
+    rows: JsonObject[];
+    missingIds: number[];
+    conflictIds: number[];
+    error?: string;
+    unprocessed?: number[];
+  },
   MemoryDatabaseError
 > {
   return Effect.gen(function* () {
     const rows: JsonObject[] = [];
     const missingIds: number[] = [];
-    for (const targetId of targetIds) {
-      yield* database.run(
-        `UPDATE memories SET ${sets.join(", ")} WHERE repository = ? AND id = ?`,
-        [...params, repositoryForCurrentDirectory(), targetId],
-      );
-      const updated = yield* getMemoryById(database, targetId);
-      if (updated) {
-        rows.push(updated);
-      } else {
+    const conflictIds: number[] = [];
+    for (const [index, targetId] of targetIds.entries()) {
+      if (!snapshots.has(targetId)) {
         missingIds.push(targetId);
+        continue;
+      }
+      const outcome = yield* database
+        .get(
+          `UPDATE memories SET ${update.sets.join(", ")} WHERE repository = ? AND id = ? AND COALESCE(update_count, 0) = ?${activeOnly ? " AND status = 'active'" : ""} RETURNING *`,
+          [
+            ...update.params,
+            repositoryForCurrentDirectory(),
+            targetId,
+            snapshots.get(targetId)!,
+          ],
+        )
+        .pipe(
+          Effect.match({
+            onFailure: (cause) => ({ error: cause.message, row: undefined }),
+            onSuccess: (row) => ({ error: undefined, row: jsonObject(row) }),
+          }),
+        );
+      if (outcome.error) {
+        return {
+          rows,
+          missingIds,
+          conflictIds,
+          error: outcome.error,
+          unprocessed: targetIds.slice(index),
+        };
+      }
+      if (outcome.row) {
+        rows.push(outcome.row);
+      } else {
+        conflictIds.push(targetId);
       }
     }
-    return { rows, missingIds };
+    return { rows, missingIds, conflictIds };
   });
 }
 
@@ -1124,6 +1188,15 @@ function printSingleUpdateResult(params: {
   const { commandCtx, firstId, row, tokenReportEnabled, tokenBreakdowns } =
     params;
   const { outputMode } = commandCtx;
+  if (!row) {
+    printCommandOutput(commandCtx, {
+      id: firstId,
+      status: "not_found",
+      not_found: [firstId],
+      error: "Not found",
+    });
+    return;
+  }
   if (hasMinimalOutput(outputMode)) {
     const breakdown =
       firstId !== undefined ? tokenBreakdowns.get(firstId) : undefined;
@@ -1138,18 +1211,13 @@ function printSingleUpdateResult(params: {
     printJson({ id: firstId });
     return;
   }
-  const payload = row ?? { error: "Not found" };
-  if (
-    tokenReportEnabled &&
-    firstId !== undefined &&
-    "error" in payload === false
-  ) {
+  if (tokenReportEnabled && firstId !== undefined) {
     const breakdown = tokenBreakdowns.get(firstId);
     if (breakdown) {
-      Object.assign(payload, { tokens: breakdown });
+      Object.assign(row, { tokens: breakdown });
     }
   }
-  printCommandOutput(commandCtx, payload);
+  printCommandOutput(commandCtx, row);
 }
 
 function printUpdateResults(params: {
@@ -1283,16 +1351,29 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       tokenReportEnabled,
     );
     const { sets, params } = updateSetsAndParams(args, content);
-    const { rows, missingIds } = yield* runBatchMemoryUpdate(
+    const result = yield* runBatchMemoryUpdate(
       database,
       targetIds,
-      sets,
-      params,
+      { sets, params },
+      new Map(prospective.map((entry) => [entry.id, entry.updateCount])),
+      hasFlag(args, "--match"),
     );
-    for (const row of rows) {
-      yield* syncMemoryVector(database, row);
-    }
-    yield* Effect.sync(() =>
+    const { rows, missingIds } = result;
+    yield* Effect.sync(() => {
+      if (missingIds.length || result.conflictIds.length || result.error) {
+        process.exitCode = 1;
+      }
+      if (result.error || result.conflictIds.length) {
+        printCommandOutput(commandCtx, {
+          updated_ids: rows.map((row) => Number(row.id)),
+          not_found: missingIds,
+          conflicts: result.conflictIds,
+          count: rows.length,
+          error: result.error ?? "Concurrent mutation; retry.",
+          unprocessed: result.unprocessed ?? [],
+        });
+        return;
+      }
       printUpdateResults({
         commandCtx,
         targetIds,
@@ -1300,8 +1381,8 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
         missingIds,
         tokenReportEnabled,
         tokenBreakdowns,
-      }),
-    );
+      });
+    });
   });
 }
 
@@ -1370,6 +1451,15 @@ function printDeprecateResults(params: {
   const { commandCtx, supersededByRequested, targetIds, rows, missingIds } =
     params;
   const { outputMode } = commandCtx;
+  if (targetIds.length === 1 && !rows.length) {
+    printCommandOutput(commandCtx, {
+      id: targetIds[0],
+      status: "not_found",
+      not_found: missingIds,
+      error: "Not found",
+    });
+    return;
+  }
   if (hasMinimalOutput(outputMode)) {
     if (targetIds.length === 1) {
       const firstId = targetIds[0];
@@ -1407,23 +1497,57 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     const database = requireDatabase(commandCtx);
     const targetIds = yield* resolveDeprecateTargets(args, database);
     const { sets, params } = deprecateSetsAndParams(args, targetIds);
-    const { rows, missingIds } = yield* runBatchMemoryUpdate(
+    const supersededBy = parseIntegerFlag(args, "--superseded-by");
+    if (
+      supersededBy !== undefined &&
+      (supersededBy === null ||
+        supersededBy <= 0 ||
+        !(yield* getMemoryById(database, supersededBy)))
+    ) {
+      return yield* Effect.fail(
+        commandError(
+          "deprecate",
+          "--superseded-by must name an existing memory in this repository.",
+        ),
+      );
+    }
+    const snapshots = new Map<number, number>();
+    for (const id of targetIds) {
+      const row = yield* getMemoryById(database, id);
+      if (row) {
+        snapshots.set(id, jsonNumber(row.update_count) ?? 0);
+      }
+    }
+    const result = yield* runBatchMemoryUpdate(
       database,
       targetIds,
-      sets,
-      params,
+      { sets, params },
+      snapshots,
+      hasFlag(args, "--match"),
     );
-    for (const row of rows) {
-      yield* syncMemoryVector(database, row);
-    }
-    yield* Effect.sync(() =>
+    const { rows, missingIds } = result;
+    yield* Effect.sync(() => {
+      if (missingIds.length || result.conflictIds.length || result.error) {
+        process.exitCode = 1;
+      }
+      if (result.error || result.conflictIds.length) {
+        printCommandOutput(commandCtx, {
+          deprecated_ids: rows.map((row) => Number(row.id)),
+          not_found: missingIds,
+          conflicts: result.conflictIds,
+          count: rows.length,
+          error: result.error ?? "Concurrent mutation; retry.",
+          unprocessed: result.unprocessed ?? [],
+        });
+        return;
+      }
       printDeprecateResults({
         commandCtx,
         supersededByRequested: hasFlag(args, "--superseded-by"),
         targetIds,
         rows,
         missingIds,
-      }),
-    );
+      });
+    });
   });
 }

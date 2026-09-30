@@ -1,9 +1,18 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { execFile as execFileCallback } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+
 import {
   assetNameForPlatform,
   binaryNameForPlatform,
@@ -584,7 +593,16 @@ describe("CLI rewrite integration", () => {
 
     try {
       const result = await execBun(
-        ["run", cliEntrypoint, "local", "export", dbPath, "--remote"],
+        [
+          "run",
+          cliEntrypoint,
+          "local",
+          "export",
+          dbPath,
+          "--source-id",
+          "stable-backup",
+          "--remote",
+        ],
         {
           cwd,
           env: {
@@ -601,6 +619,7 @@ describe("CLI rewrite integration", () => {
       expect(result.stdout).toContain("Inserted");
       expect(requests.map((request) => request.path)).toEqual(["/migrate"]);
       expect(requests[0]?.body.repository).toBe("jfalava/machine-memory");
+      expect(requests[0]?.body.source).toBe("stable-backup");
       expect(
         (requests[0]?.body.rows as Record<string, unknown>[])[0]?.content,
       ).toBe("A selected SQLite file can be exported remotely");
@@ -1092,6 +1111,194 @@ describe("CLI rewrite integration", () => {
     );
     expect(deprecated.code).toBe(0);
     expect(deprecated.json).toEqual({ id, status: "deprecated" });
+  });
+});
+
+describe("audit write regressions", () => {
+  it("imports rows without timestamps and preserves an independently supplied timestamp", async () => {
+    const { cwd, dbPath } = await createProject();
+    const file = join(cwd, "restore.json");
+    await writeFile(
+      file,
+      JSON.stringify([
+        {
+          content: "first imported record",
+          memory_type: "decision",
+          refs: ["docs/first.md"],
+        },
+        {
+          content: "second imported record",
+          created_at: "2024-01-02 03:04:05",
+        },
+      ]),
+    );
+    const imported = await runCli(cwd, dbPath, "import", file, "--json-min");
+    expect(imported.code, imported.stderr).toBe(0);
+    expect(imported.json.imported).toBe(2);
+    const results = imported.json.results as Array<{ id: number }>;
+    const first = await runCli(cwd, dbPath, "get", String(results[0]?.id));
+    expect(first.json).toMatchObject({
+      memory_type: "decision",
+      refs: ["docs/first.md"],
+    });
+    expect(first.json.created_at).toEqual(expect.any(String));
+    const second = await runCli(cwd, dbPath, "get", String(results[1]?.id));
+    expect(second.json.created_at).toBe("2024-01-02 03:04:05");
+    expect(second.json.updated_at).toEqual(expect.any(String));
+  });
+
+  it("remaps superseded_by source IDs instead of pointing at unrelated target IDs", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "pre-existing unrelated memory",
+      "--quiet",
+    );
+    const file = join(cwd, "restore.json");
+    await writeFile(
+      file,
+      JSON.stringify([
+        {
+          id: 70,
+          content: "obsolete convention",
+          status: "superseded_by",
+          superseded_by: 90,
+        },
+        { id: 90, content: "replacement convention", status: "active" },
+      ]),
+    );
+    const imported = await runCli(cwd, dbPath, "import", file, "--json-min");
+    expect(imported.code, imported.stderr).toBe(0);
+    const results = imported.json.results as Array<{ id: number }>;
+    const old = await runCli(cwd, dbPath, "get", String(results[0]?.id));
+    expect(old.json.superseded_by).toBe(results[1]?.id);
+    expect(old.json.superseded_by).not.toBe(90);
+    const replacement = await runCli(
+      cwd,
+      dbPath,
+      "get",
+      String(results[1]?.id),
+    );
+    expect(replacement.json.content).toBe("replacement convention");
+  });
+
+  it.each([
+    { content: "x".repeat(600) },
+    { refs: [1] },
+    { expires_after_days: 3 },
+  ])(
+    "rejects an invalid final import row before inserting a valid first row: %j",
+    async (bad) => {
+      const { cwd, dbPath } = await createProject();
+      const file = join(cwd, "restore.json");
+      await writeFile(
+        file,
+        JSON.stringify([
+          { content: "valid first row" },
+          { content: "bad second row", ...bad },
+        ]),
+      );
+      const imported = await runCli(cwd, dbPath, "import", file, "--json-min");
+      expect(imported.code).toBe(1);
+      expect(imported.json.imported).toBe(0);
+      expect((await runCli(cwd, dbPath, "list", "--json-min")).json.count).toBe(
+        0,
+      );
+    },
+  );
+
+  it("reports missing single mutations as failures", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(cwd, dbPath, "migrate");
+    for (const args of [
+      ["update", "99", "replacement"],
+      ["deprecate", "99"],
+      ["delete", "99"],
+    ]) {
+      const result = await runCli(cwd, dbPath, ...args, "--json-min");
+      expect(result.code).toBe(1);
+      expect(result.json.not_found).toEqual([99]);
+      expect(result.json.status).not.toBe("updated");
+    }
+  });
+
+  it("rejects match updates of deprecated memories and clears expiry on type conversion", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "temporary status needle",
+      "--type",
+      "status",
+      "--expires-after-days",
+      "4",
+      "--quiet",
+    );
+    const id = Number(added.json.id);
+    const converted = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      String(id),
+      "permanent decision needle",
+      "--type",
+      "decision",
+      "--json-min",
+    );
+    expect(converted.code, converted.stderr).toBe(0);
+    expect(
+      (await runCli(cwd, dbPath, "get", String(id))).json.expires_after_days,
+    ).toBeNull();
+    await runCli(cwd, dbPath, "deprecate", String(id));
+    const inactive = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "must not overwrite",
+      "--match",
+      "permanent decision needle",
+      "--json-min",
+      "--local",
+    );
+    expect(inactive.code).toBe(1);
+    expect(inactive.json.error).toContain("No active memory matched");
+    expect((await runCli(cwd, dbPath, "get", String(id))).json.content).toBe(
+      "permanent decision needle",
+    );
+  });
+
+  it("refuses source-mode self-upgrade before touching the runtime", async () => {
+    const { cwd } = await createProject();
+    const result = await execBun(["run", cliEntrypoint, "upgrade"], {
+      cwd,
+      env: {
+        MACHINE_MEMORY_BIN_PATH: "",
+        MACHINE_MEMORY_API_URL: "http://127.0.0.1:1",
+      },
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("compiled executable");
+    expect(result.stderr).not.toContain("Failed to fetch");
+  });
+
+  it("refuses an explicitly named upgrade target that resolves to Bun", async () => {
+    const { cwd } = await createProject();
+    const runtime = await execBun(["-e", "console.log(process.execPath)"], {});
+    const target = join(cwd, "machine-memory");
+    await symlink(runtime.stdout.trim(), target);
+    const result = await execBun(["run", cliEntrypoint, "upgrade"], {
+      cwd,
+      env: {
+        MACHINE_MEMORY_BIN_PATH: target,
+        MACHINE_MEMORY_API_URL: "http://127.0.0.1:1",
+      },
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Refusing to replace");
+    expect(result.stderr).not.toContain("Failed to fetch");
   });
 });
 

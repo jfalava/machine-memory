@@ -1,35 +1,9 @@
 import { Effect } from "effect";
-import { jsonNumber, jsonString, type JsonObject } from "../../json";
 import { Command } from "effect/unstable/cli";
 import pc from "picocolors";
-import { handleDoctorCommand } from "./doctor";
-import { handleCoverageCommand } from "./coverage";
-import { handleExportCommand } from "./export";
-import { handleGcCommand } from "./gc";
-import { handleImportCommand, handleStatsCommand } from "./maintenance";
-import { handleReindexCommand } from "./reindex";
-import {
-  handleListCommand,
-  handleQueryCommand,
-  handleSuggestCommand,
-  handleSweepCommand,
-} from "./memory-read";
-import {
-  handleAddCommand,
-  handleDeprecateCommand,
-  handleUpdateCommand,
-} from "./memory-write";
-import { handleSizeCommand } from "./size";
-import { handleTagMapCommand } from "./tag-map";
-import { handleInitCommand } from "./init";
-import { handleDiffCommand } from "./diff";
-import { handleMigrateCommand } from "./migrate";
-import { handleVerifyCommand } from "./verify";
-import { handleDeleteCommand } from "./delete";
-import { handleGetCommand } from "./get";
-import { remoteCommand } from "./remote";
-import { localCommand } from "./local";
+
 import { VERSION } from "../../constants";
+import { jsonNumber, jsonString, type JsonObject } from "../../json";
 import {
   upgrade,
   type UpgradeProgress,
@@ -51,6 +25,33 @@ import {
   prettyOutput,
   printCommandOutput,
 } from "../runtime/output";
+import { handleCoverageCommand } from "./coverage";
+import { handleDeleteCommand } from "./delete";
+import { handleDiffCommand } from "./diff";
+import { handleDoctorCommand } from "./doctor";
+import { handleExportCommand } from "./export";
+import { handleGcCommand } from "./gc";
+import { handleGetCommand } from "./get";
+import { handleInitCommand } from "./init";
+import { localCommand } from "./local";
+import { handleImportCommand, handleStatsCommand } from "./maintenance";
+import {
+  handleListCommand,
+  handleQueryCommand,
+  handleSuggestCommand,
+  handleSweepCommand,
+} from "./memory-read";
+import {
+  handleAddCommand,
+  handleDeprecateCommand,
+  handleUpdateCommand,
+} from "./memory-write";
+import { handleMigrateCommand } from "./migrate";
+import { handleReindexCommand } from "./reindex";
+import { remoteCommand } from "./remote";
+import { handleSizeCommand } from "./size";
+import { handleTagMapCommand } from "./tag-map";
+import { handleVerifyCommand } from "./verify";
 
 const addCommand = effectCommand(
   "add",
@@ -341,8 +342,8 @@ const sizeCommand = effectCommand(
 );
 const importCommand = effectCommand(
   "import",
-  { args: positionalArgs() },
-  [],
+  { args: positionalArgs(), ...outputConfig() },
+  outputSpecs,
   "write",
   handleImportCommand,
 );

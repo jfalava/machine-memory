@@ -1,13 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
-import { Effect } from "effect";
+import { Cause, Effect } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import pc from "picocolors";
-import {
-  printCommandOutput,
-  prettyOutput,
-  outputModeForPretty,
-} from "./runtime/output";
-import { renderPretty } from "./runtime/pretty";
+
 import { printJson } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
@@ -19,6 +14,12 @@ import {
   commandErrorForRender,
   humanCommandFailureOutput,
 } from "./human-error";
+import {
+  printCommandOutput,
+  prettyOutput,
+  outputModeForPretty,
+} from "./runtime/output";
+import { renderPretty } from "./runtime/pretty";
 
 const rootCommand = Command.make("machine-memory", {}, () =>
   Effect.gen(function* () {
@@ -284,8 +285,11 @@ export function runCli(args: ReadonlyArray<string>) {
   return Command.runWith(rootCommand, { version: VERSION })(args).pipe(
     Effect.provide(CliOutput.layer(formatterFor(commandPathName, pretty))),
     Effect.provide(BunServices.layer),
-    Effect.catch((error) =>
+    Effect.catchCause((cause) =>
       Effect.sync(() => {
+        // usageError throws inside Effect callbacks; those failures are defects,
+        // not typed errors. Render both before runMain's reporting is disabled.
+        const error = Cause.squash(cause);
         const failure =
           error instanceof Error ? error : new Error("Unexpected CLI failure.");
         renderError(failure, errorCommand, pretty);

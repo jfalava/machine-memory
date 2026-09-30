@@ -128,7 +128,7 @@ export type MigrationLinksSuccess = typeof MigrationLinksSuccessSchema.Type;
 export const VectorizeUpsertResultSchema = Schema.Struct({
   id: Schema.String,
   namespace: Schema.String,
-  mutationId: Schema.String,
+  indexing: Schema.Literal("queued"),
 });
 export type VectorizeUpsertResult = typeof VectorizeUpsertResultSchema.Type;
 
@@ -139,7 +139,7 @@ export type VectorizeUpsertSuccess = typeof VectorizeUpsertSuccessSchema.Type;
 
 export const VectorizeDeleteResultSchema = Schema.Struct({
   id: Schema.String,
-  mutationId: Schema.String,
+  indexing: Schema.Literal("queued"),
 });
 export type VectorizeDeleteResult = typeof VectorizeDeleteResultSchema.Type;
 

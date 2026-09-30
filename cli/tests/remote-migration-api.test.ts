@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
   migrateRemoteLinks,
   migrateRemoteRows,
@@ -51,6 +52,7 @@ describe("remote migration API", () => {
         "https://memory.example/query",
         "secret",
         "owner/project",
+        "source-database-1",
         [row],
       ),
     );
@@ -70,6 +72,7 @@ describe("remote migration API", () => {
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(JSON.parse(String(request.body))).toEqual({
       repository: "owner/project",
+      source: "source-database-1",
       rows: [row],
     });
   });

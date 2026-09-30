@@ -1,6 +1,15 @@
+import type {
+  ProductRequest,
+  ProductResponse,
+  ProductRoute,
+} from "@machine-memory/contract";
 import { McpServer } from "@modelcontextprotocol/server";
+
 import pkg from "../../package.json";
-import { postProduct, ProductApiError } from "./product-client";
+import {
+  postProduct as postProductRequest,
+  ProductApiError,
+} from "./product-client";
 import { errorResult, textMessage, textResult } from "./text";
 import {
   listRepositoriesInput,
@@ -41,6 +50,26 @@ import type { ErrorToolResult, McpBindings, TextToolResult } from "./types";
 /** Same version as the monorepo CLI / package.json (not a separate MCP protocol number). */
 export const MCP_SERVER_VERSION: string = pkg.version;
 
+/** Exhaustive classification: new product operations must choose a scope. */
+const REQUIRED_SCOPES = {
+  "list-repositories": "mcp:read",
+  query: "mcp:read",
+  get: "mcp:read",
+  list: "mcp:read",
+  doctor: "mcp:read",
+  stats: "mcp:read",
+  gc: "mcp:read",
+  suggest: "mcp:read",
+  verify: "mcp:read",
+  diff: "mcp:read",
+  size: "mcp:read",
+  add: "mcp:write",
+  update: "mcp:write",
+  deprecate: "mcp:write",
+  delete: "mcp:write",
+  "delete-many": "mcp:write",
+} satisfies Record<ProductRoute, "mcp:read" | "mcp:write">;
+
 /**
  * Map a product-route failure onto the MCP read-tool contract: the API's
  * 404 not-found messages pass through as plain text (same wording the
@@ -59,16 +88,36 @@ function notFoundOrError(cause: unknown): TextToolResult | ErrorToolResult {
  * envelope into the exact output shape the direct-DB tools returned, so
  * agent-facing behavior is unchanged while D1/Vectorize/AI live only in
  * the API worker.
+ * Direct internal callers are trusted by default. Public OAuth entrypoints
+ * MUST supply the effective token scopes, including an empty array.
  */
 export function createMemoryServer(
-  bindings: McpBindings,
+  { api, apiToken }: McpBindings,
   authenticatedLogin?: string,
+  scopes: readonly string[] | "trusted-internal" = "trusted-internal",
 ): McpServer {
   const server = new McpServer({
     name: "machine-memory",
     version: MCP_SERVER_VERSION,
   });
-  const { api, apiToken } = bindings;
+
+  // Authorization lives at execution time, before any API call. Advertising
+  // scopes or tool descriptions alone does not restrict tools/call requests.
+  async function postProduct<R extends ProductRoute>(
+    fetcher: McpBindings["api"],
+    token: string,
+    route: R,
+    body: ProductRequest<NoInfer<R>>,
+  ): Promise<ProductResponse<R>> {
+    const required = REQUIRED_SCOPES[route];
+    if (scopes !== "trusted-internal" && !scopes.includes(required)) {
+      throw new ProductApiError(
+        403,
+        `Insufficient scope: ${required} required.`,
+      );
+    }
+    return postProductRequest(fetcher, token, route, body);
+  }
 
   const ownerHint = authenticatedLogin
     ? ` The authenticated GitHub user is '${authenticatedLogin}', so repositories under that owner (e.g. '${authenticatedLogin}/repo-name') are likely candidates. Call list_repositories first if unsure.`
@@ -266,7 +315,7 @@ export function createMemoryServer(
   server.registerTool(
     "memory_update",
     {
-      description: `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change. Re-embeds the vector so future semantic searches reflect the change. Rejects on flight when the resulting composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
+      description: `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change. Commits the row and queues vector indexing together; semantic search catches up asynchronously. Rejects active memories when the resulting composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
       inputSchema: memoryUpdateInput,
     },
     async (args: MemoryUpdateArgs) => {

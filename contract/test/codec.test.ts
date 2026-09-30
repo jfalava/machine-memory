@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+
 import {
   databaseFailureGuidance,
   decodeRequest,
@@ -121,6 +122,7 @@ describe("api request schemas", () => {
   it("applies migration row defaults", () => {
     const result = decodeRequest(MigrationRequestInputSchema, {
       repository: "owner/name",
+      source: "database-1",
       rows: [
         {
           source_id: 1,
@@ -183,6 +185,7 @@ describe("api request schemas", () => {
   it("rejects duplicate migration source_ids", () => {
     const result = decodeRequest(MigrationRequestInputSchema, {
       repository: "owner/name",
+      source: "database-1",
       rows: [
         { source_id: 1, content: "a", update_count: 0 },
         { source_id: 1, content: "b", update_count: 0 },

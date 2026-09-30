@@ -1,5 +1,6 @@
 {
   "name": "@machine-memory/iac",
+  "version": "0.21.0",
   "private": true,
   "type": "module",
   "scripts": {

@@ -1,30 +1,20 @@
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as SQL from "alchemy/SQL/D1";
-import * as Config from "effect/Config";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
 import {
   composeEmbeddingText,
   PRODUCT_OPERATIONS,
   SEARCH_LIMIT_MAX,
   VectorizeSearchResultSchema,
   type ProductRoute,
-  type MemoryRow,
   type MemoryType,
   type MemoryStatus,
   type Certainty,
+  type MemoryWriteResult,
   type UpsertMatchInfo,
   decodeRequest,
-  EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
   embeddingSizeReport,
   encodeResponse,
   ErrorBodySchema,
-  isJsonArray,
   jsonNumber,
-  jsonObject,
   jsonString,
   MigrationLinksRequestSchema,
   MigrationLinksSuccessSchema,
@@ -51,12 +41,38 @@ import {
   VectorizeUpsertSuccessSchema,
   type JsonObject,
   type JsonValue,
-  type MigrationRequest,
   type MigrationItem,
   type QueryRequest,
   type VectorizeSearchRequest,
   type VectorizeUpsertRequest,
 } from "@machine-memory/contract";
+import type { RuntimeContext } from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as SQL from "alchemy/SQL/D1";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import type * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+import { apiName } from "../../iac/src/config";
+import { Database } from "../../iac/src/database";
+import { VectorIndex } from "../../iac/src/vectorize";
+import {
+  ftsSelect,
+  INSERT_SQL,
+  insertParams,
+  listCountSelect,
+  listSelect,
+  neighborhoodSelect,
+  REPOSITORY_COUNT_SQL,
+  repositoryStatsSelect,
+  rowByIdSelect,
+  updateSets,
+  vectorFilter,
+  type InsertInput,
+} from "./product-api";
 import {
   buildFtsQuery,
   analyzeMemoryDoctor,
@@ -76,66 +92,20 @@ import {
   UPSERT_MIN_SIMILARITY,
 } from "./product-logic";
 import {
-  ftsSelect,
-  INSERT_SQL,
-  insertParams,
-  listCountSelect,
-  listSelect,
-  neighborhoodSelect,
-  REPOSITORY_COUNT_SQL,
-  repositoryStatsSelect,
-  rowByIdSelect,
-  updateSets,
-  vectorFilter,
-  type InsertInput,
-} from "./product-api";
-import { Database } from "../../iac/src/database";
-import { apiName } from "../../iac/src/config";
-import { VectorIndex } from "../../iac/src/vectorize";
-import {
   handleRestRequest,
   type RestHandlers,
   type RestHandlerFn,
 } from "./rest-handlers";
+import { VectorCoordinator } from "./vector-coordinator";
+import { parseEmbedding } from "./vector-sync";
 
 const INTERNAL_ERROR = "Internal server error.";
-const RATE_LIMIT_ERROR = "Too Many Requests";
-
-function isRateLimitedVectorizeCause(cause: unknown): boolean {
-  return /(?:too many requests|rate[ -]?limit|\b429\b|40041)/i.test(
-    String(cause),
-  );
-}
 
 function badRequest(error: string) {
   return HttpServerResponse.json(
     encodeResponse(ErrorBodySchema, { ok: false, error }),
     { status: 400 },
   );
-}
-
-function parseEmbedding(value: JsonValue): number[] {
-  const data = jsonObject(value)?.data;
-  if (!isJsonArray(data) || data.length !== 1) {
-    throw new Error("Workers AI returned an invalid embedding response.");
-  }
-  const embedding = data[0];
-  if (embedding === undefined || !isJsonArray(embedding)) {
-    throw new Error("Workers AI returned an invalid embedding response.");
-  }
-  const numericEmbedding = embedding.flatMap((component) => {
-    const number = jsonNumber(component);
-    return number === undefined ? [] : [number];
-  });
-  if (
-    numericEmbedding.length !== EMBEDDING_DIMENSIONS ||
-    numericEmbedding.length !== embedding.length
-  ) {
-    throw new Error(
-      `Workers AI returned an embedding with an invalid dimension; expected ${EMBEDDING_DIMENSIONS}.`,
-    );
-  }
-  return numericEmbedding;
 }
 
 function embeddingTextForDocument(document: VectorizeUpsertRequest): string {
@@ -190,12 +160,6 @@ function emptyToUndefined(value: string | undefined): string | undefined {
   return value;
 }
 
-type MigrationBatchAccumulator = {
-  readonly items: MigrationItem[];
-  readonly inserted: number;
-  readonly duplicates: number;
-};
-
 function migrationDuplicateItem(
   sourceId: number,
   targetId: number,
@@ -218,19 +182,22 @@ function migrationInsertedItem(
   };
 }
 
-export default Cloudflare.Worker<{}>()(
-  "machine-memory-api",
-  { main: import.meta.url, name: apiName, workersDev: false },
-  // oxlint-disable-next-line max-statements -- worker wires low-level SQL/migrate/vectorize plus product handlers
+export const createApiHandlers = ({
+  d1,
+  vectorize,
+  ai,
+  expectedToken,
+  wake,
+}: {
+  d1: Cloudflare.D1.QueryDatabaseClient;
+  vectorize: Cloudflare.Vectorize.SearchIndexClient;
+  ai: Cloudflare.Workers.AIClient;
+  expectedToken: Redacted.Redacted<string>;
+  wake: Effect.Effect<void, never, RuntimeContext>;
+}) =>
+  // oxlint-disable-next-line max-statements -- assemble route handlers over shared bindings
   Effect.gen(function* () {
-    const vectorIndex = yield* VectorIndex;
-    const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const sql = yield* SQL.D1(d1);
-    const vectorize = yield* Cloudflare.Vectorize.SearchIndex(vectorIndex);
-    const ai = yield* Cloudflare.Workers.AI();
-    const expectedToken = yield* Config.Redacted(
-      "MACHINE_MEMORY_DB_TOKEN",
-    ).pipe(Effect.orDie);
     const embed = (text: string) =>
       ai
         .run(EMBEDDING_MODEL, { text: [text] })
@@ -271,69 +238,6 @@ export default Cloudflare.Worker<{}>()(
         );
       });
 
-    const migrateOneRow = (
-      request: MigrationRequest,
-      row: MigrationRequest["rows"][number],
-      batch: MigrationBatchAccumulator,
-    ) =>
-      Effect.gen(function* () {
-        const existing = yield* sql.unsafe<{ id: number }>(
-          `SELECT id FROM memories
-           WHERE repository = ?
-             AND status = 'active'
-             AND content = ?
-             AND tags = ?
-             AND context = ?
-           LIMIT 1`,
-          [request.repository, row.content, row.tags, row.context],
-        );
-        const duplicate = existing[0];
-        if (duplicate) {
-          batch.items.push(
-            migrationDuplicateItem(row.source_id, Number(duplicate.id)),
-          );
-          return {
-            items: batch.items,
-            inserted: batch.inserted,
-            duplicates: batch.duplicates + 1,
-          } satisfies MigrationBatchAccumulator;
-        }
-
-        const result = yield* d1
-          .prepare(
-            `INSERT INTO memories (
-               repository, content, tags, context, memory_type, status,
-               superseded_by, source_agent, last_updated_by, update_count,
-               certainty, refs, expires_after_days, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .bind(
-            request.repository,
-            row.content,
-            row.tags,
-            row.context,
-            row.memory_type,
-            row.status,
-            row.source_agent,
-            row.last_updated_by,
-            row.update_count,
-            row.certainty,
-            row.refs,
-            row.expires_after_days,
-            row.created_at,
-            row.updated_at,
-          )
-          .run();
-        batch.items.push(
-          migrationInsertedItem(row.source_id, Number(result.meta.last_row_id)),
-        );
-        return {
-          items: batch.items,
-          inserted: batch.inserted + 1,
-          duplicates: batch.duplicates,
-        } satisfies MigrationBatchAccumulator;
-      });
-
     const handleMigration = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = decodeRequest(MigrationRequestInputSchema, body);
@@ -345,22 +249,74 @@ export default Cloudflare.Worker<{}>()(
           return yield* badRequest(normalized.error);
         }
         const request = normalized.value;
-        let batch: MigrationBatchAccumulator = {
-          items: [],
-          inserted: 0,
-          duplicates: 0,
-        };
-        for (const row of request.rows) {
-          batch = yield* migrateOneRow(request, row, batch);
-        }
+        // One D1 transaction: source identity, not content similarity, provides
+        // retry safety for every status and preserves distinct metadata.
+        const statements = request.rows.flatMap((row) => [
+          d1
+            .prepare(`INSERT INTO memories (repository, content, tags, context, memory_type, status,
+            superseded_by, source_agent, last_updated_by, update_count, certainty, refs,
+            expires_after_days, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, coalesce(?, datetime('now')), coalesce(?, datetime('now'))
+            WHERE NOT EXISTS (SELECT 1 FROM memory_migration_sources WHERE repository = ? AND source = ? AND source_id = ?)
+            RETURNING id`)
+            .bind(
+              request.repository,
+              row.content,
+              row.tags,
+              row.context,
+              row.memory_type,
+              row.status,
+              row.source_agent,
+              row.last_updated_by,
+              row.update_count,
+              row.certainty,
+              row.refs,
+              row.expires_after_days,
+              row.created_at,
+              row.updated_at,
+              request.repository,
+              request.source,
+              row.source_id,
+            ),
+          d1
+            .prepare(`INSERT INTO memory_migration_sources (repository, source, source_id, target_id)
+            SELECT ?, ?, ?, last_insert_rowid() WHERE NOT EXISTS
+            (SELECT 1 FROM memory_migration_sources WHERE repository = ? AND source = ? AND source_id = ?)`)
+            .bind(
+              request.repository,
+              request.source,
+              row.source_id,
+              request.repository,
+              request.source,
+              row.source_id,
+            ),
+          d1
+            .prepare(
+              `SELECT target_id AS id FROM memory_migration_sources WHERE repository = ? AND source = ? AND source_id = ?`,
+            )
+            .bind(request.repository, request.source, row.source_id),
+        ]);
+        const results =
+          statements.length === 0
+            ? []
+            : yield* d1.batch<{ id: number }>(statements);
+        const items = request.rows.map((row, i) => {
+          const target = results[i * 3 + 2].results[0].id;
+          return results[i * 3].results.length > 0
+            ? migrationInsertedItem(row.source_id, target)
+            : migrationDuplicateItem(row.source_id, target);
+        });
+        const inserted = items.filter(
+          (item) => item.status === "inserted",
+        ).length;
         return yield* HttpServerResponse.json(
           encodeResponse(MigrationSuccessSchema, {
             ok: true,
             result: {
               processed: request.rows.length,
-              inserted: batch.inserted,
-              duplicates: batch.duplicates,
-              items: batch.items,
+              inserted,
+              duplicates: items.length - inserted,
+              items,
             },
           }),
         );
@@ -373,22 +329,37 @@ export default Cloudflare.Worker<{}>()(
           return yield* badRequest(input.error);
         }
 
-        let updated = 0;
         for (const link of input.value.links) {
-          const result = yield* d1
-            .prepare(
-              `UPDATE memories
-               SET superseded_by = ?
-               WHERE repository = ? AND id = ?`,
-            )
+          if (
+            link.target_id === link.superseded_by_target_id ||
+            !(yield* fetchProductRow(input.value.repository, link.target_id)) ||
+            !(yield* fetchProductRow(
+              input.value.repository,
+              link.superseded_by_target_id,
+            ))
+          ) {
+            return yield* badRequest(
+              "Migration links require distinct memories in the same repository.",
+            );
+          }
+        }
+        const statements = input.value.links.map((link) =>
+          d1
+            .prepare(`UPDATE memories
+          SET superseded_by = ?, update_count = update_count + 1
+          WHERE repository = ? AND id = ? RETURNING id`)
             .bind(
               link.superseded_by_target_id,
               input.value.repository,
               link.target_id,
-            )
-            .run();
-          updated += result.meta.changes;
-        }
+            ),
+        );
+        const results =
+          statements.length === 0 ? [] : yield* d1.batch(statements);
+        const updated = results.reduce(
+          (count, result) => count + result.results.length,
+          0,
+        );
 
         return yield* HttpServerResponse.json(
           encodeResponse(MigrationLinksSuccessSchema, {
@@ -406,49 +377,21 @@ export default Cloudflare.Worker<{}>()(
         }
         const document = input.value;
         const id = memoryDocumentId(document);
-        const values = yield* embed(embeddingTextForDocument(document));
-        const result = yield* vectorize
-          .upsert([
-            {
-              id,
-              namespace: document.repository,
-              values,
-              metadata: {
-                status: document.status,
-                memory_type: document.memory_type,
-                certainty: document.certainty,
-              },
-            },
-          ])
-          .pipe(
-            Effect.map((mutation) => ({
-              ok: true as const,
-              mutation,
-            })),
-            Effect.catchCause((cause) =>
-              Effect.succeed({
-                ok: false as const,
-                rateLimited: isRateLimitedVectorizeCause(cause),
-              }),
-            ),
-          );
-        if (!result.ok) {
-          return yield* HttpServerResponse.json(
-            encodeResponse(ErrorBodySchema, {
-              ok: false,
-              error: result.rateLimited ? RATE_LIMIT_ERROR : INTERNAL_ERROR,
-            }),
-            { status: result.rateLimited ? 429 : 500 },
-          );
+        const queued = yield* d1
+          .prepare(`UPDATE memory_vector_sync SET generation = generation + 1,
+          next_attempt_at = 0, attempts = 0 WHERE memory_id = ? AND repository = ?`)
+          .bind(Number(id), document.repository)
+          .run();
+        if (queued.meta.changes === 0) {
+          return yield* badRequest("Memory does not exist in this repository.");
         }
-        const mutation = result.mutation;
         return yield* HttpServerResponse.json(
           encodeResponse(VectorizeUpsertSuccessSchema, {
             ok: true,
             result: {
               id,
               namespace: document.repository,
-              mutationId: mutation.mutationId,
+              indexing: "queued",
             },
           }),
         );
@@ -501,11 +444,19 @@ export default Cloudflare.Worker<{}>()(
         if (id.length === 0) {
           return yield* badRequest("id must be a non-empty string or number.");
         }
-        const mutation = yield* vectorize.deleteByIds([id]);
+        // Reconcile canonical state; a client cannot delete an active row's vector.
+        const queued = yield* d1
+          .prepare(`UPDATE memory_vector_sync SET generation = generation + 1,
+          next_attempt_at = 0, attempts = 0 WHERE memory_id = ?`)
+          .bind(Number(id))
+          .run();
+        if (queued.meta.changes === 0) {
+          return yield* badRequest("Unknown memory id.");
+        }
         return yield* HttpServerResponse.json(
           encodeResponse(VectorizeDeleteSuccessSchema, {
             ok: true,
-            result: { id, mutationId: mutation.mutationId },
+            result: { id, indexing: "queued" },
           }),
         );
       });
@@ -538,42 +489,6 @@ export default Cloudflare.Worker<{}>()(
         return rows.map(toRankedRow);
       });
 
-    const syncProductVector = (row: {
-      id: number;
-      repository: string;
-      content: string;
-      tags: string;
-      context: string;
-      memory_type: string;
-      status: string;
-      certainty: string;
-    }) =>
-      Effect.gen(function* () {
-        const values = yield* embed(embeddingTextForMemory(row));
-        yield* vectorize
-          .upsert([
-            {
-              id: String(row.id),
-              namespace: row.repository,
-              values,
-              metadata: {
-                status: row.status,
-                memory_type: row.memory_type,
-                certainty: row.certainty,
-              },
-            },
-          ])
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.sync(() => {
-                console.error(
-                  `product memory ${row.id} saved but vector sync failed: ${String(cause)}`,
-                );
-              }),
-            ),
-          );
-      });
-
     const findBestProductMatch = (repository: string, query: string) =>
       Effect.gen(function* () {
         const terms = extractTerms(query);
@@ -581,7 +496,12 @@ export default Cloudflare.Worker<{}>()(
         if (ftsQuery === undefined) {
           return null;
         }
-        const rows = yield* fetchRankedProductRows(ftsQuery, repository, {}, 5);
+        const rows = yield* fetchRankedProductRows(
+          ftsQuery,
+          repository,
+          { status: "active" },
+          5,
+        );
         const scored = scoreMemoryRows(rows, terms);
         const best = scored[0];
         if (!best) {
@@ -874,38 +794,24 @@ export default Cloudflare.Worker<{}>()(
         if (!input.ok) {
           return yield* badRequest(input.error);
         }
-        const existing = yield* fetchProductRow(
-          input.value.repository,
-          input.value.id,
-        );
         const result = yield* d1
-          .prepare(`DELETE FROM memories WHERE repository = ? AND id = ?`)
+          .prepare(
+            `DELETE FROM memories WHERE repository = ? AND id = ? RETURNING id`,
+          )
           .bind(input.value.repository, input.value.id)
-          .run();
-        yield* cleanupProductVector(input.value.id);
+          .first<{ id: number }>();
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["delete"].response, {
             ok: true,
             result: {
               deleted_from: input.value.repository,
               id: input.value.id,
-              deleted: result.meta.changes > 0,
-              existed: existing !== undefined,
+              deleted: result !== null,
+              existed: result !== null,
             },
           }),
         );
       });
-
-    const cleanupProductVector = (id: number) =>
-      vectorize.deleteByIds([String(id)]).pipe(
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            console.error(
-              `product memory ${id} deleted but vector cleanup failed: ${String(cause)}`,
-            );
-          }),
-        ),
-      );
 
     const handleProductDeleteMany = (body: JsonValue) =>
       Effect.gen(function* () {
@@ -917,20 +823,15 @@ export default Cloudflare.Worker<{}>()(
           return yield* badRequest(input.error);
         }
         const requestedIds = [...new Set(input.value.ids)];
-        const deletedIds: number[] = [];
-        const notFound: number[] = [];
-        for (const id of requestedIds) {
-          const result = yield* d1
-            .prepare(`DELETE FROM memories WHERE repository = ? AND id = ?`)
-            .bind(input.value.repository, id)
-            .run();
-          if (result.meta.changes > 0) {
-            deletedIds.push(id);
-            yield* cleanupProductVector(id);
-          } else {
-            notFound.push(id);
-          }
-        }
+        const rows = yield* d1
+          .prepare(
+            `DELETE FROM memories WHERE repository = ? AND id IN (SELECT value FROM json_each(?)) RETURNING id`,
+          )
+          .bind(input.value.repository, JSON.stringify(requestedIds))
+          .all<{ id: number }>();
+        const deleted = new Set(rows.results.map((row) => row.id));
+        const deletedIds = requestedIds.filter((id) => deleted.has(id));
+        const notFound = requestedIds.filter((id) => !deleted.has(id));
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["delete-many"].response, {
             ok: true,
@@ -952,26 +853,15 @@ export default Cloudflare.Worker<{}>()(
       supersededBy: number | null,
     ) =>
       Effect.gen(function* () {
-        const deprecated: MemoryRow[] = [];
-        const notFound: number[] = [];
-        for (const id of ids) {
-          const existing = yield* fetchProductRow(repository, id);
-          if (!existing) {
-            notFound.push(id);
-            continue;
-          }
-          yield* d1
-            .prepare(
-              `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = 'api', updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id = ?`,
-            )
-            .bind(status, supersededBy, repository, id)
-            .run();
-          const row = yield* fetchProductRow(repository, id);
-          if (row) {
-            deprecated.push(row);
-            yield* syncProductVector(row);
-          }
-        }
+        const rows = yield* d1
+          .prepare(
+            `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = 'api', updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id IN (SELECT value FROM json_each(?)) RETURNING *`,
+          )
+          .bind(status, supersededBy, repository, JSON.stringify(ids))
+          .all<JsonObject>();
+        const deprecated = rows.results.map(toProductRow);
+        const changed = new Set(deprecated.map((row) => row.id));
+        const notFound = ids.filter((id) => !changed.has(id));
         return { deprecated, notFound };
       });
 
@@ -993,6 +883,14 @@ export default Cloudflare.Worker<{}>()(
             ? ("deprecated" as const)
             : ("superseded_by" as const);
         const supersededBy = input.value.superseded_by ?? null;
+        if (
+          supersededBy !== null &&
+          !(yield* fetchProductRow(input.value.repository, supersededBy))
+        ) {
+          return yield* badRequest(
+            "Replacement must exist in the same repository.",
+          );
+        }
         const { deprecated, notFound } = yield* deprecateProductRows(
           input.value.repository,
           requestedIds,
@@ -1061,18 +959,26 @@ export default Cloudflare.Worker<{}>()(
         const list = Schema.decodeUnknownSync(VectorizeSearchResultSchema)(
           matches,
         ).matches;
-        return yield* resolveSemanticRows(repository, list, tags);
+        return yield* resolveSemanticRows(repository, list, {
+          ...filters,
+          tags,
+        });
       });
 
     const resolveSemanticRows = (
       repository: string,
       matches: ReadonlyArray<{ id: string; score: number }>,
-      tags: string | undefined,
+      filters: {
+        status?: string;
+        memory_type?: string;
+        certainty?: string;
+        tags?: string;
+      },
     ) =>
       Effect.gen(function* () {
         const collected: Array<ReturnType<typeof scoredResultRow>> = [];
         for (const match of matches) {
-          const row = yield* resolveSemanticMatch(repository, match, tags);
+          const row = yield* resolveSemanticMatch(repository, match, filters);
           if (row) {
             collected.push(row);
           }
@@ -1083,7 +989,12 @@ export default Cloudflare.Worker<{}>()(
     const resolveSemanticMatch = (
       repository: string,
       match: { id: string; score: number },
-      tags: string | undefined,
+      filters: {
+        status?: string;
+        memory_type?: string;
+        certainty?: string;
+        tags?: string;
+      },
     ) =>
       Effect.gen(function* () {
         const id = Number(match.id);
@@ -1095,8 +1006,13 @@ export default Cloudflare.Worker<{}>()(
           return undefined;
         }
         if (
-          tags !== undefined &&
-          !row.tags.toLowerCase().includes(tags.toLowerCase())
+          (filters.status !== undefined && row.status !== filters.status) ||
+          (filters.memory_type !== undefined &&
+            row.memory_type !== filters.memory_type) ||
+          (filters.certainty !== undefined &&
+            row.certainty !== filters.certainty) ||
+          (filters.tags !== undefined &&
+            !row.tags.toLowerCase().includes(filters.tags.toLowerCase()))
         ) {
           return undefined;
         }
@@ -1112,6 +1028,13 @@ export default Cloudflare.Worker<{}>()(
         const args = normalizeMemoryQueryArgs(input.value);
         if (args.mode === "keyword") {
           return yield* keywordProductResponse(args);
+        }
+        try {
+          validateEmbeddingText(args.query, "Query");
+        } catch (error) {
+          return yield* badRequest(
+            error instanceof Error ? error.message : "Invalid query.",
+          );
         }
         if (args.mode === "semantic") {
           return yield* semanticProductResponse(args);
@@ -1233,16 +1156,21 @@ export default Cloudflare.Worker<{}>()(
           },
           args.tags,
         );
+        // Reciprocal-rank fusion compares ranks rather than unrelated lexical
+        // and cosine score scales. Overlapping results receive both contributions.
         const byId = new Map<number, (typeof keyword)[number]>();
-        for (const row of keyword) {
-          byId.set(row.id, row);
-        }
-        for (const row of semantic) {
-          if (!byId.has(row.id)) {
-            byId.set(row.id, row);
+        for (const list of [keyword, semantic]) {
+          for (const [rank, row] of list.entries()) {
+            const previous = byId.get(row.id);
+            byId.set(row.id, {
+              ...row,
+              score: (previous?.score ?? 0) + 1 / (60 + rank + 1),
+            });
           }
         }
-        const results = [...byId.values()].slice(0, args.limit);
+        const results = [...byId.values()]
+          .sort((a, b) => b.score - a.score || a.id - b.id)
+          .slice(0, args.limit);
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["query"].response, {
             ok: true,
@@ -1413,19 +1341,16 @@ export default Cloudflare.Worker<{}>()(
     const insertProductRow = (input: InsertInput) =>
       Effect.gen(function* () {
         const result = yield* d1
-          .prepare(INSERT_SQL)
+          .prepare(`${INSERT_SQL} RETURNING *`)
           .bind(...insertParams(input))
-          .run();
-        const id = Number(result.meta.last_row_id);
-        const row = yield* fetchProductRow(input.repository, id);
-        if (!row) {
+          .first<JsonObject>();
+        if (result === null) {
           return yield* Effect.die(
-            new Error(`Inserted memory ${id} could not be read.`),
+            new Error("Insert did not return a memory."),
           );
         }
-        const memory = row;
-        yield* syncProductVector(memory);
-        return { id, row: memory };
+        const row = toProductRow(result);
+        return { id: row.id, row };
       });
 
     const fetchProductConflicts = (
@@ -1441,7 +1366,12 @@ export default Cloudflare.Worker<{}>()(
         if (ftsQuery === undefined) {
           return [];
         }
-        const rows = yield* fetchRankedProductRows(ftsQuery, repository, {}, 5);
+        const rows = yield* fetchRankedProductRows(
+          ftsQuery,
+          repository,
+          { status: "active" },
+          5,
+        );
         return scoreMemoryRows(rows, terms)
           .filter((candidate) => candidate.id !== excludeId)
           .slice(0, 5)
@@ -1518,6 +1448,7 @@ export default Cloudflare.Worker<{}>()(
       force?: boolean;
       upsert_threshold: number;
       upsertQuery: string;
+      provided: { memory_type?: MemoryType; certainty?: Certainty };
     }) =>
       Effect.gen(function* () {
         const tags = args.tags ?? "";
@@ -1552,7 +1483,15 @@ export default Cloudflare.Worker<{}>()(
         if (!strong) {
           return yield* forceCreateWithMatch(args, tags, context, info);
         }
-        return yield* applyStrongUpsert(args, tags, context, best, info);
+        return yield* applyStrongUpsert(
+          {
+            ...args,
+            memory_type: args.provided.memory_type,
+            certainty: args.provided.certainty,
+          },
+          best,
+          info,
+        );
       });
 
     const forceCreateWithMatch = (
@@ -1619,20 +1558,33 @@ export default Cloudflare.Worker<{}>()(
         certainty?: Certainty;
         expires_after_days?: number;
       },
-      tags: string,
-      context: string,
       best: { row: ReturnType<typeof scoredResultRow>; score: number },
       info: UpsertMatchInfo,
     ) =>
       Effect.gen(function* () {
+        const existing = yield* fetchProductRow(args.repository, best.row.id);
+        if (!existing || existing.status !== "active") {
+          return HttpServerResponse.jsonUnsafe(
+            { ok: false, error: "Match changed; retry." },
+            { status: 409 },
+          );
+        }
         const prospective = {
           content: args.content,
-          tags: args.tags ?? best.row.tags,
-          context: args.context ?? best.row.context,
-          memory_type: args.memory_type ?? best.row.memory_type,
-          status: best.row.status,
-          certainty: args.certainty ?? best.row.certainty,
+          tags: args.tags ?? existing.tags,
+          context: args.context ?? existing.context,
+          memory_type: args.memory_type ?? existing.memory_type,
+          status: existing.status,
+          certainty: args.certainty ?? existing.certainty,
         };
+        if (
+          args.expires_after_days !== undefined &&
+          prospective.memory_type !== "status"
+        ) {
+          return yield* badRequest(
+            "expires_after_days is only valid for status memories.",
+          );
+        }
         const size = embeddingSizeReport(embeddingTextForMemory(prospective));
         if (!size.within_budget) {
           return yield* badRequest(
@@ -1645,28 +1597,29 @@ export default Cloudflare.Worker<{}>()(
           context: args.context,
           memory_type: args.memory_type,
           certainty: args.certainty,
-          expires_after_days: args.expires_after_days,
-        });
-        if (update === undefined) {
-          return yield* Effect.die(
-            new Error("Upsert requires content to update."),
-          );
-        }
-        yield* d1
+          expires_after_days:
+            prospective.memory_type !== "status"
+              ? null
+              : args.expires_after_days,
+        })!; // Content is required, so updateSets always has a field.
+        const rowData = yield* d1
           .prepare(
-            `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ?`,
+            `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ? AND status = 'active' AND update_count = ? RETURNING *`,
           )
-          .bind(...update.params, args.repository, best.row.id)
-          .run();
-        const row = yield* fetchProductRow(args.repository, best.row.id);
-        if (!row) {
-          return yield* Effect.die(
-            new Error(`Updated memory ${best.row.id} could not be read.`),
+          .bind(
+            ...update.params,
+            args.repository,
+            best.row.id,
+            existing.update_count,
+          )
+          .first<JsonObject>();
+        if (rowData === null) {
+          return HttpServerResponse.jsonUnsafe(
+            { ok: false, error: "Memory changed concurrently; retry." },
+            { status: 409 },
           );
         }
-        void tags;
-        void context;
-        yield* syncProductVector(row);
+        const row = toProductRow(rowData);
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["add"].response, {
             ok: true,
@@ -1692,7 +1645,8 @@ export default Cloudflare.Worker<{}>()(
         const args = normalizeMemoryAddArgs(input.value);
         if (
           args.expires_after_days !== undefined &&
-          args.memory_type !== "status"
+          args.memory_type !== "status" &&
+          args.upsert_match === undefined
         ) {
           return yield* badRequest(
             "expires_after_days is only valid for status memories.",
@@ -1711,7 +1665,11 @@ export default Cloudflare.Worker<{}>()(
             expires_after_days: args.expires_after_days,
           });
         }
-        return yield* upsertProductAdd({ ...args, upsertQuery });
+        return yield* upsertProductAdd({
+          ...args,
+          upsertQuery,
+          provided: input.value,
+        });
       });
 
     const handleProductUpdate = (body: JsonValue) =>
@@ -1860,10 +1818,27 @@ export default Cloudflare.Worker<{}>()(
         if (invalid !== undefined) {
           return yield* badRequest(invalid);
         }
+        if (matched !== undefined && existing.status !== "active") {
+          return HttpServerResponse.jsonUnsafe(
+            { ok: false, error: "Match is no longer active; retry." },
+            { status: 409 },
+          );
+        }
+        if (
+          fields.superseded_by !== undefined &&
+          !(yield* fetchProductRow(repository, fields.superseded_by))
+        ) {
+          return yield* badRequest(
+            "Replacement must exist in the same repository.",
+          );
+        }
         const size = embeddingSizeReport(
           prospectiveUpdateText(existing, fields),
         );
-        if (!size.within_budget) {
+        if (
+          (fields.status ?? existing.status) === "active" &&
+          !size.within_budget
+        ) {
           return yield* badRequest(
             `Document text must be at most 512 tokens for embedding.`,
           );
@@ -1897,44 +1872,43 @@ export default Cloudflare.Worker<{}>()(
       },
     ) =>
       Effect.gen(function* () {
-        const update = updateSets(fields);
-        if (update === undefined) {
-          return yield* HttpServerResponse.json(
-            encodeResponse(PRODUCT_OPERATIONS["update"].response, {
-              ok: true,
-              result: {
-                written_to: repository,
-                id: targetId,
-                memory: existing,
-                size: outcome.size,
-                matched: outcome.matched,
-              },
-            }),
-          );
+        const update = updateSets({
+          ...fields,
+          expires_after_days:
+            (fields.memory_type ?? existing.memory_type) !== "status" &&
+            existing.expires_after_days !== null
+              ? null
+              : fields.expires_after_days,
+        });
+        let row = existing;
+        if (update !== undefined) {
+          const rowData = yield* d1
+            .prepare(
+              `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ? AND update_count = ?${outcome.matched !== undefined ? " AND status = 'active'" : ""} RETURNING *`,
+            )
+            .bind(...update.params, repository, targetId, existing.update_count)
+            .first<JsonObject>();
+          if (rowData === null) {
+            return HttpServerResponse.jsonUnsafe(
+              { ok: false, error: "Memory changed concurrently; retry." },
+              { status: 409 },
+            );
+          }
+          row = toProductRow(rowData);
         }
-        yield* d1
-          .prepare(
-            `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ?`,
-          )
-          .bind(...update.params, repository, targetId)
-          .run();
-        const row = yield* fetchProductRow(repository, targetId);
-        if (!row) {
-          return yield* Effect.die(
-            new Error(`Updated memory ${targetId} could not be read.`),
-          );
+        const result: MemoryWriteResult = {
+          written_to: repository,
+          id: targetId,
+          memory: row,
+          size: outcome.size,
+        };
+        if (outcome.matched !== undefined) {
+          Object.assign(result, { matched: outcome.matched });
         }
-        yield* syncProductVector(row);
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS["update"].response, {
             ok: true,
-            result: {
-              written_to: repository,
-              id: targetId,
-              memory: row,
-              size: outcome.size,
-              matched: outcome.matched,
-            },
+            result,
           }),
         );
       });
@@ -1957,20 +1931,64 @@ export default Cloudflare.Worker<{}>()(
       size: handleProductSize,
       "list-repositories": handleProductListRepositories,
     } satisfies Record<ProductRoute, RestHandlerFn>;
+    const wakeSafely = wake.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Vector wake failed; cron will retry.", cause),
+      ),
+    );
     const handleProduct = (route: ProductRoute, body: JsonValue) =>
-      productHandlers[route](body);
+      productHandlers[route](body).pipe(Effect.tap(() => wakeSafely));
 
     const restHandlers = {
       expectedToken,
-      handleQuery,
-      handleMigration,
-      handleMigrationLinks,
-      handleVectorizeUpsert,
+      handleQuery: (body) =>
+        handleQuery(body).pipe(Effect.tap(() => wakeSafely)),
+      handleMigration: (body) =>
+        handleMigration(body).pipe(Effect.tap(() => wakeSafely)),
+      handleMigrationLinks: (body) =>
+        handleMigrationLinks(body).pipe(Effect.tap(() => wakeSafely)),
+      handleVectorizeUpsert: (body) =>
+        handleVectorizeUpsert(body).pipe(Effect.tap(() => wakeSafely)),
       handleVectorizeSearch,
-      handleVectorizeDelete,
+      handleVectorizeDelete: (body) =>
+        handleVectorizeDelete(body).pipe(Effect.tap(() => wakeSafely)),
       handleProduct,
     } satisfies RestHandlers;
 
+    return restHandlers;
+  });
+
+export default Cloudflare.Worker<{}>()(
+  "machine-memory-api",
+  { main: import.meta.url, name: apiName, workersDev: false },
+  Effect.gen(function* () {
+    const vectorIndex = yield* VectorIndex;
+    const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
+    const vectorize = yield* Cloudflare.Vectorize.SearchIndex(vectorIndex);
+    const ai = yield* Cloudflare.Workers.AI();
+    const expectedToken = yield* Config.Redacted(
+      "MACHINE_MEMORY_DB_TOKEN",
+    ).pipe(Effect.orDie);
+    const coordinator = yield* VectorCoordinator;
+    const wake = coordinator
+      .getByName("memory-index")
+      .wake()
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logError(
+            "Vector coordinator wake failed; cron will retry.",
+            cause,
+          ),
+        ),
+      );
+    yield* Cloudflare.Workers.cron("*/5 * * * *", () => wake);
+    const restHandlers = yield* createApiHandlers({
+      d1,
+      vectorize,
+      ai,
+      expectedToken,
+      wake,
+    });
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
@@ -1993,5 +2011,6 @@ export default Cloudflare.Worker<{}>()(
     Effect.provide(Cloudflare.D1.QueryDatabaseBinding),
     Effect.provide(Cloudflare.Vectorize.SearchIndexBinding),
     Effect.provide(Cloudflare.Workers.AIBinding),
+    Effect.provide(Cloudflare.Workers.CronEventSourceLive),
   ),
 );

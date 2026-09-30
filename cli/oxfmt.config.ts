@@ -4,7 +4,7 @@ import { fmtBase } from "../oxfmt.config.ts";
 
 export default defineConfig({
   ...fmtBase,
-  experimentalSortPackageJson: {
+  sortPackageJson: {
     sortScripts: true,
   },
   ignorePatterns: [],

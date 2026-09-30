@@ -22,11 +22,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check CLI
-        run: bun run --cwd cli check
+      - name: Lint all workspaces
+        run: bun run lint:global
 
-      - name: Typecheck CLI
-        run: bun run --cwd cli typecheck
+      - name: Typecheck all workspaces
+        run: bun run typecheck:global
+
+      - name: Test all workspaces
+        run: bun run test:global
 
       - name: Build host binary
         run: bun run --cwd cli build

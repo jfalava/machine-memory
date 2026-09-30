@@ -10,18 +10,17 @@ sidebar:
 
 ```sh
 machine-memory local export [local-db-path] --remote
+machine-memory local export [local-db-path] --source-id workstation-backup --remote
 ```
 
 The command reads the selected SQLite database without modifying it, selects memories belonging to the current Git repository, and exports them into the configured remote D1 database. If the path is omitted, the configured local database path is used, falling back to `machine-memory.db` in the current directory.
 
-The destination requires remote credentials from [`remote setup`](/human/remote/setup) or [`remote provision`](/human/remote/provision). Re-running the command is safe: exact active duplicates are skipped and existing remote records are not deleted or overwritten.
+The destination requires remote credentials from [`remote setup`](/human/remote/setup) or [`remote provision`](/human/remote/provision). Re-running the command is safe: each source database ID maps to its original remote ID regardless of status. Different source records retain distinct metadata even when their content matches. Existing remote records are not deleted or overwritten.
+
+The default source identity is a hash of the hostname and resolved database path. Supply a stable `--source-id` when moving the same database between machines or paths, and keep it distinct from other databases. Changing this identity starts a new import rather than resuming the previous one.
 
 ## After export
 
-The export writes D1 records but does not backfill Vectorize embeddings. Run the existing [`reindex`](/human/reindex) command afterward:
-
-```sh
-machine-memory reindex --remote
-```
+The export commits D1 records and queues vector indexing together. Semantic search catches up asynchronously; [`reindex`](/human/reindex) is only needed for explicit repair or index replacement.
 
 The command preserves memory metadata and repairs `superseded_by` links when the corresponding source records are available.

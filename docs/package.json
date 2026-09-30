@@ -1,6 +1,6 @@
 {
   "name": "@machine-memory/docs",
-  "version": "0.20.1",
+  "version": "0.21.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -54,7 +54,8 @@
     "prettier-plugin-astro": "1.0.1",
     "satteri": "^0.10.5",
     "tailwindcss": "4.3.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "wrangler": "catalog:build"
   },
   "optionalDependencies": {
     "@bruits/satteri-darwin-arm64": "0.10.5",
