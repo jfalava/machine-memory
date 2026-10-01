@@ -53,7 +53,9 @@ const providerModule: Promise<
  * Construction is async because the provider package is loaded lazily at
  * request time, inside the Worker runtime.
  */
-export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
+export function createOauthProvider(
+  resource: string,
+): Promise<OAuthProvider<OAuthEnv>> {
   return providerModule.then((mod) => {
     if (mod === undefined) {
       throw new Error(
@@ -104,6 +106,7 @@ export function createOauthProvider(): Promise<OAuthProvider<OAuthEnv>> {
       clientRegistrationEndpoint: CLIENT_REGISTRATION_ENDPOINT,
       scopesSupported: ["mcp:read", "mcp:write"],
       resourceMetadata: {
+        resource,
         scopes_supported: ["mcp:read", "mcp:write"],
         resource_name: "Machine Memory MCP",
       },

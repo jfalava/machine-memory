@@ -5,6 +5,10 @@ import {
 
 export default {
   async fetch(request, env, ctx) {
-    return (await createOauthProvider()).fetch(request, env, ctx);
+    return (await createOauthProvider(new URL("/mcp", request.url).href)).fetch(
+      request,
+      env,
+      ctx,
+    );
   },
 } satisfies ExportedHandler<OAuthEnv>;

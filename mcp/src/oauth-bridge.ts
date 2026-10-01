@@ -139,7 +139,10 @@ export function handleOAuthPath(
     const oauthEnv = yield* buildOAuthEnv;
     const execCtx = yield* Cloudflare.WorkerExecutionContext;
     const webRequest = yield* HttpServerRequest.toWeb(request);
-    const provider = yield* Effect.promise(() => createOauthProvider());
+    // The private MCP worker receives the original public URL from the router.
+    const provider = yield* Effect.promise(() =>
+      createOauthProvider(new URL("/mcp", webRequest.url).href),
+    );
     return yield* Effect.promise(() =>
       provider.fetch(webRequest, oauthEnv, execCtx.raw),
     );

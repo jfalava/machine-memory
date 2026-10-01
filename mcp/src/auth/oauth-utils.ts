@@ -12,9 +12,7 @@ export const AuthRequestSchema = Schema.Struct({
   state: Schema.String,
   codeChallenge: Schema.optional(Schema.String),
   codeChallengeMethod: Schema.optional(Schema.String),
-  resource: Schema.optional(
-    Schema.Union([Schema.String, Schema.mutable(Schema.Array(Schema.String))]),
-  ),
+  resource: Schema.optional(Schema.String),
   issuer: Schema.optional(Schema.String),
 });
 

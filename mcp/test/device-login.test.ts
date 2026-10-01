@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
 import { build } from "esbuild";
-import { Miniflare } from "miniflare";
+import { Miniflare, Response as MiniflareResponse } from "miniflare";
 import {
   afterAll,
   beforeAll,
@@ -59,77 +59,113 @@ beforeAll(async () => {
     host: "127.0.0.1",
     workers: [
       {
-        name: "router",
-        modules: true,
-        script: router,
-        compatibilityDate: "2026-07-30",
-        serviceBindings: {
-          MCP: "mcp",
-          API: async () => new Response("Unexpected API call", { status: 500 }),
+        config: {
+          name: "router",
+          manifest: {
+            mainModule: "router.mjs",
+            modules: { "router.mjs": { type: "esm", contents: router } },
+          },
+          compatibilityDate: "2026-07-30",
+          env: {
+            MCP: { type: "worker", worker: "mcp" },
+            API: {
+              type: "fetcher",
+              handler: async () =>
+                new MiniflareResponse("Unexpected API call", { status: 500 }),
+            },
+          },
         },
       },
       {
-        name: "mcp",
-        modules: true,
-        script: oauth,
-        compatibilityDate: "2026-07-30",
-        compatibilityFlags: ["nodejs_compat"],
-        kvNamespaces: ["OAUTH_KV"],
-        d1Databases: ["OAUTH_DEVICES"],
-        bindings: {
-          apiToken: "test-only",
-          MACHINE_MEMORY_GITHUB_CLIENT_ID: "test-client",
-          MACHINE_MEMORY_GITHUB_CLIENT_SECRET: "test-secret",
-          MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: "42",
-          MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "test-cookie-signing-key",
-        },
-        serviceBindings: {
-          api: async (request: Request) => {
-            const path = new URL(request.url).pathname;
-            productCalls.push(path);
-            if (path === "/product/delete") {
-              return Response.json({
-                ok: true,
-                result: {
-                  deleted_from: "o/r",
-                  id: 7,
-                  deleted: true,
-                  existed: true,
-                },
-              });
-            }
-            if (path === "/product/list-repositories") {
-              return Response.json({
-                ok: true,
-                result: {
-                  repositories: [],
-                  count: 0,
-                  total_count: 0,
-                  offset: 0,
-                  limit: 100,
-                  has_more: false,
-                },
-              });
-            }
-            return new Response("Unexpected API call", { status: 500 });
+        config: {
+          name: "mcp",
+          manifest: {
+            mainModule: "oauth.mjs",
+            modules: { "oauth.mjs": { type: "esm", contents: oauth } },
+          },
+          compatibilityDate: "2026-07-30",
+          compatibilityFlags: ["nodejs_compat"],
+          env: {
+            OAUTH_KV: { type: "kv", id: "OAUTH_KV" },
+            OAUTH_DEVICES: { type: "d1", id: "OAUTH_DEVICES" },
+            apiToken: { type: "text", value: "test-only" },
+            MACHINE_MEMORY_GITHUB_CLIENT_ID: {
+              type: "text",
+              value: "test-client",
+            },
+            MACHINE_MEMORY_GITHUB_CLIENT_SECRET: {
+              type: "text",
+              value: "test-secret",
+            },
+            MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: {
+              type: "text",
+              value: "42",
+            },
+            MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: {
+              type: "text",
+              value: "test-cookie-signing-key",
+            },
+            api: {
+              type: "fetcher",
+              handler: async (request) => {
+                const path = new URL(request.url).pathname;
+                productCalls.push(path);
+                if (path === "/product/delete") {
+                  return MiniflareResponse.json({
+                    ok: true,
+                    result: {
+                      deleted_from: "o/r",
+                      id: 7,
+                      deleted: true,
+                      existed: true,
+                    },
+                  });
+                }
+                if (path === "/product/list-repositories") {
+                  return MiniflareResponse.json({
+                    ok: true,
+                    result: {
+                      repositories: [],
+                      count: 0,
+                      total_count: 0,
+                      offset: 0,
+                      limit: 100,
+                      has_more: false,
+                    },
+                  });
+                }
+                return new MiniflareResponse("Unexpected API call", {
+                  status: 500,
+                });
+              },
+            },
           },
         },
-        outboundService: async (request: Request) => {
-          outbound.push(request.url);
-          if (request.url === "https://github.com/login/oauth/access_token") {
-            return new Response("access_token=github-test-token", {
-              headers: { "content-type": "application/x-www-form-urlencoded" },
-            });
-          }
-          if (request.url === "https://api.github.com/user") {
-            return Response.json({
-              id: githubUserId,
-              login: "test-user",
-              name: "Test",
-              email: "test@example.com",
-            });
-          }
-          throw new Error(`Unexpected outbound fetch: ${request.url}`);
+        dev: {
+          outboundService: {
+            type: "fetcher",
+            handler: async (request) => {
+              outbound.push(request.url);
+              if (
+                request.url === "https://github.com/login/oauth/access_token"
+              ) {
+                return new MiniflareResponse("access_token=github-test-token", {
+                  headers: {
+                    "content-type": "application/x-www-form-urlencoded",
+                  },
+                });
+              }
+              if (request.url === "https://api.github.com/user") {
+                return MiniflareResponse.json({
+                  id: githubUserId,
+                  login: "test-user",
+                  name: "Test",
+                  email: "test@example.com",
+                });
+              }
+              throw new Error(`Unexpected outbound fetch: ${request.url}`);
+            },
+          },
         },
       },
     ],
@@ -320,6 +356,47 @@ async function callTool(token: string, name: string) {
 }
 
 describe("headless login through the public router and real OAuth provider", () => {
+  test("discovery identifies the public MCP resource on each router origin", async () => {
+    for (const origin of [ORIGIN, "https://other-memory.test"]) {
+      const response = await mf.dispatchFetch(
+        `${origin}/.well-known/oauth-protected-resource/mcp`,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        resource: `${origin}/mcp`,
+        authorization_servers: [origin],
+        scopes_supported: ["mcp:read", "mcp:write"],
+        resource_name: "Machine Memory MCP",
+      });
+    }
+  });
+
+  test("tokens cannot be used or refreshed on another router origin", async () => {
+    const tokens = await issueToken("mcp:read");
+    const otherOrigin = "https://other-memory.test";
+    const denied = await mf.dispatchFetch(`${otherOrigin}/mcp`, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+    expect(denied.status).toBe(401);
+    expect(productCalls).toEqual([]);
+    const refresh = await mf.dispatchFetch(`${otherOrigin}/token`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        client_id: tokens.clientId,
+        refresh_token: tokens.refresh_token,
+        resource: `${otherOrigin}/mcp`,
+      }).toString(),
+    });
+    expect(refresh.status).toBe(400);
+    expect(await refresh.json()).toMatchObject({ error: "invalid_grant" });
+    expect(
+      await callTool(tokens.access_token, "list_repositories"),
+    ).not.toContain('"isError":true');
+    expect(productCalls).toEqual(["/product/list-repositories"]);
+  });
+
   test("read-only access tokens deny delete before the API call but allow reads", async () => {
     const tokens = await issueToken("mcp:read");
     expect(tokens.scope).toBe("mcp:read");
