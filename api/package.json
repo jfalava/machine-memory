@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "bun-types": "catalog:types",
-    "miniflare": "4.20260730.0",
+    "miniflare": "5.20260930.0-alpha",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
