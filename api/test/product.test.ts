@@ -29,10 +29,27 @@ const wake = vi.fn(() => undefined);
 beforeAll(async () => {
   mf = new Miniflare({
     host: "127.0.0.1",
-    modules: true,
-    script: "export default { fetch() { return new Response('test'); } }",
-    compatibilityDate: "2026-07-30",
-    d1Databases: ["DB"],
+    workers: [
+      {
+        config: {
+          name: "api-test",
+          manifest: {
+            mainModule: "worker.mjs",
+            modules: {
+              "worker.mjs": {
+                type: "esm",
+                contents:
+                  "export default { fetch() { return new Response('test'); } }",
+              },
+            },
+          },
+          compatibilityDate: "2026-07-30",
+          env: {
+            DB: { type: "d1", id: "DB" },
+          },
+        },
+      },
+    ],
   });
   db = await mf.getD1Database("DB");
   // D1 exec splits on lines. Keep each complete trigger as one prepared statement.
