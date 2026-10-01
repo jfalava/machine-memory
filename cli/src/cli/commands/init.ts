@@ -1,6 +1,8 @@
+import { relative, resolve } from "node:path";
+
 import { Effect } from "effect";
 import pc from "picocolors";
-import { relative, resolve } from "node:path";
+
 import { DB_PATH } from "../../constants";
 import {
   databaseConfig,
@@ -8,13 +10,13 @@ import {
   validateDatabaseBackendFlags,
   type DatabaseBackendFlags,
 } from "../../database-config";
-import type { CommandContext } from "../runtime/context";
 import { CommandError } from "../../effect/errors";
-import { remoteProvision, remoteSetup } from "./remote";
+import type { CommandContext } from "../runtime/context";
 import {
   replaceMemoryBlock,
   type AgentsMemoryBackend,
 } from "./agents-md-content";
+import { remoteProvision, remoteSetup } from "./remote";
 
 export function handleInitCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
@@ -78,15 +80,12 @@ function resolveInitBackend(
     const mcp = args.includes("--mcp");
     const selected = [local, remote, mcp].filter(Boolean).length;
     if (selected !== 1) {
-      return yield* Effect.fail(
-        new CommandError({
-          message:
-            "Choose exactly one init target: --local, --remote, or --mcp.",
-          command: "init",
-          cause: undefined,
-          hint: "machine-memory init (--local|--remote|--mcp)",
-        }),
-      );
+      return yield* new CommandError({
+        message: "Choose exactly one init target: --local, --remote, or --mcp.",
+        command: "init",
+        cause: undefined,
+        hint: "machine-memory init (--local|--remote|--mcp)",
+      });
     }
     if (mcp) {
       return "mcp";
@@ -150,14 +149,12 @@ function offerFirstRunSetup(
     } else if (choice === "create") {
       yield* remoteProvision(commandCtx);
     } else if (choice !== "skip") {
-      yield* Effect.fail(
-        new CommandError({
-          message: "Choose setup, create, or skip during first-run setup.",
-          command: "init",
-          cause: undefined,
-          hint: "Answer setup, create, or skip.",
-        }),
-      );
+      return yield* new CommandError({
+        message: "Choose setup, create, or skip during first-run setup.",
+        command: "init",
+        cause: undefined,
+        hint: "Answer setup, create, or skip.",
+      });
     }
   });
 }

@@ -51,10 +51,11 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as SQL from "alchemy/SQL/D1";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
-import type * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import type * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 import { apiName } from "../../iac/src/config";
 import { Database } from "../../iac/src/database";
@@ -750,15 +751,13 @@ export const createApiHandlers = ({
       });
 
     const notFoundProduct = (id: number, repository: string) =>
-      Effect.gen(function* () {
-        return yield* HttpServerResponse.json(
-          encodeResponse(ErrorBodySchema, {
-            ok: false,
-            error: `No memory found with id ${id} in repository '${repository}'.`,
-          }),
-          { status: 404 },
-        );
-      });
+      HttpServerResponse.json(
+        encodeResponse(ErrorBodySchema, {
+          ok: false,
+          error: `No memory found with id ${id} in repository '${repository}'.`,
+        }),
+        { status: 404 },
+      );
 
     const handleProductDiff = (body: JsonValue) =>
       Effect.gen(function* () {
@@ -1078,14 +1077,12 @@ export const createApiHandlers = ({
       });
 
     const emptyQueryResponse = () =>
-      Effect.gen(function* () {
-        return yield* HttpServerResponse.json(
-          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
-            ok: true,
-            result: { count: 0, results: [] },
-          }),
-        );
-      });
+      HttpServerResponse.json(
+        encodeResponse(PRODUCT_OPERATIONS["query"].response, {
+          ok: true,
+          result: { count: 0, results: [] },
+        }),
+      );
 
     const semanticProductResponse = (args: {
       repository: string;
@@ -2007,9 +2004,13 @@ export default Cloudflare.Worker<{}>()(
       ),
     };
   }).pipe(
-    Effect.provide(Cloudflare.D1.QueryDatabaseBinding),
-    Effect.provide(Cloudflare.Vectorize.SearchIndexBinding),
-    Effect.provide(Cloudflare.Workers.AIBinding),
-    Effect.provide(Cloudflare.Workers.CronEventSourceLive),
+    Effect.provide(
+      Layer.mergeAll(
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Vectorize.SearchIndexBinding,
+        Cloudflare.Workers.AIBinding,
+        Cloudflare.Workers.CronEventSourceLive,
+      ),
+    ),
   ),
 );

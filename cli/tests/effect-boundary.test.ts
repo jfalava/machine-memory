@@ -42,8 +42,8 @@ describe("Effect application boundaries", () => {
       return Effect.succeed([]);
     };
     const database: MemoryDatabaseApi = {
-      run: () => Effect.succeed(undefined),
-      get: () => Effect.succeed(undefined),
+      run: () => Effect.void.pipe(Effect.as(undefined)),
+      get: () => Effect.void.pipe(Effect.as(undefined)),
       all,
     };
     const neighborhood = deriveNeighborhoodFromFiles([

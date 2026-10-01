@@ -312,7 +312,8 @@ function parseImportFile(
     const raw = yield* fileSystem.readFileString(filePath);
     const parsed = yield* Effect.try({
       try: (): JsonValue => parseJson(raw),
-      catch: (cause) => new Error(`Failed to parse JSON: ${String(cause)}`),
+      catch: (cause) =>
+        commandError("import", `Failed to parse JSON: ${String(cause)}`, cause),
     });
     if (!isJsonArray(parsed)) {
       usageError("Import file must contain a JSON array.");
@@ -403,11 +404,9 @@ function preflightImport(
           reason: normalized.reason,
           ...normalized.extra,
         };
-        return yield* Effect.fail(
-          commandError(
-            "import",
-            `Import preflight failed at index ${index}: ${normalized.reason}`,
-          ),
+        return yield* commandError(
+          "import",
+          `Import preflight failed at index ${index}: ${normalized.reason}`,
         );
       }
       const plan: ImportPlan = {
@@ -420,8 +419,9 @@ function preflightImport(
       };
       if (plan.sourceId !== undefined) {
         if (sources.has(plan.sourceId)) {
-          return yield* Effect.fail(
-            commandError("import", `Duplicate source id ${plan.sourceId}.`),
+          return yield* commandError(
+            "import",
+            `Duplicate source id ${plan.sourceId}.`,
           );
         }
         sources.set(plan.sourceId, plan);
@@ -581,11 +581,9 @@ export function handleImportCommand(commandCtx: CommandContext) {
             (replacementId === undefined ||
               !(yield* getMemoryById(database, replacementId)))
           ) {
-            return yield* Effect.fail(
-              commandError(
-                "import",
-                `Replacement disappeared before index ${plan.index}.`,
-              ),
+            return yield* commandError(
+              "import",
+              `Replacement disappeared before index ${plan.index}.`,
             );
           }
           const inserted = yield* runImportInsert(database, {
@@ -600,11 +598,9 @@ export function handleImportCommand(commandCtx: CommandContext) {
           };
           plan.targetId = id;
           if (id === undefined) {
-            return yield* Effect.fail(
-              commandError(
-                "import",
-                "Insert committed but returned no allocated id; stopping import.",
-              ),
+            return yield* commandError(
+              "import",
+              "Insert committed but returned no allocated id; stopping import.",
             );
           }
         }).pipe(

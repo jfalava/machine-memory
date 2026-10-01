@@ -1,5 +1,6 @@
 import * as Cloudflare from "alchemy/Cloudflare";
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
+import * as Clock from "effect/Clock";
 
 import { Database } from "../../iac/src/database";
 import { VectorIndex } from "../../iac/src/vectorize";
@@ -19,7 +20,7 @@ export class VectorCoordinator extends Cloudflare.DurableObject<VectorCoordinato
       const wake = () =>
         Effect.gen(function* () {
           const alarm = yield* state.storage.getAlarm();
-          const next = Date.now() + 1000;
+          const next = (yield* Clock.currentTimeMillis) + 1000;
           if (alarm === null || alarm > next) {
             yield* state.storage.setAlarm(next);
           }
@@ -29,7 +30,9 @@ export class VectorCoordinator extends Cloudflare.DurableObject<VectorCoordinato
         alarm: () =>
           Effect.gen(function* () {
             // Schedule continuation before external I/O, including crashes and long outages.
-            yield* state.storage.setAlarm(Date.now() + 60_000);
+            yield* state.storage.setAlarm(
+              (yield* Clock.currentTimeMillis) + 60_000,
+            );
             const [rawDb, rawIndex, rawAi] = yield* Effect.all([
               db.raw,
               index.raw,
@@ -46,8 +49,12 @@ export class VectorCoordinator extends Cloudflare.DurableObject<VectorCoordinato
       };
     });
   }).pipe(
-    Effect.provide(Cloudflare.D1.QueryDatabaseBinding),
-    Effect.provide(Cloudflare.Vectorize.SearchIndexBinding),
-    Effect.provide(Cloudflare.Workers.AIBinding),
+    Effect.provide(
+      Layer.mergeAll(
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Vectorize.SearchIndexBinding,
+        Cloudflare.Workers.AIBinding,
+      ),
+    ),
   ),
 ) {}

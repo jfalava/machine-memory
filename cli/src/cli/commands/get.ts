@@ -1,6 +1,9 @@
 import { Effect } from "effect";
+
 import { printJson, usageError } from "../../cli-utils";
 import type { JsonObject } from "../../json";
+import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printBriefLines, printCommandOutput } from "../runtime/output";
 import {
   getMemoryById,
   normalizeCertaintyValue,
@@ -8,8 +11,6 @@ import {
   parseTags,
   stringValue,
 } from "../shared";
-import { requireDatabase, type CommandContext } from "../runtime/context";
-import { printBriefLines, printCommandOutput } from "../runtime/output";
 
 function minimalGetSummary(row: JsonObject): JsonObject {
   return {
@@ -30,8 +31,8 @@ export function handleGetCommand(commandCtx: CommandContext) {
       usageError("Usage: get <id>");
     }
     const ids = parseIdSpec(idSpec);
-    const fetched = yield* Effect.all(
-      ids.map((id) => getMemoryById(database, id)),
+    const fetched = yield* Effect.forEach(ids, (id) =>
+      getMemoryById(database, id),
     );
     const rows = fetched.filter((row): row is JsonObject => row !== null);
     const missingIds = ids.filter(

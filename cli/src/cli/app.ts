@@ -1,6 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
+import * as Layer from "effect/Layer";
 import pc from "picocolors";
 
 import { printJson } from "../cli-utils";
@@ -30,13 +31,11 @@ const rootCommand = Command.make("machine-memory", {}, () =>
         helpPayload(),
       ),
     );
-    return yield* Effect.fail(
-      new CommandError({
-        message: "A command is required. Run 'machine-memory help' for usage.",
-        command: "machine-memory",
-        cause: undefined,
-      }),
-    );
+    return yield* new CommandError({
+      message: "A command is required. Run 'machine-memory help' for usage.",
+      command: "machine-memory",
+      cause: undefined,
+    });
   }),
 ).pipe(
   Command.withSubcommands([...builtinCommands(), ...featureCommands]),
@@ -183,20 +182,20 @@ function isReindexSummaryFailure(
 ): boolean {
   return (
     command === "reindex" &&
-    error instanceof MemoryDatabaseError &&
+    Schema.is(MemoryDatabaseError)(error) &&
     error.operation === "vectorize/reindex"
   );
 }
 
 function renderMachineError(error: Error): void {
-  if (error instanceof MemoryDatabaseError) {
+  if (Schema.is(MemoryDatabaseError)(error)) {
     printJson({
       error: error.message,
       operation: error.operation,
     });
     return;
   }
-  if (error instanceof CommandError) {
+  if (Schema.is(CommandError)(error)) {
     if (HUMAN_COMMANDS.has(error.command)) {
       renderHumanCommandError(error);
       return;
@@ -283,8 +282,12 @@ export function runCli(args: ReadonlyArray<string>) {
     });
   }
   return Command.runWith(rootCommand, { version: VERSION })(args).pipe(
-    Effect.provide(CliOutput.layer(formatterFor(commandPathName, pretty))),
-    Effect.provide(BunServices.layer),
+    Effect.provide(
+      Layer.mergeAll(
+        CliOutput.layer(formatterFor(commandPathName, pretty)),
+        BunServices.layer,
+      ),
+    ),
     Effect.catchCause((cause) =>
       Effect.sync(() => {
         // usageError throws inside Effect callbacks; those failures are defects,

@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "abortControllerInEffect": "error",
+          "allOfMapToForEach": "error",
+          "cryptoRandomUUID": "off",
+          "cryptoRandomUUIDInEffect": "error",
+          "effectSucceedWithVoid": "error",
+          "extendsNativeError": "off",
+          "flatMapConditionalToFilterOrFail": "error",
+          "globalConsole": "off",
+          "globalConsoleInEffect": "off",
+          "globalDate": "off",
+          "globalDateInEffect": "error",
+          "globalFetch": "off",
+          "globalFetchInEffect": "off",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "globalRandom": "error",
+          "globalRandomInEffect": "error",
+          "globalTimers": "off",
+          "globalTimersInEffect": "error",
+          "instanceOfSchema": "error",
+          "missingReturnYieldStar": "error",
+          "multipleEffectProvide": "error",
+          "newPromise": "off",
+          "nodeBuiltinImport": "off",
+          "preferSchemaOverJson": "off",
+          "processEnv": "off",
+          "processEnvInEffect": "off",
+          "schemaNumber": "off",
+          "schemaSync": "off",
+          "unnecessaryFailYieldableError": "error"
+        }
+      }
+    ]
+  }
+}

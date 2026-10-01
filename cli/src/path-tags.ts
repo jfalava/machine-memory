@@ -1,5 +1,7 @@
-import { Effect, FileSystem } from "effect";
 import { dirname, resolve } from "node:path";
+
+import { Effect, FileSystem, Schema } from "effect";
+
 import { CommandError } from "./effect/errors";
 import { jsonObject, jsonStringArray, parseJson } from "./json";
 
@@ -69,7 +71,7 @@ export function loadPathTagMap(
     return next;
   }).pipe(
     Effect.mapError((cause) =>
-      cause instanceof CommandError
+      Schema.is(CommandError)(cause)
         ? cause
         : new CommandError({
             message: "Unable to read path tag map.",

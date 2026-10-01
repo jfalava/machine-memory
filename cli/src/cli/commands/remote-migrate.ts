@@ -177,12 +177,10 @@ export function handleLocalExport(context: CommandContext) {
         ),
     });
     if (remote.kind !== "remote") {
-      return yield* Effect.fail(
-        migrationCommandError(
-          "Local export requires configured remote credentials.",
-          undefined,
-          "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN, or run machine-memory remote setup.",
-        ),
+      return yield* migrationCommandError(
+        "Local export requires configured remote credentials.",
+        undefined,
+        "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN, or run machine-memory remote setup.",
       );
     }
 

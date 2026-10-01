@@ -1,6 +1,8 @@
-import { Effect } from "effect";
 import { resolve, relative, sep, dirname as pathDirname } from "node:path";
+
+import { Effect, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
+
 import { getFlagValue, hasFlag, usageError } from "../cli-utils";
 import {
   CERTAINTY_LEVELS,
@@ -248,24 +250,22 @@ export function parseContentFromFileFlag(
 ): Effect.Effect<string | undefined, CommandError> {
   const path = getFlagValue(args, "--from-file");
   if (path === undefined) {
-    return Effect.succeed(undefined);
+    return Effect.void.pipe(Effect.as(undefined));
   }
   const resolvedPath = resolve(process.cwd(), path);
   return Effect.gen(function* () {
     if (!(yield* fileSystem.exists(resolvedPath))) {
-      return yield* Effect.fail(
-        new CommandError({
-          message: `File not found: ${path}`,
-          command: "cli",
-          cause: undefined,
-        }),
-      );
+      return yield* new CommandError({
+        message: `File not found: ${path}`,
+        command: "cli",
+        cause: undefined,
+      });
     }
     const bytes = yield* fileSystem.readFile(resolvedPath);
     return new TextDecoder().decode(bytes);
   }).pipe(
     Effect.mapError((cause) =>
-      cause instanceof CommandError
+      Schema.is(CommandError)(cause)
         ? cause
         : new CommandError({
             message: `Unable to read file: ${path}`,
@@ -864,7 +864,7 @@ export function collectDirectoriesEffect(
     return directories;
   }).pipe(
     Effect.mapError((cause) =>
-      cause instanceof CommandError
+      Schema.is(CommandError)(cause)
         ? cause
         : new CommandError({
             message: "Unable to inspect project directories.",

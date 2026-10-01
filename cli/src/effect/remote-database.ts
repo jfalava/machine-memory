@@ -5,6 +5,7 @@ import {
   type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
 import { Effect, Layer } from "effect";
+
 import type { SqlQueryBinding } from "../db";
 import {
   jsonObject,
@@ -13,10 +14,10 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../json";
+import { repositoryForCurrentDirectory } from "../repository";
 import { MemoryDatabase, type MemoryDatabaseApi } from "./database";
 import { MemoryDatabaseError } from "./errors";
 import { remoteVectorApi } from "./vectorize";
-import { repositoryForCurrentDirectory } from "../repository";
 
 type RemoteQueryOperation = "run" | "get" | "all";
 
@@ -117,15 +118,13 @@ function remoteApi(url: string, token: string | undefined): MemoryDatabaseApi {
     get: (sql, params = []) => query(url, token, "get", sql, params),
     all: (sql, params = []) =>
       query(url, token, "all", sql, params).pipe(
-        Effect.flatMap((result) =>
-          Array.isArray(result)
-            ? Effect.succeed(result)
-            : Effect.fail(
-                remoteError(
-                  "all",
-                  new Error("Remote database returned a non-array result."),
-                ),
-              ),
+        Effect.filterOrFail(
+          (result): result is JsonValue[] => Array.isArray(result),
+          () =>
+            remoteError(
+              "all",
+              new Error("Remote database returned a non-array result."),
+            ),
         ),
       ),
     vectorize: remoteVectorApi(url, token),

@@ -1,9 +1,16 @@
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import pc from "picocolors";
-import { Effect } from "effect";
+
+import { Effect, Schema } from "effect";
 import { Command } from "effect/cli";
+import pc from "picocolors";
+
+import {
+  deployConfigToEnv,
+  loadDeployConfig,
+  type DeployConfig,
+} from "../../../../iac/src/deploy-config";
 import { getFlagValue } from "../../cli-utils";
 import {
   loadCurrentRemoteConfig,
@@ -15,7 +22,6 @@ import {
   commandError as makeCommandError,
 } from "../../effect/errors";
 import { storedRemoteCredentialsWarningLines } from "../human-error";
-import type { CommandContext } from "../runtime/context";
 import {
   booleanFlag,
   booleanSpec,
@@ -24,12 +30,7 @@ import {
   stringFlag,
   stringSpec,
 } from "../runtime/command";
-import {
-  deployConfigToEnv,
-  loadDeployConfig,
-  type DeployConfig,
-} from "../../../../iac/src/deploy-config";
-
+import type { CommandContext } from "../runtime/context";
 
 function commandError(
   message: string,
@@ -203,7 +204,6 @@ function cancelMaskedInput(options: {
   );
 }
 
-
 function loadCurrentRemote() {
   return Effect.promise(() => loadCurrentRemoteConfig()).pipe(
     Effect.tap((result) => {
@@ -247,11 +247,9 @@ export function remoteSetup(context: CommandContext) {
       (currentRemote?.token || undefined) ??
       (yield* Effect.promise(() => askMasked("Worker token")));
     if (!token) {
-      return yield* Effect.fail(
-        commandError("Worker token is required.", {
-          hint: "Pass --token <worker-token>.",
-        }),
-      );
+      return yield* commandError("Worker token is required.", {
+        hint: "Pass --token <worker-token>.",
+      });
     }
 
     yield* Effect.tryPromise({
@@ -392,7 +390,7 @@ export function remoteProvision(context: CommandContext) {
     const resolved = yield* Effect.try({
       try: () => resolveProvisionConfig(context.args, currentRemote),
       catch: (cause) =>
-        cause instanceof CommandError
+        Schema.is(CommandError)(cause)
           ? cause
           : commandError(
               cause instanceof Error

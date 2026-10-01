@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "oxlint --type-aware && vitest run",
+    "check": "oxlint --type-aware && vitest run && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
     "format": "oxfmt",
     "lint": "oxlint --type-aware",
     "test": "vitest run",

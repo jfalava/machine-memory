@@ -1,18 +1,24 @@
-import { describe, expect, test, vi } from "vitest";
-import { Effect, Redacted } from "effect";
-import * as HttpServerRequest from "effect/http/HttpServerRequest";
-import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import {
   PRODUCT_ROUTES,
   productRoutePath,
   type ProductRoute,
   type JsonValue,
 } from "@machine-memory/contract";
+import { Effect, Redacted } from "effect";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Schema from "effect/Schema";
+import { describe, expect, test, vi } from "vitest";
+
 import {
   classifyRestFailure,
   handleRestRequest,
   type RestHandlers,
 } from "../../api/src/rest-handlers";
+
+class TestFailure extends Schema.TaggedError<TestFailure>()("TestFailure", {
+  message: Schema.String,
+}) {}
 
 function responseJson(
   response: HttpServerResponse.HttpServerResponse,
@@ -91,7 +97,11 @@ describe("REST product route catalog", () => {
       .mockImplementation(() => undefined);
     try {
       const { call } = setup(() =>
-        Effect.fail(new Error("SQLITE_ERROR: fts5: syntax error near '*'")),
+        Effect.fail(
+          new TestFailure({
+            message: "SQLITE_ERROR: fts5: syntax error near '*'",
+          }),
+        ),
       );
       const response = await call("/product/query");
       expect(response.status).toBe(400);
@@ -123,7 +133,11 @@ describe("REST product route catalog", () => {
       .mockImplementation(() => undefined);
     try {
       const { call } = setup(() =>
-        Effect.fail(new Error("unexpected secret=request-body-content")),
+        Effect.fail(
+          new TestFailure({
+            message: "unexpected secret=request-body-content",
+          }),
+        ),
       );
       const response = await call("/product/suggest");
       expect(response.status).toBe(500);

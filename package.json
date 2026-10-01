@@ -47,9 +47,11 @@
     "typecheck:global": "bun run --filter @machine-memory/contract --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac typecheck"
   },
   "devDependencies": {
+    "@effect/tsgo": "0.45.0",
     "@oxlint/plugins": "1.80.0",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:build",
+    "typescript": "7.0.2",
     "vite-tsconfig-paths": "6.1.1"
   },
   "patchedDependencies": {

@@ -577,11 +577,9 @@ function runStrongUpsertUpdate(params: {
     const matchedId = Number(matched.id);
     const canonical = yield* getMemoryById(database, matchedId);
     if (!canonical || canonical.status !== "active") {
-      return yield* Effect.fail(
-        commandError(
-          "add",
-          `Memory ${matchedId} is no longer active; retry the match.`,
-        ),
+      return yield* commandError(
+        "add",
+        `Memory ${matchedId} is no longer active; retry the match.`,
       );
     }
     const breakdown = yield* validateEmbeddingFit(
@@ -601,11 +599,9 @@ function runStrongUpsertUpdate(params: {
       ),
     );
     if (!updated) {
-      return yield* Effect.fail(
-        commandError(
-          "add",
-          `Memory ${matchedId} changed concurrently; retry the match.`,
-        ),
+      return yield* commandError(
+        "add",
+        `Memory ${matchedId} changed concurrently; retry the match.`,
       );
     }
     yield* Effect.sync(() =>
@@ -731,7 +727,7 @@ function enforceWeakMatchGate(
       catch: () => refusal(),
     });
     if (!confirmed) {
-      return yield* Effect.fail(refusal());
+      return yield* refusal();
     }
   });
 }
@@ -1504,11 +1500,9 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
         supersededBy <= 0 ||
         !(yield* getMemoryById(database, supersededBy)))
     ) {
-      return yield* Effect.fail(
-        commandError(
-          "deprecate",
-          "--superseded-by must name an existing memory in this repository.",
-        ),
+      return yield* commandError(
+        "deprecate",
+        "--superseded-by must name an existing memory in this repository.",
       );
     }
     const snapshots = new Map<number, number>();

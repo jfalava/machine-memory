@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --fix",
+    "check": "oxlint --fix && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
     "format": "oxfmt",
     "lint": "oxlint",
     "test": "vitest run",

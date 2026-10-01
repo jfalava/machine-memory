@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run --filter @machine-memory/iac typecheck && bun run --filter @machine-memory/docs build",
-    "check": "oxlint --fix",
+    "check": "oxlint --fix && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
     "ci:build": "bun run build",
     "ci:deploy": "alchemy deploy --yes --adopt",
     "deploy": "alchemy deploy",

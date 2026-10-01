@@ -1,4 +1,6 @@
+import { Schema } from "effect";
 import pc from "picocolors";
+
 import { CommandError, commandError } from "../effect/errors";
 
 export function humanHintLine(hint: string): string {
@@ -21,7 +23,7 @@ export function commandErrorForRender(
   command: string,
   error: Error,
 ): CommandError {
-  if (error instanceof CommandError) {
+  if (Schema.is(CommandError)(error)) {
     if (error.command === command) {
       return error;
     }
