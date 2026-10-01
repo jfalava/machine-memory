@@ -12,10 +12,10 @@
     ],
     "catalogs": {
       "effect": {
-        "@effect/platform-node": "4.0.0-rc.118",
-        "@effect/platform-bun": "4.0.0-rc.118",
-        "@effect/sql-d1": "4.0.0-rc.118",
-        "effect": "4.0.0-rc.118"
+        "@effect/platform-node": "4.0.0",
+        "@effect/platform-bun": "4.0.0",
+        "@effect/sql-d1": "4.0.0",
+        "effect": "4.0.0"
       },
       "types": {
         "bun-types": "1.4.2",
@@ -55,7 +55,7 @@
     "vite-tsconfig-paths": "6.1.1"
   },
   "patchedDependencies": {
-    "effect@4.0.0-rc.118": "patches/effect@4.0.0-rc.118.patch",
+    "effect@4.0.0": "patches/effect@4.0.0.patch",
     "alchemy@2.0.0-beta.79": "patches/alchemy@2.0.0-beta.79.patch"
   }
 }
