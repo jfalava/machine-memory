@@ -22,7 +22,7 @@
         "@cloudflare/workers-types": "5.20261001.1"
       },
       "iac": {
-        "alchemy": "2.0.0-beta.79"
+        "alchemy": "2.0.0-beta.80"
       },
       "build": {
         "oxlint": "1.86.0",
@@ -55,7 +55,6 @@
     "vite-tsconfig-paths": "6.1.1"
   },
   "patchedDependencies": {
-    "effect@4.0.0": "patches/effect@4.0.0.patch",
-    "alchemy@2.0.0-beta.79": "patches/alchemy@2.0.0-beta.79.patch"
+    "alchemy@2.0.0-beta.80": "patches/alchemy@2.0.0-beta.80.patch"
   }
 }
