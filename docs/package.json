@@ -44,7 +44,7 @@
     "@tailwindcss/vite": "4.3.3",
     "@typescript-eslint/parser": "8.71.0",
     "cross-spawn": "7.0.6",
-    "eslint": "10.11.0",
+    "eslint": "10.12.0",
     "eslint-plugin-astro": "3.2.1",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:build",
