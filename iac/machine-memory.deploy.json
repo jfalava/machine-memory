@@ -10,5 +10,15 @@
     "api": "machine-memory-api",
     "mcp": "machine-memory-mcp",
     "docs": "machine-memory-docs"
+  },
+  "secretsStore": {
+    "storeId": "6722243507114af69e9626e2a66436d0",
+    "dbToken": "MACHINE_MEMORY_DB_TOKEN",
+    "oauth": {
+      "githubClientId": "MACHINE_MEMORY_GITHUB_CLIENT_ID",
+      "githubClientSecret": "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
+      "githubAllowedUserId": "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
+      "cookieEncryptionKey": "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY"
+    }
   }
 }
