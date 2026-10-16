@@ -53,5 +53,8 @@
     "oxlint": "catalog:build",
     "typescript": "catalog:build",
     "vite-tsconfig-paths": "6.1.1"
+  },
+  "patchedDependencies": {
+    "alchemy@2.0.0-beta.83": "patches/alchemy@2.0.0-beta.83.patch"
   }
 }

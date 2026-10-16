@@ -1,0 +1,33 @@
+diff --git a/lib/Cloudflare/Workers/WorkerProvider.js b/lib/Cloudflare/Workers/WorkerProvider.js
+index 5277a76fa724523b4a682c1dbd9fbe1d3555202f..1772995089f0558861eb451a0549ba5183ea910a 100644
+--- a/lib/Cloudflare/Workers/WorkerProvider.js
++++ b/lib/Cloudflare/Workers/WorkerProvider.js
+@@ -3890,9 +3890,6 @@ export const LiveWorkerProvider = () => Provider.effect(Worker, Effect.gen(funct
+                     ({ durableObjectNamespaces } = yield* getWorkerSettingsWithDurableObjects(name, doClasses, dispatchNamespace));
+                 }
+             }
+-            if (existingSettings && doClasses.length > 0) {
+-                ({ durableObjectNamespaces } = yield* getWorkerSettingsWithDurableObjects(name, doClasses, dispatchNamespace));
+-            }
+             /**
+              * Precreate publishes the URLs that are known before the first
+              * upload, so cycle peers that interpolate `worker.url` (e.g. a
+diff --git a/src/Cloudflare/Workers/WorkerProvider.ts b/src/Cloudflare/Workers/WorkerProvider.ts
+index 9898fc07e3625f54bd60ccfeb4a861615e9b64cc..f2b902566bd2a024213f4cc4fd871d7dd5c0add0 100644
+--- a/src/Cloudflare/Workers/WorkerProvider.ts
++++ b/src/Cloudflare/Workers/WorkerProvider.ts
+@@ -4953,14 +4953,6 @@ export const LiveWorkerProvider = () =>
+             }
+           }
+ 
+-          if (existingSettings && doClasses.length > 0) {
+-            ({ durableObjectNamespaces } = yield* getWorkerSettingsWithDurableObjects(
+-              name,
+-              doClasses,
+-              dispatchNamespace,
+-            ));
+-          }
+-
+           /**
+            * Precreate publishes the URLs that are known before the first
+            * upload, so cycle peers that interpolate `worker.url` (e.g. a
