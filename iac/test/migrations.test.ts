@@ -9,3 +9,11 @@ test("integrity triggers avoid nested END tokens in D1 HTTP batches", async () =
   // CASE expressions add END tokens that the remote trigger splitter misreads.
   expect(sql.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
 });
+
+test("history triggers use D1-compatible trigger bodies", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0004_memory_history.sql", import.meta.url),
+    "utf8",
+  );
+  expect(sql.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
+});

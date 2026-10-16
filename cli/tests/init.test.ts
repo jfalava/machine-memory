@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import {
   agentsMdContent,
   replaceMemoryBlock,
@@ -45,6 +46,7 @@ describe("init templates", () => {
       "memory_suggest",
       "memory_query",
       "memory_get",
+      "memory_history",
       "memory_list",
       "memory_doctor",
       "memory_stats",
@@ -54,6 +56,7 @@ describe("init templates", () => {
       "memory_size",
       "memory_add",
       "memory_update",
+      "memory_restore",
       "memory_deprecate",
       "memory_delete",
       "memory_delete_many",

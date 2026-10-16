@@ -120,6 +120,30 @@ export const MemoryGetArgsSchema = Schema.Struct({
 });
 export type MemoryGetArgs = typeof MemoryGetArgsSchema.Type;
 
+export const MemoryHistoryArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  id: memoryId,
+  limit: searchLimit,
+  offset,
+});
+export type MemoryHistoryArgsInput = typeof MemoryHistoryArgsSchema.Type;
+export type MemoryHistoryArgs = {
+  readonly repository: string;
+  readonly id: number;
+  readonly limit: number;
+  readonly offset: number;
+};
+export function normalizeMemoryHistoryArgs(
+  input: MemoryHistoryArgsInput,
+): MemoryHistoryArgs {
+  return {
+    repository: input.repository,
+    id: input.id,
+    limit: normalizeSearchLimit(input.limit),
+    offset: input.offset ?? 0,
+  };
+}
+
 export const MemoryListArgsInputSchema = Schema.Struct({
   repository: RepositorySchema,
   limit: searchLimit,
@@ -292,6 +316,22 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
   }),
 });
 export type MemoryUpdateArgs = typeof MemoryUpdateArgsSchema.Type;
+
+export const MemoryRestoreArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  id: memoryId,
+  revision_id: memoryId.annotateKey({
+    description:
+      "Revision id from memory_history for this memory and repository.",
+  }),
+  expected_update_count: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(0),
+  ).annotateKey({
+    description:
+      "Use current_update_count from memory_history. A stale count refuses the restore; do not use the historical row's update_count.",
+  }),
+});
+export type MemoryRestoreArgs = typeof MemoryRestoreArgsSchema.Type;
 
 export const MemorySizeArgsInputSchema = Schema.Struct({
   content: Schema.NonEmptyString.annotateKey({

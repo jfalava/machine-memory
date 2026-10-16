@@ -35,6 +35,7 @@
     "/machine/gc",
     "/machine/get",
     "/machine/help",
+    "/machine/history",
     "/machine/import",
     "/machine/list",
     "/machine/migrate",

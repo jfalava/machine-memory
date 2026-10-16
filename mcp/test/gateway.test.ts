@@ -106,6 +106,10 @@ describe("mcp gateway to api product routes", () => {
   test.each([
     ["memory_add", { repository: "o/r", content: "new fact" }],
     ["memory_update", { repository: "o/r", id: 7, content: "updated fact" }],
+    [
+      "memory_restore",
+      { repository: "o/r", id: 7, revision_id: 11, expected_update_count: 3 },
+    ],
     ["memory_deprecate", { repository: "o/r", ids: [7] }],
     ["memory_delete", { repository: "o/r", id: 7 }],
     ["memory_delete_many", { repository: "o/r", ids: [7] }],
@@ -129,6 +133,7 @@ describe("mcp gateway to api product routes", () => {
     ["list_repositories", {}],
     ["memory_query", { repository: "o/r", query: "fact" }],
     ["memory_get", { repository: "o/r", id: 7 }],
+    ["memory_history", { repository: "o/r", id: 7 }],
     ["memory_list", { repository: "o/r" }],
     ["memory_doctor", { repository: "o/r" }],
     ["memory_stats", { repository: "o/r" }],
@@ -181,6 +186,103 @@ describe("mcp gateway to api product routes", () => {
     });
     expect(result.isError).toBeFalsy();
     expect(JSON.parse(firstText(result))).toEqual([FULL_ROW]);
+  });
+
+  test.each([
+    [
+      "memory_history",
+      "/product/history",
+      { repository: "o/r", id: 7, limit: 1, offset: 2 },
+      {
+        repository: "o/r",
+        id: 7,
+        current_update_count: 3,
+        count: 1,
+        total_count: 3,
+        offset: 2,
+        limit: 1,
+        has_more: false,
+        results: [
+          {
+            ...FULL_ROW,
+            revision_id: 11,
+            snapshot_at: "2026-09-05 12:00:00",
+            operation: "update",
+          },
+        ],
+      },
+    ],
+    [
+      "memory_restore",
+      "/product/restore",
+      { repository: "o/r", id: 7, revision_id: 11, expected_update_count: 3 },
+      {
+        written_to: "o/r",
+        id: 7,
+        restored_revision_id: 11,
+        memory: FULL_ROW,
+        size: {
+          source: "bytes",
+          bytes_estimate: 100,
+          max_bytes_estimate: 512,
+          within_budget: true,
+          binding_limit: null,
+          over_by_bytes: 0,
+          remaining: 412,
+          limits: { bytes_estimate: { value: 100, limit: 512, pass: true } },
+        },
+      },
+    ],
+  ] as const)(
+    "%s forwards the scoped recovery request and complete result",
+    async (name, path, args, body) => {
+      const seen: SeenCall[] = [];
+      const client = await linkedClient({
+        api: stubApi(
+          { [path]: { status: 200, body: { ok: true, result: body } } },
+          seen,
+        ),
+        apiToken: "test-token",
+      });
+      try {
+        const result = await client.callTool({ name, arguments: args });
+        expect(result.isError).toBeFalsy();
+        expect(JSON.parse(firstText(result))).toEqual([body]);
+        expect(seen[0]?.body).toEqual(args);
+      } finally {
+        await client.close();
+      }
+    },
+  );
+
+  test("memory_restore surfaces a stale revision conflict instead of reporting success", async () => {
+    const client = await linkedClient({
+      api: stubApi(
+        {
+          "/product/restore": {
+            status: 409,
+            body: { ok: false, error: "Memory changed concurrently; retry." },
+          },
+        },
+        [],
+      ),
+      apiToken: "test-token",
+    });
+    try {
+      const result = await client.callTool({
+        name: "memory_restore",
+        arguments: {
+          repository: "o/r",
+          id: 7,
+          revision_id: 11,
+          expected_update_count: 3,
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(firstText(result)).toContain("Memory changed concurrently");
+    } finally {
+      await client.close();
+    }
   });
 
   test.each(["x".repeat(65), "é".repeat(33)])(

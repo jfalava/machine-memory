@@ -32,6 +32,7 @@ import { handleDoctorCommand } from "./doctor";
 import { handleExportCommand } from "./export";
 import { handleGcCommand } from "./gc";
 import { handleGetCommand } from "./get";
+import { handleHistoryCommand, handleRestoreCommand } from "./history";
 import { handleInitCommand } from "./init";
 import { localCommand } from "./local";
 import { handleImportCommand, handleStatsCommand } from "./maintenance";
@@ -157,6 +158,18 @@ const getCommand = effectCommand(
   "read",
   handleGetCommand,
 );
+const historyCommand = effectCommand(
+  "history",
+  {
+    args: positionalArgs(),
+    limit: stringFlag("limit"),
+    offset: stringFlag("offset"),
+    ...outputConfig(),
+  },
+  [stringSpec("limit"), stringSpec("offset"), ...outputSpecs],
+  "read",
+  handleHistoryCommand,
+);
 const updateCommand = effectCommand(
   "update",
   {
@@ -190,6 +203,18 @@ const updateCommand = effectCommand(
   ],
   "write",
   handleUpdateCommand,
+);
+const restoreCommand = effectCommand(
+  "restore",
+  {
+    args: positionalArgs(),
+    revision: stringFlag("revision"),
+    "expected-update-count": stringFlag("expected-update-count"),
+    ...outputConfig(),
+  },
+  [stringSpec("revision"), stringSpec("expected-update-count"), ...outputSpecs],
+  "write",
+  handleRestoreCommand,
 );
 const deprecateCommand = effectCommand(
   "deprecate",
@@ -405,7 +430,9 @@ export const featureCommands = [
   queryCommand,
   listCommand,
   getCommand,
+  historyCommand,
   updateCommand,
+  restoreCommand,
   deprecateCommand,
   deleteCommand,
   suggestCommand,

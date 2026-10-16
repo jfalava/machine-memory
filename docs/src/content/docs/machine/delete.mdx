@@ -14,4 +14,5 @@ machine-memory delete <id,id,...> (--local|--remote)
 
 `delete` removes the specified memory rows permanently. It is intentionally
 ID-based and does not support matching or a dry-run mode. Use `deprecate` when
-the historical record should remain available.
+the historical record should remain available. Deletion also purges all
+[history snapshots](/machine/history); restore cannot undo a delete.

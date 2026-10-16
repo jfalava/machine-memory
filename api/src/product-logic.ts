@@ -4,6 +4,7 @@ import {
   MemorySummarySchema,
   normalizeStoredMemoryRow,
   type MemoryRow,
+  type MemoryHistoryEntry,
   type MemorySummary,
   type FactCheckResult,
   type MemoryDoctorFinding,
@@ -34,6 +35,20 @@ export function toProductRow(value: JsonObject): MemoryRow {
   return normalizeStoredMemoryRow(
     Schema.decodeUnknownSync(StoredMemoryRowSchema)(value),
   );
+}
+
+export function toHistoryRow(value: JsonObject): MemoryHistoryEntry {
+  const row = toProductRow({
+    ...value,
+    id: jsonNumber(value.memory_id) ?? 0,
+    refs: jsonString(value.refs) ?? "[]",
+  });
+  return {
+    ...row,
+    revision_id: Number(value.revision_id),
+    operation: jsonString(value.operation) ?? "update",
+    snapshot_at: jsonString(value.snapshot_at) ?? "",
+  };
 }
 
 export function toRankedRow(value: JsonObject): FtsRankedMemoryRow {

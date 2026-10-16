@@ -1,10 +1,12 @@
 import {
   MemoryQueryArgsInputSchema,
   MemoryGetArgsSchema,
+  MemoryHistoryArgsSchema,
   MemoryListArgsInputSchema,
   MemorySuggestArgsInputSchema,
   MemoryAddArgsInputSchema,
   MemoryUpdateArgsSchema,
+  MemoryRestoreArgsSchema,
   MemoryDeleteArgsSchema,
   MemoryDeleteManyArgsSchema,
   MemoryDeprecateArgsSchema,
@@ -19,9 +21,11 @@ import {
 import {
   MemoryQuerySuccessSchema,
   MemoryGetSuccessSchema,
+  MemoryHistorySuccessSchema,
   MemoryListSuccessSchema,
   MemorySuggestSuccessSchema,
   MemoryWriteSuccessSchema,
+  MemoryRestoreSuccessSchema,
   MemoryDeleteSuccessSchema,
   MemoryDeleteManySuccessSchema,
   MemoryDeprecateSuccessSchema,
@@ -41,6 +45,10 @@ export const PRODUCT_OPERATIONS = {
     response: MemoryQuerySuccessSchema,
   },
   get: { request: MemoryGetArgsSchema, response: MemoryGetSuccessSchema },
+  history: {
+    request: MemoryHistoryArgsSchema,
+    response: MemoryHistorySuccessSchema,
+  },
   list: {
     request: MemoryListArgsInputSchema,
     response: MemoryListSuccessSchema,
@@ -56,6 +64,10 @@ export const PRODUCT_OPERATIONS = {
   update: {
     request: MemoryUpdateArgsSchema,
     response: MemoryWriteSuccessSchema,
+  },
+  restore: {
+    request: MemoryRestoreArgsSchema,
+    response: MemoryRestoreSuccessSchema,
   },
   delete: {
     request: MemoryDeleteArgsSchema,

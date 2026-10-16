@@ -113,7 +113,9 @@ const databaseCommands = new Set([
   "query",
   "list",
   "get",
+  "history",
   "update",
+  "restore",
   "deprecate",
   "delete",
   "suggest",
@@ -522,6 +524,133 @@ describe("CLI rewrite integration", () => {
     expect(fetched.json.certainty).toBe("verified");
     expect(fetched.json.memory_type).toBe("convention");
     expect(fetched.json.repository).toBe("jfalava/machine-memory");
+  });
+
+  it("recovers overwritten content and refs through history with a required concurrency guard", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Original decision",
+      "--type",
+      "decision",
+      "--refs",
+      "docs/a.md,docs/b.md",
+      "--tags",
+      "original",
+      "--quiet",
+    );
+    const id = String(added.json.id);
+    await runCli(
+      cwd,
+      dbPath,
+      "update",
+      id,
+      "Wrong overwrite",
+      "--tags",
+      "wrong",
+      "--refs",
+      "docs/wrong.md",
+    );
+    const history = await runCli(cwd, dbPath, "history", id, "--limit", "1");
+    expect(history.code).toBe(0);
+    expect(history.json).toMatchObject({
+      current_update_count: 1,
+      total_count: 1,
+    });
+    const snapshots = history.json.results as Record<string, unknown>[];
+    expect(snapshots[0]).toMatchObject({
+      content: "Original decision",
+      refs: ["docs/a.md", "docs/b.md"],
+      tags: "original",
+    });
+    const revision = String(snapshots[0]!.revision_id);
+    const missingGuard = await runCli(
+      cwd,
+      dbPath,
+      "restore",
+      id,
+      "--revision",
+      revision,
+    );
+    expect(missingGuard.code).toBe(1);
+    const restored = await runCli(
+      cwd,
+      dbPath,
+      "restore",
+      id,
+      "--revision",
+      revision,
+      "--expected-update-count",
+      "1",
+    );
+    expect(restored.code, JSON.stringify(restored.json)).toBe(0);
+    expect(restored.json.memory).toMatchObject({
+      id: Number(id),
+      content: "Original decision",
+      refs: ["docs/a.md", "docs/b.md"],
+      tags: "original",
+      update_count: 2,
+      last_updated_by: "restore",
+    });
+    const stale = await runCli(
+      cwd,
+      dbPath,
+      "restore",
+      id,
+      "--revision",
+      revision,
+      "--expected-update-count",
+      "1",
+    );
+    expect(stale.code).toBe(1);
+    expect(stale.json.error).toContain("concurrently");
+    const after = await runCli(cwd, dbPath, "history", id, "--limit", "1");
+    expect(after.json).toMatchObject({ total_count: 2, has_more: true });
+    expect((after.json.results as Record<string, unknown>[])[0]?.content).toBe(
+      "Wrong overwrite",
+    );
+    await runCli(cwd, dbPath, "delete", id);
+    expect((await runCli(cwd, dbPath, "history", id)).json.total_count).toBe(0);
+  });
+
+  it("upgrades a v3 database without backfill and can rerun migration without losing history", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(cwd, dbPath, "add", "Retained v3 memory", "--quiet");
+    const downgrade = await execBun(
+      [
+        "-e",
+        `import { Database } from "bun:sqlite";
+const db = new Database(process.env.MACHINE_MEMORY_DB_PATH);
+db.exec("DROP TRIGGER memory_history_after_update; DROP TRIGGER memory_history_after_delete; DROP TABLE memory_history; PRAGMA user_version = 3;"); db.close();`,
+      ],
+      { env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath } },
+    );
+    expect(downgrade.code).toBe(0);
+    expect((await runCli(cwd, dbPath, "migrate")).code).toBe(0);
+    expect((await runCli(cwd, dbPath, "history", "1")).json.total_count).toBe(
+      0,
+    );
+    await runCli(cwd, dbPath, "update", "1", "After upgrade");
+    const markOutdated = await execBun(
+      [
+        "-e",
+        `import { Database } from "bun:sqlite";
+const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA user_version = 3;"); db.close();`,
+      ],
+      { env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath } },
+    );
+    expect(markOutdated.code).toBe(0);
+    expect((await runCli(cwd, dbPath, "migrate")).code).toBe(0);
+    const history = await runCli(cwd, dbPath, "history", "1");
+    expect(history.json.total_count).toBe(1);
+    expect(
+      (history.json.results as Record<string, unknown>[])[0]?.content,
+    ).toBe("Retained v3 memory");
+    expect((await runCli(cwd, dbPath, "get", "1")).json.content).toBe(
+      "After upgrade",
+    );
   });
 
   it("exports a selected local database through the raw TypeScript CLI", async () => {

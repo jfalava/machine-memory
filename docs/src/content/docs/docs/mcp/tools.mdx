@@ -10,37 +10,39 @@ After [enabling MCP](/docs/mcp/enable) and connecting a client to `/mcp`, these 
 
 ## Safety model
 
-| Kind     | Tools                                                                                    | Wrong `repository` slug                 |
-| -------- | ---------------------------------------------------------------------------------------- | --------------------------------------- |
-| Read     | `memory_suggest`, `memory_query`, `memory_get`, `memory_list`                            | Empty or not-found; nothing lost        |
-| Maintain | `memory_doctor`, `memory_stats`, `memory_gc`                                             | Empty report; nothing lost              |
-| Check    | `memory_verify`, `memory_diff`                                                           | Not-found message; nothing lost         |
-| Measure  | `memory_size`                                                                            | N/A (no repository)                     |
-| Discover | `list_repositories`                                                                      | N/A                                     |
-| Write    | `memory_add`, `memory_update`, `memory_deprecate`, `memory_delete`, `memory_delete_many` | Required exact `owner/name`; no default |
+| Kind     | Tools                                                                                                      | Wrong `repository` slug                 |
+| -------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Read     | `memory_suggest`, `memory_query`, `memory_get`, `memory_history`, `memory_list`                            | Empty or not-found; nothing lost        |
+| Maintain | `memory_doctor`, `memory_stats`, `memory_gc`                                                               | Empty report; nothing lost              |
+| Check    | `memory_verify`, `memory_diff`                                                                             | Not-found message; nothing lost         |
+| Measure  | `memory_size`                                                                                              | N/A (no repository)                     |
+| Discover | `list_repositories`                                                                                        | N/A                                     |
+| Write    | `memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many` | Required exact `owner/name`; no default |
 
 Call `list_repositories` before writes when the slug is not certain. Derive `owner/name` from `git remote get-url origin` when it matches a known entry.
 
 ## Tool reference
 
-| Tool                 | Purpose                                                                  |
-| -------------------- | ------------------------------------------------------------------------ |
-| `list_repositories`  | List slugs with total, active, deprecated, and superseded counts         |
-| `memory_suggest`     | File-scoped lookup: FTS over path terms + directory neighborhood         |
-| `memory_query`       | Keyword, semantic, or hybrid search with filters                         |
-| `memory_get`         | Fetch one memory by numeric id                                           |
-| `memory_list`        | List memories with filters and offset pagination                         |
-| `memory_doctor`      | Audit duplicates, status expiry, types, tags, and refs                   |
-| `memory_stats`       | Summarize status, type, certainty, tag, and age distributions            |
-| `memory_gc`          | Preview expired status memories; never mutates                           |
-| `memory_verify`      | Check an inferred fact against a memory (consistent / conflict)          |
-| `memory_diff`        | Diff proposed content against a memory (terms added / removed)           |
-| `memory_size`        | Preflight embedding budget without writing                               |
-| `memory_add`         | Create a memory (or upsert via `upsert_match`)                           |
-| `memory_update`      | Update content or metadata by id (or `match`)                            |
-| `memory_deprecate`   | Mark up to 100 explicit ids deprecated or superseded, preserving history |
-| `memory_delete`      | Permanently delete one memory and its vector                             |
-| `memory_delete_many` | Permanently delete up to 100 explicit ids and their vectors              |
+| Tool                 | Purpose                                                                       |
+| -------------------- | ----------------------------------------------------------------------------- |
+| `list_repositories`  | List slugs with total, active, deprecated, and superseded counts              |
+| `memory_suggest`     | File-scoped lookup: FTS over path terms + directory neighborhood              |
+| `memory_query`       | Keyword, semantic, or hybrid search with filters                              |
+| `memory_get`         | Fetch one memory by numeric id                                                |
+| `memory_history`     | List complete previous revisions, newest first, with the current update count |
+| `memory_list`        | List memories with filters and offset pagination                              |
+| `memory_doctor`      | Audit duplicates, status expiry, types, tags, and refs                        |
+| `memory_stats`       | Summarize status, type, certainty, tag, and age distributions                 |
+| `memory_gc`          | Preview expired status memories; never mutates                                |
+| `memory_verify`      | Check an inferred fact against a memory (consistent / conflict)               |
+| `memory_diff`        | Diff proposed content against a memory (terms added / removed)                |
+| `memory_size`        | Preflight embedding budget without writing                                    |
+| `memory_add`         | Create a memory (or upsert via `upsert_match`)                                |
+| `memory_update`      | Update content or metadata by id (or `match`)                                 |
+| `memory_restore`     | Restore a reviewed revision in place, refusing a stale update count           |
+| `memory_deprecate`   | Mark up to 100 explicit ids deprecated or superseded, preserving history      |
+| `memory_delete`      | Permanently delete one memory and its vector                                  |
+| `memory_delete_many` | Permanently delete up to 100 explicit ids and their vectors                   |
 
 Every tool that takes `repository` expects `owner/name`. Rows live in D1; embeddings sync to Vectorize on write. `memory_query`, `memory_list`, and `memory_suggest` accept a `tags` substring filter alongside `status` / `memory_type` / `certainty`.
 
@@ -69,6 +71,29 @@ Every tool that takes `repository` expects `owner/name`. Rows live in D1; embedd
 `memory_add` accepts `upsert_match` (with `force` and `upsert_threshold`, default score 32 alongside similarity ≥ 0.62): a strong match updates in place, otherwise a new record is created, and a weak match refuses unless forced. New records echo `potential_conflicts` so near-duplicates stay visible.
 
 `memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
+
+### History and recovery
+
+`memory_history` takes `{ repository, id, limit?, offset? }` and returns complete
+previous snapshots, newest first. It includes `current_update_count` and the
+usual pagination fields. Review a snapshot, then call `memory_restore` with
+`{ repository, id, revision_id, expected_update_count }`. Set
+`expected_update_count` to the response's **`current_update_count`**, not the
+historical row's count. A newer write causes a conflict instead of being overwritten.
+
+Restore preserves the ID and repository, increments the current update count,
+refreshes `updated_at`, and marks `last_updated_by` as `restore`. It restores
+the other metadata, including refs, replacement, and expiry; status expiry
+starts from the fresh update time. The replaced state becomes another history
+entry, so a restore can itself be undone.
+
+Snapshots are never embedded or included in memory searches. Only the restored
+canonical row queues vector synchronization: active rows are embedded, while
+inactive rows have their vectors removed. No migration-time reindex is needed.
+History starts at migration `0004`; earlier overwrites cannot be recovered.
+There is no automatic pruning, and existing import/export and local-to-remote
+transfers do not carry history. **Permanent deletion also purges history.**
+See [history and restore](/machine/history) for CLI usage and constraints.
 
 ### Search
 

@@ -21,12 +21,14 @@ import {
   memoryDiffInput,
   memoryGcInput,
   memoryGetInput,
+  memoryHistoryInput,
   memoryListInput,
   memoryQueryInput,
   memorySizeInput,
   memorySuggestInput,
   memoryStatsInput,
   memoryUpdateInput,
+  memoryRestoreInput,
   memoryVerifyInput,
   type ListRepositoriesArgs,
   type MemoryAddArgs,
@@ -37,12 +39,14 @@ import {
   type MemoryDiffArgs,
   type MemoryGcArgs,
   type MemoryGetArgs,
+  type MemoryHistoryArgs,
   type MemoryListArgs,
   type MemoryQueryArgs,
   type MemorySizeArgs,
   type MemorySuggestArgs,
   type MemoryStatsArgs,
   type MemoryUpdateArgs,
+  type MemoryRestoreArgs,
   type MemoryVerifyArgs,
 } from "./tool-schemas";
 import type { ErrorToolResult, McpBindings, TextToolResult } from "./types";
@@ -55,6 +59,7 @@ const REQUIRED_SCOPES = {
   "list-repositories": "mcp:read",
   query: "mcp:read",
   get: "mcp:read",
+  history: "mcp:read",
   list: "mcp:read",
   doctor: "mcp:read",
   stats: "mcp:read",
@@ -65,6 +70,7 @@ const REQUIRED_SCOPES = {
   size: "mcp:read",
   add: "mcp:write",
   update: "mcp:write",
+  restore: "mcp:write",
   deprecate: "mcp:write",
   delete: "mcp:write",
   "delete-many": "mcp:write",
@@ -91,6 +97,7 @@ function notFoundOrError(cause: unknown): TextToolResult | ErrorToolResult {
  * Direct internal callers are trusted by default. Public OAuth entrypoints
  * MUST supply the effective token scopes, including an empty array.
  */
+// oxlint-disable-next-line max-statements -- register the complete product tool surface
 export function createMemoryServer(
   { api, apiToken }: McpBindings,
   authenticatedLogin?: string,
@@ -187,6 +194,23 @@ export function createMemoryServer(
     async (args: MemoryListArgs) => {
       try {
         const success = await postProduct(api, apiToken, "list", args);
+        return textResult([success.result]);
+      } catch (cause) {
+        return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_history",
+    {
+      description:
+        "List complete previous snapshots for one memory, newest first. Use this after an accidental or suspicious update; the current_update_count in the response is required by memory_restore to prevent overwriting a newer change.",
+      inputSchema: memoryHistoryInput,
+    },
+    async (args: MemoryHistoryArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "history", args);
         return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
@@ -340,6 +364,22 @@ export function createMemoryServer(
         return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_restore",
+    {
+      description: `⚠️ WRITE OPERATION — restores one complete historical snapshot in place, preserving the memory id and re-queueing its current vector. Call memory_history first, then pass its revision_id and the current_update_count. A stale count returns a conflict instead of overwriting a newer update.${ownerHint}`,
+      inputSchema: memoryRestoreInput,
+    },
+    async (args: MemoryRestoreArgs) => {
+      try {
+        const success = await postProduct(api, apiToken, "restore", args);
+        return textResult([success.result]);
+      } catch (cause) {
+        return notFoundOrError(cause);
       }
     },
   );

@@ -19,10 +19,10 @@ const AGENTS_MD_BACKEND_CONTENT = {
   ],
   mcp: [
     "This project uses `machine-memory` through the remote MCP server (OAuth to the Worker `/mcp` endpoint). No local CLI or `machine-memory.db` is required.",
-    "All memory access goes through MCP tools: `list_repositories`, `memory_suggest`, `memory_query`, `memory_get`, `memory_list`, `memory_doctor`, `memory_stats`, `memory_gc`, `memory_verify`, `memory_diff`, `memory_size`, `memory_add`, `memory_update`, `memory_deprecate`, `memory_delete`, `memory_delete_many`.",
+    "All memory access goes through MCP tools: `list_repositories`, `memory_suggest`, `memory_query`, `memory_get`, `memory_history`, `memory_list`, `memory_doctor`, `memory_stats`, `memory_gc`, `memory_verify`, `memory_diff`, `memory_size`, `memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many`.",
     "Repository scope: every tool that reads or writes a specific repo requires an exact `owner/name` slug. There is no default. Reads are loose — a wrong slug returns empty/not-found and nothing is lost. Writes are strict: confirm the slug with `list_repositories` before every write; derive it from `git remote get-url origin` when it matches a known entry. Deletion is permanent.",
     'Search policy: `memory_suggest` with `{ repository, files }` for file-scoped lookup; `memory_query` with `mode: "keyword"` for exact names, paths, commands, and identifiers, `mode: "semantic"` when the same concept may use different wording, `mode: "hybrid"` (default) for broad investigation. Filter with `tags` (substring) / `status` / `memory_type` / `certainty` and cap with `limit` (default 8, max 50). For `memory_list` and `list_repositories`, follow `offset` pages while `has_more` is true. D1 records are canonical and Vectorize is only a retrieval index.',
-    "Mutations (`memory_add`, `memory_update`, `memory_deprecate`, `memory_delete`, `memory_delete_many`) require an explicit repository and echo `written_to` or `deleted_from`. `memory_add` also echoes `potential_conflicts`. Deletion is permanent; prefer `memory_deprecate` when audit history should remain. Embeddings re-sync to Vectorize automatically on add/update/deprecate.",
+    "Mutations (`memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many`) require an explicit repository and echo `written_to` or `deleted_from`. `memory_add` also echoes `potential_conflicts`. Use `memory_history` before `memory_restore`; pass its revision_id and current_update_count so a newer write cannot be overwritten. Deletion is permanent; prefer `memory_deprecate` when audit history should remain. Embeddings re-sync to Vectorize automatically on add/update/restore/deprecate; history snapshots are not embedded.",
     "`memory_add` defaults to `memory_type: convention`, `certainty: inferred`, `status: active` — set them explicitly (`decision` / `reference` / `gotcha`; `verified` / `inferred`). `expires_after_days` is only valid for `status` memories. Prefer `memory_add` with `upsert_match` (strong matches update in place; weak matches refuse unless `force: true`) and `memory_update` with `match` over raw creates.",
   ],
 } satisfies Record<AgentsMemoryBackend, string[]>;
@@ -51,6 +51,8 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
     `- Broad audit: \`machine-memory list --tags "area:..." ${backendFlag} --json-min\``,
     "",
     `If results look relevant, fetch full records before editing: \`machine-memory get <id> ${backendFlag}\` or \`machine-memory get <id,id,...> ${backendFlag}\`.`,
+    "",
+    `Recover accidental overwrites with \`machine-memory history <id> ${backendFlag}\`, then \`machine-memory restore <id> --revision <revision_id> --expected-update-count <current_update_count> ${backendFlag}\`. Use the current count from history, not the snapshot's count. Restore preserves the id and re-syncs only the current memory's vector; snapshots are not embedded. Delete is permanent and removes history.`,
     "",
     "### One-sweep workflow (use this every task)",
     "",

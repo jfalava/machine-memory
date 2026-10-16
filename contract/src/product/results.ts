@@ -79,6 +79,31 @@ export type ListRepositoriesSuccess = typeof ListRepositoriesSuccessSchema.Type;
 export const MemoryGetSuccessSchema = okResponseSchema(MemoryRowSchema);
 export type MemoryGetSuccess = typeof MemoryGetSuccessSchema.Type;
 
+export const MemoryHistoryEntrySchema = Schema.Struct({
+  revision_id: Schema.Number,
+  operation: Schema.String,
+  snapshot_at: Schema.String,
+  ...MemoryRowSchema.fields,
+});
+export type MemoryHistoryEntry = typeof MemoryHistoryEntrySchema.Type;
+
+export const MemoryHistoryResultSchema = Schema.Struct({
+  repository: Schema.String,
+  id: Schema.Number,
+  current_update_count: Schema.NullOr(Schema.Int),
+  count: Schema.Number,
+  total_count: Schema.Number,
+  offset: Schema.Number,
+  limit: Schema.Number,
+  has_more: Schema.Boolean,
+  results: Schema.Array(MemoryHistoryEntrySchema),
+});
+export type MemoryHistoryResult = typeof MemoryHistoryResultSchema.Type;
+export const MemoryHistorySuccessSchema = okResponseSchema(
+  MemoryHistoryResultSchema,
+);
+export type MemoryHistorySuccess = typeof MemoryHistorySuccessSchema.Type;
+
 export const MemoryListResultSchema = Schema.Struct({
   count: Schema.Number,
   total_count: Schema.Number,
@@ -248,3 +273,16 @@ export const MemoryWriteSuccessSchema = okResponseSchema(
   MemoryWriteResultSchema,
 );
 export type MemoryWriteSuccess = typeof MemoryWriteSuccessSchema.Type;
+
+export const MemoryRestoreResultSchema = Schema.Struct({
+  written_to: Schema.String,
+  id: Schema.Number,
+  restored_revision_id: Schema.Number,
+  memory: MemoryRowSchema,
+  size: EmbeddingSizeReportSchema,
+});
+export type MemoryRestoreResult = typeof MemoryRestoreResultSchema.Type;
+export const MemoryRestoreSuccessSchema = okResponseSchema(
+  MemoryRestoreResultSchema,
+);
+export type MemoryRestoreSuccess = typeof MemoryRestoreSuccessSchema.Type;

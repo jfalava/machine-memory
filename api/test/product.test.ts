@@ -57,6 +57,7 @@ beforeAll(async () => {
     "0001_machine_memory",
     "0002_vector_sync",
     "0003_memory_integrity",
+    "0004_memory_history",
   ]) {
     const sql = await readFile(
       new URL(`../../iac/migrations/${name}.sql`, import.meta.url),
@@ -70,6 +71,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await db.prepare("DELETE FROM memories").run();
+  await db.prepare("DELETE FROM memory_history").run();
   await db.prepare("DELETE FROM memory_vector_sync").run();
   await db.prepare("DELETE FROM memory_migration_sources").run();
   vi.clearAllMocks();
@@ -174,6 +176,305 @@ test("add and ID update encode successful writes without embedding or optional u
   expect(aiRun).not.toHaveBeenCalled();
   expect((await job(added.result.id))?.generation).toBe(2);
   expect(wake).toHaveBeenCalledTimes(2);
+});
+
+test("history snapshots updates without vector work and restores with optimistic concurrency", async () => {
+  const added = await product("add", {
+    content: "original decision",
+    tags: "database",
+    memory_type: "decision",
+    certainty: "verified",
+  });
+  const id = added.result.id;
+  const updated = await product("update", {
+    id,
+    content: "clobbered decision",
+  });
+  expect(updated.status).toBe(200);
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM memory_history").first("n"),
+  ).toBe(1);
+  expect(await job(id)).toMatchObject({ generation: 2 });
+
+  const history = await product("history", { id });
+  expect(history.status).toBe(200);
+  expect(history.result).toMatchObject({
+    id,
+    current_update_count: 1,
+    count: 1,
+  });
+  expect(history.result.results[0]).toMatchObject({
+    id,
+    content: "original decision",
+    tags: "database",
+    revision_id: expect.any(Number),
+    update_count: 0,
+  });
+
+  const revisionId = history.result.results[0].revision_id;
+  const restored = await product("restore", {
+    id,
+    revision_id: revisionId,
+    expected_update_count: 1,
+  });
+  expect(restored.status).toBe(200);
+  expect(restored.result).toMatchObject({
+    id,
+    restored_revision_id: revisionId,
+    memory: {
+      content: "original decision",
+      tags: "database",
+      update_count: 2,
+      last_updated_by: "restore",
+    },
+  });
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM memory_history").first("n"),
+  ).toBe(2);
+  expect(await job(id)).toMatchObject({ generation: 3 });
+  await drain();
+  expect(embed).toHaveBeenCalledTimes(1);
+  expect(embed.mock.calls[0]?.[0]).toContain("original decision");
+  expect(embed.mock.calls[0]?.[0]).not.toContain("clobbered decision");
+
+  const stale = await product("restore", {
+    id,
+    revision_id: revisionId,
+    expected_update_count: 1,
+  });
+  expect(stale.status).toBe(409);
+  expect(
+    await db
+      .prepare("SELECT content FROM memories WHERE id = ?")
+      .bind(id)
+      .first("content"),
+  ).toBe("original decision");
+  expect(
+    await db.prepare("SELECT count(*) AS n FROM memory_history").first("n"),
+  ).toBe(2);
+  expect(await job(id)).toMatchObject({
+    generation: 3,
+    delivered_generation: 3,
+  });
+});
+
+test("history is scoped, paginated newest-first, and covers upserts, raw SQL, and deprecation", async () => {
+  const id = await insert("history source alpha");
+  const other = await insert("unrelated");
+  expect((await product("history", { id })).result).toMatchObject({
+    current_update_count: 0,
+    total_count: 0,
+    results: [],
+  });
+  const upserted = await product("add", {
+    content: "history source alpha",
+    upsert_match: "history source alpha",
+    upsert_threshold: 0,
+    tags: "upsert",
+  });
+  expect(upserted.result.id).toBe(id);
+  const raw = await call("/query", {
+    operation: "run",
+    repository: "o/r",
+    sql: "UPDATE memories SET content = ?, update_count = update_count + 1 WHERE id = ?",
+    params: ["raw sql overwrite", id],
+  });
+  expect(raw.status, raw.error).toBe(200);
+  await product("deprecate", { ids: [id] });
+  const page = await product("history", { id, limit: 1, offset: 1 });
+  expect(page.result).toMatchObject({
+    id,
+    current_update_count: 3,
+    count: 1,
+    total_count: 3,
+    offset: 1,
+    limit: 1,
+    has_more: true,
+    results: [
+      { content: "history source alpha", tags: "upsert", update_count: 1 },
+    ],
+  });
+  const last = await product("history", { id, limit: 1, offset: 2 });
+  expect(last.result.has_more).toBe(false);
+  expect(last.result.results[0]).toMatchObject({ tags: "", update_count: 0 });
+  const foreign = await product("history", { id, repository: "other/repo" });
+  expect(foreign.result).toMatchObject({
+    current_update_count: null,
+    total_count: 0,
+    results: [],
+  });
+  const wrongMemory = await product("restore", {
+    id: other,
+    revision_id: last.result.results[0].revision_id,
+    expected_update_count: 0,
+  });
+  expect(wrongMemory.status).toBe(404);
+});
+
+test("competing restores with the same current count allow exactly one mutation", async () => {
+  const id = await insert("recover this");
+  await product("update", { id, content: "clobbered" });
+  const history = await product("history", { id });
+  const attempts = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      product("restore", {
+        id,
+        revision_id: history.result.results[0].revision_id,
+        expected_update_count: 1,
+      }),
+    ),
+  );
+  expect(attempts.map((result) => result.status).sort()).toEqual([
+    200, 409, 409, 409,
+  ]);
+  expect((await product("get", { id })).result).toMatchObject({
+    content: "recover this",
+    update_count: 2,
+  });
+  expect((await product("history", { id })).result.total_count).toBe(2);
+  expect(await job(id)).toMatchObject({ generation: 3 });
+});
+
+test("restore replaces complete metadata, refreshes expiry, and can itself be undone", async () => {
+  const id = await insert();
+  await db
+    .prepare(
+      `UPDATE memories SET content = 'original status', tags = 'old-tag', context = 'old-context', memory_type = 'status', source_agent = 'author', last_updated_by = 'editor', certainty = 'verified', refs = '["docs/a.md","https://example.com/b"]', expires_after_days = 7, created_at = '2020-01-01 00:00:00', updated_at = '2020-02-01 00:00:00' WHERE id = ?`,
+    )
+    .bind(id)
+    .run();
+  const original = await product("get", { id });
+  await product("update", {
+    id,
+    content: "clobbered status",
+    tags: "wrong-tag",
+    context: "wrong-context",
+    certainty: "speculative",
+    expires_after_days: 30,
+  });
+  const history = await product("history", { id });
+  const restored = await product("restore", {
+    id,
+    revision_id: history.result.results[0].revision_id,
+    expected_update_count: 1,
+  });
+  expect(restored.status).toBe(200);
+  expect(restored.result.memory).toEqual({
+    ...original.result,
+    update_count: 2,
+    last_updated_by: "restore",
+    updated_at: expect.any(String),
+  });
+  expect(restored.result.memory.updated_at).not.toBe(
+    original.result.updated_at,
+  );
+  expect((await product("gc")).result.ids).not.toContain(id);
+  const undoHistory = await product("history", { id });
+  const undo = await product("restore", {
+    id,
+    revision_id: undoHistory.result.results[0].revision_id,
+    expected_update_count: 2,
+  });
+  expect(undo.result.memory).toMatchObject({
+    content: "clobbered status",
+    tags: "wrong-tag",
+    context: "wrong-context",
+    certainty: "speculative",
+    expires_after_days: 30,
+    update_count: 3,
+  });
+});
+
+test("restoring inactive state removes its vector without embedding snapshots", async () => {
+  const id = await insert();
+  await product("deprecate", { ids: [id] });
+  await product("update", { id, content: "reactivated", status: "active" });
+  await drain();
+  vi.clearAllMocks();
+  const history = await product("history", { id });
+  const restored = await product("restore", {
+    id,
+    revision_id: history.result.results[0].revision_id,
+    expected_update_count: 2,
+  });
+  expect(restored.result.memory.status).toBe("deprecated");
+  await drain();
+  expect(embed).not.toHaveBeenCalled();
+  expect(upsert).not.toHaveBeenCalled();
+  expect(deleteByIds).toHaveBeenCalledWith([String(id)]);
+});
+
+test("replacement deletion snapshots dependents and permanently purges the deleted memory's history", async () => {
+  const id = await insert("dependent");
+  const replacement = await insert("replacement");
+  await product("update", { id: replacement, content: "new replacement" });
+  await product("deprecate", { ids: [id], superseded_by: replacement });
+  await product("delete", { id: replacement });
+  const history = await product("history", { id });
+  expect(history.result.total_count).toBe(2);
+  expect(history.result.results[0]).toMatchObject({
+    status: "superseded_by",
+    superseded_by: replacement,
+  });
+  const before = await job(id);
+  const invalid = await product("restore", {
+    id,
+    revision_id: history.result.results[0].revision_id,
+    expected_update_count: 2,
+  });
+  expect(invalid.status).toBe(400);
+  expect(invalid.error).toContain("replacement no longer exists");
+  expect(await job(id)).toEqual(before);
+  expect(
+    (await product("history", { id: replacement })).result.total_count,
+  ).toBe(0);
+  const valid = await product("restore", {
+    id,
+    revision_id: history.result.results[1].revision_id,
+    expected_update_count: 2,
+  });
+  expect(valid.result.memory).toMatchObject({
+    status: "active",
+    superseded_by: null,
+    expires_after_days: null,
+  });
+});
+
+test("failed writes and invalid legacy restores leave both history and vector intent unchanged", async () => {
+  const id = await insert();
+  await product("update", { id, content: "current" });
+  const history = await product("history", { id });
+  const revision = history.result.results[0].revision_id;
+  const before = await job(id);
+  await expect(
+    db.batch([
+      db
+        .prepare("UPDATE memories SET content = 'must roll back' WHERE id = ?")
+        .bind(id),
+      db.prepare("UPDATE memories SET refs = 'not json' WHERE id = ?").bind(id),
+    ]),
+  ).rejects.toThrow();
+  for (const [column, value, message] of [
+    ["refs", "not json", "current schema"],
+    ["refs", "[]", "embedding budget"],
+  ]) {
+    await db
+      .prepare(
+        `UPDATE memory_history SET ${column} = ?, content = ? WHERE revision_id = ?`,
+      )
+      .bind(value, "x".repeat(600), revision)
+      .run();
+    const invalid = await product("restore", {
+      id,
+      revision_id: revision,
+      expected_update_count: 1,
+    });
+    expect(invalid.status).toBe(400);
+    expect(invalid.error).toContain(message);
+  }
+  expect((await product("get", { id })).result.content).toBe("current");
+  expect((await product("history", { id })).result.total_count).toBe(1);
+  expect(await job(id)).toEqual(before);
 });
 
 test("wrong-repository deletion leaves both canonical data and vector intent unchanged", async () => {

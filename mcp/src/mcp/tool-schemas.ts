@@ -2,6 +2,7 @@ import {
   PRODUCT_OPERATIONS,
   type ProductRequest,
 } from "@machine-memory/contract";
+
 import { mcpInputSchema } from "./schema-bridge";
 
 export type ListRepositoriesArgs = ProductRequest<"list-repositories">;
@@ -16,6 +17,11 @@ export const memoryQueryInput = mcpInputSchema(
 
 export type MemoryGetArgs = ProductRequest<"get">;
 export const memoryGetInput = mcpInputSchema(PRODUCT_OPERATIONS["get"].request);
+
+export type MemoryHistoryArgs = ProductRequest<"history">;
+export const memoryHistoryInput = mcpInputSchema(
+  PRODUCT_OPERATIONS["history"].request,
+);
 
 export type MemoryListArgs = ProductRequest<"list">;
 export const memoryListInput = mcpInputSchema(
@@ -43,6 +49,11 @@ export const memoryAddInput = mcpInputSchema(PRODUCT_OPERATIONS["add"].request);
 export type MemoryUpdateArgs = ProductRequest<"update">;
 export const memoryUpdateInput = mcpInputSchema(
   PRODUCT_OPERATIONS["update"].request,
+);
+
+export type MemoryRestoreArgs = ProductRequest<"restore">;
+export const memoryRestoreInput = mcpInputSchema(
+  PRODUCT_OPERATIONS["restore"].request,
 );
 
 export type MemorySizeArgs = ProductRequest<"size">;

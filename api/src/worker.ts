@@ -23,15 +23,18 @@ import {
   memoryDocumentId,
   normalizeListRepositoriesArgs,
   normalizeMemoryAddArgs,
+  normalizeMemoryHistoryArgs,
   normalizeMemoryListArgs,
   normalizeMemoryQueryArgs,
   normalizeMemorySizeArgs,
   normalizeMemorySuggestArgs,
   normalizeMigrationRequest,
+  normalizeStoredMemoryRow,
   normalizeVectorizeSearchRequest,
   normalizeVectorizeUpsertRequest,
   QueryRequestSchema,
   QuerySuccessSchema,
+  StoredMemoryRowSchema,
   validateEmbeddingText,
   VectorizeDeleteRequestSchema,
   VectorizeDeleteSuccessSchema,
@@ -70,6 +73,8 @@ import {
   REPOSITORY_COUNT_SQL,
   repositoryStatsSelect,
   rowByIdSelect,
+  historyCountSelect,
+  historySelect,
   updateSets,
   vectorFilter,
   type InsertInput,
@@ -88,6 +93,7 @@ import {
   scoreMemoryRows,
   summarizeMemoryStats,
   toProductRow,
+  toHistoryRow,
   toRankedRow,
   uniqueLowerPreserveOrder,
   UPSERT_MIN_SIMILARITY,
@@ -473,6 +479,19 @@ export const createApiHandlers = ({
         return toProductRow(first);
       });
 
+    const fetchProductHistoryRow = (
+      repository: string,
+      memoryId: number,
+      revisionId: number,
+    ) =>
+      Effect.gen(function* () {
+        const rows = yield* sql.unsafe<JsonObject>(
+          `SELECT * FROM memory_history WHERE repository = ? AND memory_id = ? AND revision_id = ?`,
+          [repository, memoryId, revisionId],
+        );
+        return rows[0];
+      });
+
     const fetchRankedProductRows = (
       ftsQuery: string,
       repository: string,
@@ -578,6 +597,49 @@ export const createApiHandlers = ({
           encodeResponse(PRODUCT_OPERATIONS["get"].response, {
             ok: true,
             result: row,
+          }),
+        );
+      });
+
+    const handleProductHistory = (body: JsonValue) =>
+      Effect.gen(function* () {
+        const input = decodeRequest(
+          PRODUCT_OPERATIONS["history"].request,
+          body,
+        );
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const args = normalizeMemoryHistoryArgs(input.value);
+        const query = historySelect(
+          args.repository,
+          args.id,
+          args.limit,
+          args.offset,
+        );
+        const rows = yield* sql.unsafe<JsonObject>(query.sql, query.params);
+        const countQuery = historyCountSelect(args.repository, args.id);
+        const countRows = yield* sql.unsafe<JsonObject>(
+          countQuery.sql,
+          countQuery.params,
+        );
+        const current = yield* fetchProductRow(args.repository, args.id);
+        const totalCount = jsonNumber(countRows[0]?.total_count) ?? 0;
+        const results = rows.map(toHistoryRow);
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS["history"].response, {
+            ok: true,
+            result: {
+              repository: args.repository,
+              id: args.id,
+              current_update_count: current?.update_count ?? null,
+              count: results.length,
+              total_count: totalCount,
+              offset: args.offset,
+              limit: args.limit,
+              has_more: args.offset + results.length < totalCount,
+              results,
+            },
           }),
         );
       });
@@ -1707,6 +1769,107 @@ export const createApiHandlers = ({
         );
       });
 
+    const handleProductRestore = (body: JsonValue) =>
+      // oxlint-disable-next-line max-statements -- restore validates and persists a complete historical row
+      Effect.gen(function* () {
+        const input = decodeRequest(
+          PRODUCT_OPERATIONS["restore"].request,
+          body,
+        );
+        if (!input.ok) {
+          return yield* badRequest(input.error);
+        }
+        const args = input.value;
+        const current = yield* fetchProductRow(args.repository, args.id);
+        if (!current) {
+          return yield* notFoundProduct(args.id, args.repository);
+        }
+        const snapshot = yield* fetchProductHistoryRow(
+          args.repository,
+          args.id,
+          args.revision_id,
+        );
+        if (!snapshot) {
+          return yield* HttpServerResponse.json(
+            encodeResponse(ErrorBodySchema, {
+              ok: false,
+              error: `No history revision ${args.revision_id} found for memory ${args.id} in repository '${args.repository}'.`,
+            }),
+            { status: 404 },
+          );
+        }
+        const decoded = decodeRequest(StoredMemoryRowSchema, {
+          ...snapshot,
+          id: args.id,
+        });
+        if (!decoded.ok) {
+          return yield* badRequest(
+            `The historical memory is not valid under the current schema: ${decoded.error}`,
+          );
+        }
+        const history = normalizeStoredMemoryRow(decoded.value);
+        if (current.update_count !== args.expected_update_count) {
+          return HttpServerResponse.jsonUnsafe(
+            { ok: false, error: "Memory changed concurrently; retry." },
+            { status: 409 },
+          );
+        }
+        if (
+          history.superseded_by !== null &&
+          (history.superseded_by === args.id ||
+            !(yield* fetchProductRow(args.repository, history.superseded_by)))
+        ) {
+          return yield* badRequest(
+            "The historical replacement no longer exists in this repository.",
+          );
+        }
+        const size = embeddingSizeReport(embeddingTextForMemory(history));
+        if (history.status === "active" && !size.within_budget) {
+          return yield* badRequest(
+            "The historical memory exceeds the current embedding budget.",
+          );
+        }
+        const rowData = yield* d1
+          .prepare(
+            `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, created_at = ?, updated_at = datetime('now') WHERE repository = ? AND id = ? AND update_count = ? RETURNING *`,
+          )
+          .bind(
+            history.content,
+            history.tags,
+            history.context,
+            history.memory_type,
+            history.status,
+            history.superseded_by,
+            history.source_agent,
+            history.certainty,
+            JSON.stringify(history.refs),
+            history.expires_after_days,
+            history.created_at,
+            args.repository,
+            args.id,
+            args.expected_update_count,
+          )
+          .first<JsonObject>();
+        if (rowData === null) {
+          return HttpServerResponse.jsonUnsafe(
+            { ok: false, error: "Memory changed concurrently; retry." },
+            { status: 409 },
+          );
+        }
+        return yield* HttpServerResponse.json(
+          encodeResponse(PRODUCT_OPERATIONS["restore"].response, {
+            ok: true,
+            result: {
+              written_to: args.repository,
+              id: args.id,
+              restored_revision_id: args.revision_id,
+              memory: toProductRow(rowData),
+              size,
+            },
+          }),
+        );
+      });
+
     const resolveUpdateTarget = (
       repository: string,
       id: number | undefined,
@@ -1913,10 +2076,12 @@ export const createApiHandlers = ({
     const productHandlers = {
       query: handleProductQuery,
       get: handleProductGet,
+      history: handleProductHistory,
       list: handleProductList,
       suggest: handleProductSuggest,
       add: handleProductAdd,
       update: handleProductUpdate,
+      restore: handleProductRestore,
       delete: handleProductDelete,
       "delete-many": handleProductDeleteMany,
       deprecate: handleProductDeprecate,

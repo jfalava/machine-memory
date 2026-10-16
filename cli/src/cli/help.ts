@@ -57,6 +57,11 @@ export function helpPayload() {
       get: {
         usage: `get <id|id,id,...>${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
+      history: {
+        usage: `history <id> [--limit <n>] [--offset <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        description:
+          "List complete previous snapshots for a memory, newest first. Use the current_update_count with restore.",
+      },
       size: {
         usage: SIZE_USAGE,
         description:
@@ -66,6 +71,11 @@ export function helpPayload() {
         usage: UPDATE_USAGE,
         notes:
           "--dry-run prints the per-target size report without writing. Accepts --brief|--json-min|--quiet.",
+      },
+      restore: {
+        usage: `restore <id> --revision <revision_id> --expected-update-count <n>${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        description:
+          "Restore one historical snapshot in place. The expected update count prevents overwriting a newer mutation.",
       },
       deprecate: {
         usage: DEPRECATE_USAGE,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import {
   CLI_LIMIT_MAX,
   decodeRequest,
@@ -10,6 +11,8 @@ import {
   MemoryDiffSuccessSchema,
   MemoryListArgsInputSchema,
   MemoryListSuccessSchema,
+  MemoryHistoryArgsSchema,
+  MemoryRestoreArgsSchema,
   MemoryQueryArgsInputSchema,
   MemoryQuerySuccessSchema,
   MemorySuggestSuccessSchema,
@@ -52,6 +55,34 @@ describe("product ops schemas", () => {
       expect(normalized.status).toBe("active");
       expect(normalized.upsert_threshold).toBe(32);
     }
+  });
+
+  it("requires explicit restore identity and concurrency count, and bounds history pagination", () => {
+    const restore = {
+      repository: "owner/name",
+      id: 7,
+      revision_id: 11,
+      expected_update_count: 0,
+    };
+    expect(decodeRequest(MemoryRestoreArgsSchema, restore).ok).toBe(true);
+    for (const invalid of [
+      { repository: "owner/name", id: 7, revision_id: 11 },
+      { ...restore, expected_update_count: -1 },
+      { ...restore, expected_update_count: 1.5 },
+      { ...restore, revision_id: 0 },
+      { ...restore, id: 0 },
+      { ...restore, repository: "" },
+    ]) {
+      expect(decodeRequest(MemoryRestoreArgsSchema, invalid).ok).toBe(false);
+    }
+    const history = { repository: "owner/name", id: 7, limit: 1, offset: 2 };
+    expect(decodeRequest(MemoryHistoryArgsSchema, history).ok).toBe(true);
+    expect(
+      decodeRequest(MemoryHistoryArgsSchema, { ...history, offset: -1 }).ok,
+    ).toBe(false);
+    expect(
+      decodeRequest(MemoryHistoryArgsSchema, { ...history, limit: 51 }).ok,
+    ).toBe(false);
   });
 
   it("normalizes list offsets and bounds explicit bulk ids", () => {

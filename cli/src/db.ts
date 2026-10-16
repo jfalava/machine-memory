@@ -5,11 +5,12 @@ import { dirname } from "node:path";
 import { Schema } from "effect";
 
 import integritySql from "../../iac/migrations/0003_memory_integrity.sql" with { type: "text" };
+import historySql from "../../iac/migrations/0004_memory_history.sql" with { type: "text" };
 import { DB_PATH } from "./constants";
 import { jsonObject, jsonString } from "./json";
 import { repositoryForCurrentDirectory } from "./repository";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const BUSY_TIMEOUT_MS = Number(
   process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
 );
@@ -206,7 +207,9 @@ function migrateSchema(database: Database) {
       );
     }
     // SQLite and D1 enforce the same write invariants, including concurrent writes.
-    database.exec(`${integritySql}\nPRAGMA user_version = ${SCHEMA_VERSION};`);
+    database.exec(
+      `${integritySql}\n${historySql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
+    );
     runWithRetry(database, "COMMIT");
   } catch (err) {
     try {
@@ -229,7 +232,10 @@ function ensureSchemaReadable(database: Database) {
 }
 
 function isSchemaReady(database: Database): boolean {
-  if (!tableExists(database, "memories_fts")) {
+  if (
+    !tableExists(database, "memories_fts") ||
+    !tableExists(database, "memory_history")
+  ) {
     return false;
   }
   const columns = listMemoryColumns(database);

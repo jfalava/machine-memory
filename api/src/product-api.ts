@@ -114,6 +114,28 @@ export function rowByIdSelect(repository: string, id: number): ProductQuery {
   };
 }
 
+export function historySelect(
+  repository: string,
+  memoryId: number,
+  limit: number,
+  offset: number,
+): ProductQuery {
+  return {
+    sql: `SELECT * FROM memory_history WHERE repository = ? AND memory_id = ? ORDER BY revision_id DESC LIMIT ? OFFSET ?`,
+    params: [repository, memoryId, limit, offset],
+  };
+}
+
+export function historyCountSelect(
+  repository: string,
+  memoryId: number,
+): ProductQuery {
+  return {
+    sql: `SELECT COUNT(*) AS total_count FROM memory_history WHERE repository = ? AND memory_id = ?`,
+    params: [repository, memoryId],
+  };
+}
+
 export function repositoryStatsSelect(
   limit: number,
   offset: number,
