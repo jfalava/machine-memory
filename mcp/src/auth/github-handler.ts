@@ -82,6 +82,7 @@ async function exchangeGithubCode(params: {
       redirect_uri: params.redirect_uri,
     }).toString(),
     headers: {
+      Accept: "application/json",
       "Content-Type": "application/x-www-form-urlencoded",
       "User-Agent": "machine-memory-oauth",
     },
@@ -94,15 +95,70 @@ async function exchangeGithubCode(params: {
       new Response("Failed to fetch access token", { status: 500 }),
     ];
   }
-  const body = await resp.formData();
-  const accessToken = body.get("access_token");
-  if (accessToken === null || accessToken instanceof File) {
-    return [null, new Response("Missing access token", { status: 400 })];
+  const tokenResponse = await parseGithubTokenResponse(resp);
+  if (tokenResponse.accessToken === null) {
+    const detail =
+      tokenResponse.errorDescription ??
+      tokenResponse.error ??
+      "missing access token";
+    console.error("GitHub token exchange returned no access token:", {
+      contentType: resp.headers.get("content-type"),
+      error: tokenResponse.error,
+      errorDescription: tokenResponse.errorDescription,
+      status: resp.status,
+    });
+    return [
+      null,
+      new Response(`GitHub token exchange failed: ${detail}`, { status: 400 }),
+    ];
   }
-  if (accessToken === "") {
-    return [null, new Response("Missing access token", { status: 400 })];
+  return [tokenResponse.accessToken, null];
+}
+
+const GithubTokenResponseSchema = Schema.Struct({
+  access_token: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.String),
+  error_description: Schema.optional(Schema.String),
+});
+
+type GithubTokenResponse = {
+  accessToken: string | null;
+  error: string | null;
+  errorDescription: string | null;
+};
+
+// oxlint-disable-next-line anti-slop/no-unknown-parameters -- this decoder is the response I/O boundary.
+function decodeGithubTokenResponse(value: unknown): GithubTokenResponse {
+  try {
+    const decoded = Schema.decodeUnknownSync(GithubTokenResponseSchema)(value);
+    return {
+      accessToken: decoded.access_token ?? null,
+      error: decoded.error ?? null,
+      errorDescription: decoded.error_description ?? null,
+    };
+  } catch {
+    return { accessToken: null, error: null, errorDescription: null };
   }
-  return [accessToken, null];
+}
+
+async function parseGithubTokenResponse(
+  response: Response,
+): Promise<GithubTokenResponse> {
+  if (
+    (response.headers.get("content-type") ?? "").includes("application/json")
+  ) {
+    return decodeGithubTokenResponse(await response.json());
+  }
+  try {
+    const formData = await response.formData();
+    return decodeGithubTokenResponse({
+      access_token: formData.get("access_token") ?? undefined,
+      error: formData.get("error") ?? undefined,
+      error_description: formData.get("error_description") ?? undefined,
+    });
+  } catch {
+    return { accessToken: null, error: null, errorDescription: null };
+  }
 }
 
 const GitHubUserSchema = Schema.Struct({

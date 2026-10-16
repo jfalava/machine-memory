@@ -68,9 +68,15 @@ const AUTH_REQUEST: AuthRequest = {
 async function callbackResponse(
   githubUserId: number,
   allowedUserId = "42",
+  tokenResponse: {
+    format: "form" | "json";
+    accessToken?: string;
+    error?: string;
+  } = { format: "form", accessToken: "github-access-token" },
 ): Promise<{
   response: Response;
   completeAuthorization: ReturnType<typeof vi.fn>;
+  fetchMock: ReturnType<typeof vi.fn>;
 }> {
   const values = new Map<string, string>();
   const kv = testKv(values);
@@ -79,13 +85,22 @@ async function callbackResponse(
   const completeAuthorization = vi.fn(async () => ({
     redirectTo: "https://client.test/callback?code=machine-memory-token",
   }));
+  const tokenResponseBody =
+    tokenResponse.format === "json"
+      ? Response.json({
+          ...(tokenResponse.accessToken === undefined
+            ? {}
+            : { access_token: tokenResponse.accessToken }),
+          ...(tokenResponse.error === undefined
+            ? {}
+            : { error: tokenResponse.error }),
+        })
+      : new Response("access_token=github-access-token", {
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+        });
   const fetchMock = vi
     .fn()
-    .mockResolvedValueOnce(
-      new Response("access_token=github-access-token", {
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-      }),
-    )
+    .mockResolvedValueOnce(tokenResponseBody)
     .mockResolvedValueOnce(
       Response.json({
         email: "allowed@example.com",
@@ -113,7 +128,7 @@ async function callbackResponse(
     testEnv(kv, completeAuthorization, allowedUserId),
     executionContext,
   );
-  return { completeAuthorization, response };
+  return { completeAuthorization, fetchMock, response };
 }
 
 afterEach(() => {
@@ -147,5 +162,35 @@ describe("MCP GitHub user allowlist", () => {
     expect(denied.response.status).toBe(403);
     expect(await denied.response.text()).toContain("not authorized");
     expect(denied.completeAuthorization).not.toHaveBeenCalled();
+  });
+
+  test("accepts GitHub's JSON token response", async () => {
+    const result = await callbackResponse(42, "42", {
+      format: "json",
+      accessToken: "github-access-token",
+    });
+
+    expect(result.response.status).toBe(302);
+    expect(result.completeAuthorization).toHaveBeenCalled();
+    expect(result.fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://github.com/login/oauth/access_token",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Accept: "application/json" }),
+      }),
+    );
+  });
+
+  test("reports a GitHub token exchange error without exposing a token", async () => {
+    const result = await callbackResponse(42, "42", {
+      format: "json",
+      error: "bad_verification_code",
+    });
+
+    expect(result.response.status).toBe(400);
+    expect(await result.response.text()).toBe(
+      "GitHub token exchange failed: bad_verification_code",
+    );
+    expect(result.completeAuthorization).not.toHaveBeenCalled();
   });
 });
