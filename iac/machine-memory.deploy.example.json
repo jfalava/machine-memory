@@ -10,5 +10,15 @@
     "api": "machine-memory-api",
     "mcp": "machine-memory-mcp",
     "docs": "machine-memory-docs"
+  },
+  "secretsStore": {
+    "storeId": "<cloudflare-secrets-store-id>",
+    "dbToken": "machine-memory-db-token",
+    "oauth": {
+      "githubClientId": "machine-memory-github-client-id",
+      "githubClientSecret": "machine-memory-github-client-secret",
+      "githubAllowedUserId": "machine-memory-github-allowed-user-id",
+      "cookieEncryptionKey": "machine-memory-cookie-encryption-key"
+    }
   }
 }

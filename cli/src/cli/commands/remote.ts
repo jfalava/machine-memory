@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -359,7 +358,12 @@ function printProvisioned(url: string, resolved: DeployConfig): void {
   if (resolved.configPath) {
     console.info(`${pc.dim("Config")}    ${resolved.configPath}`);
   }
-  console.info(`${pc.dim("Token")}     ${pc.dim("stored in the OS keychain")}`);
+  console.info(
+    `${pc.dim("Token")}     ${pc.dim("existing Secrets Store reference; CLI credentials unchanged")}`,
+  );
+  console.info(
+    `Configure this CLI separately with machine-memory remote setup --url ${url}.`,
+  );
   console.info();
 }
 
@@ -403,16 +407,18 @@ export function remoteProvision(context: CommandContext) {
               },
             ),
     });
-    const workerToken =
-      process.env["MACHINE_MEMORY_DB_TOKEN"]?.trim() ??
-      randomBytes(32).toString("hex");
+    if (resolved.secretsStore === undefined) {
+      return yield* commandError(
+        "Secrets Store references are required for deployment.",
+        {
+          command: "remote provision",
+          hint: "Set secretsStore.storeId and secretsStore.dbToken in --config. Values remain in Cloudflare Secrets Store.",
+        },
+      );
+    }
 
     const deployment = yield* Effect.tryPromise({
-      try: () =>
-        runAlchemyDeploy({
-          deployConfig: resolved,
-          workerToken,
-        }),
+      try: () => runAlchemyDeploy(resolved),
       catch: (cause) => provisionDeployError(cause),
     });
     const url = yield* Effect.try({
@@ -423,26 +429,6 @@ export function remoteProvision(context: CommandContext) {
           command: "remote provision",
           hint: "Save the Worker with machine-memory remote setup --url <worker-url> --token <worker-token>.",
         }),
-    });
-
-    yield* Effect.tryPromise({
-      try: () =>
-        saveRemoteCredentials({
-          url,
-          token: workerToken,
-          stackName: resolved.stackName,
-          databaseName: resolved.databaseName,
-          apiName: resolved.workers.api,
-        }),
-      catch: (cause) =>
-        commandError(
-          "The remote database was deployed, but credentials could not be stored in the OS keychain.",
-          {
-            cause,
-            command: "remote provision",
-            hint: "Set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
-          },
-        ),
     });
 
     yield* Effect.sync(() => printProvisioned(url, resolved));
@@ -477,22 +463,28 @@ function remoteStackDirectory(): string {
   return directory;
 }
 
-async function runAlchemyDeploy(options: {
-  deployConfig: DeployConfig;
-  workerToken: string;
-}): Promise<{ url: string }> {
+async function runAlchemyDeploy(
+  deployConfig: DeployConfig,
+): Promise<{ url: string }> {
   const directory = remoteStackDirectory();
+  const applicationSecrets = new Set([
+    "MACHINE_MEMORY_DB_TOKEN",
+    "MACHINE_MEMORY_GITHUB_CLIENT_ID",
+    "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
+    "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
+    "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY",
+  ]);
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && !applicationSecrets.has(entry[0]),
     ),
   );
   const child = Bun.spawn(["bun", "run", "alchemy", "deploy", "--yes"], {
     cwd: directory,
     env: {
       ...environment,
-      ...deployConfigToEnv(options.deployConfig),
-      MACHINE_MEMORY_DB_TOKEN: options.workerToken,
+      ...deployConfigToEnv(deployConfig),
     },
     stdin: "inherit",
     stdout: "pipe",

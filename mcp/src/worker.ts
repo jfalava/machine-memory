@@ -1,15 +1,14 @@
 import * as Cloudflare from "alchemy/Cloudflare";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 
 import ApiWorker from "../../api/src/worker";
 import { mcpName } from "../../iac/src/config";
 import { OAuthDevices, OAuthKv } from "../../iac/src/database";
+import { readStoredSecret } from "../../iac/src/secrets";
 import { handleOAuthPath, isOAuthPath } from "./oauth-bridge";
 
 const INTERNAL_ERROR = "Internal server error.";
@@ -46,49 +45,42 @@ export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
     const env = yield* Cloudflare.WorkerEnvironment;
     // SAFETY: alchemy lowers env.API to a service binding for the API worker.
     const apiFetcher = env.API as Fetcher;
-    const apiToken = yield* Config.Redacted("MACHINE_MEMORY_DB_TOKEN").pipe(
-      Effect.orDie,
-    );
     const oauthKv = yield* Cloudflare.KV.ReadWriteNamespace(OAuthKv);
     const oauthDevices = yield* Cloudflare.D1.QueryDatabase(OAuthDevices);
-    const oauthConfig = yield* Effect.all({
-      githubClientId: Config.String("MACHINE_MEMORY_GITHUB_CLIENT_ID").pipe(
-        Effect.option,
-      ),
-      githubClientSecret: Config.Redacted(
-        "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
-      ).pipe(Effect.option),
-      githubAllowedUserId: Config.String(
-        "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
-      ).pipe(Effect.option),
-      cookieEncryptionKey: Config.Redacted(
-        "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY",
-      ).pipe(Effect.option),
-    });
-    const oauthResources = {
-      api: apiFetcher,
-      apiToken: Redacted.value(apiToken),
-      oauthKv,
-      oauthDevices,
-      githubClientId: Option.getOrUndefined(oauthConfig.githubClientId),
-      githubClientSecret: Option.map(
-        oauthConfig.githubClientSecret,
-        Redacted.value,
-      ).pipe(Option.getOrUndefined),
-      githubAllowedUserId: Option.getOrUndefined(
-        oauthConfig.githubAllowedUserId,
-      ),
-      cookieEncryptionKey: Option.map(
-        oauthConfig.cookieEncryptionKey,
-        Redacted.value,
-      ).pipe(Option.getOrUndefined),
-    };
+    const optionalSecret = (name: string) =>
+      Effect.suspend(() =>
+        env[name] === undefined
+          ? Effect.succeed(undefined)
+          : readStoredSecret(name).pipe(Effect.map(Redacted.value)),
+      );
+    const oauthResources = Effect.gen(function* () {
+      const apiToken = yield* readStoredSecret("MACHINE_MEMORY_DB_TOKEN");
+      const oauthConfig = yield* Effect.all({
+        githubClientId: optionalSecret("MACHINE_MEMORY_GITHUB_CLIENT_ID"),
+        githubClientSecret: optionalSecret(
+          "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
+        ),
+        githubAllowedUserId: optionalSecret(
+          "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
+        ),
+        cookieEncryptionKey: optionalSecret(
+          "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY",
+        ),
+      });
+      return {
+        api: apiFetcher,
+        apiToken: Redacted.value(apiToken),
+        oauthKv,
+        oauthDevices,
+        ...oauthConfig,
+      };
+    }).pipe(Effect.provideService(Cloudflare.WorkerEnvironment, env));
 
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         if (isOAuthPath(request.url)) {
-          return yield* handleOAuthPath(oauthResources, request);
+          return yield* handleOAuthPath(yield* oauthResources, request);
         }
         return HttpServerResponse.jsonUnsafe(
           { error: "Not found" },

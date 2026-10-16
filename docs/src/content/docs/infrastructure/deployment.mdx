@@ -18,8 +18,8 @@ That command:
 
 1. Loads optional `machine-memory.deploy.json` (see [deploy config](#deploy-config-file))
 2. Runs `alchemy deploy` for the multi-worker stack
-3. Generates or reuses a Worker token for the REST API
-4. Stores the **router** URL + token in the OS keychain (for CLI `--remote`)
+3. Connects API and MCP to existing Cloudflare Secrets Store entries
+4. Leaves the CLI's **router** URL + bearer token in the OS keychain unchanged
 
 Command details: [`remote provision`](/human/remote/provision).
 
@@ -52,7 +52,7 @@ CI=1 bun run deploy
 # CI=1 bunx alchemy deploy --yes --adopt
 ```
 
-MCP OAuth secrets are optional at this stage. Without them the API still serves REST; MCP routes return `503` until you [enable the endpoint](/docs/mcp/enable).
+MCP OAuth references are optional at this stage. Without them the API still serves REST; MCP routes return `503` until you [enable the endpoint](/docs/mcp/enable).
 
 After a direct IaC deploy, point the CLI at the **router** base URL with [`remote setup`](/human/remote/setup).
 
@@ -73,9 +73,23 @@ Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-m
     "api": "machine-memory-api",
     "mcp": "machine-memory-mcp",
     "docs": "machine-memory-docs"
+  },
+  "secretsStore": {
+    "storeId": "<cloudflare-secrets-store-id>",
+    "dbToken": "machine-memory-db-token",
+    "oauth": {
+      "githubClientId": "machine-memory-github-client-id",
+      "githubClientSecret": "machine-memory-github-client-secret",
+      "githubAllowedUserId": "machine-memory-github-allowed-user-id",
+      "cookieEncryptionKey": "machine-memory-cookie-encryption-key"
+    }
   }
 }
 ```
+
+`secretsStore` contains references only: `storeId` is the Cloudflare Secrets Store ID and each other value is a secret name already provisioned in that store. Secret values are never read by the CLI, committed to this file, or sent through Alchemy. `dbToken` is required for authenticated API and MCP-to-API requests. The `oauth` block is optional; omitting it preserves the disabled-MCP behavior.
+
+`remote provision` does not create or rotate the bearer token and does not overwrite CLI keychain credentials. After deployment, configure a new CLI installation separately with `machine-memory remote setup --url <router-url> --token <value-from-secrets-store>`.
 
 **Precedence:** CLI flags → config file → `MACHINE_MEMORY_*` env → saved remote credentials → defaults.
 

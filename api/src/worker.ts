@@ -52,7 +52,6 @@ import {
 import type { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as SQL from "alchemy/SQL/D1";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -62,6 +61,7 @@ import * as Schema from "effect/Schema";
 
 import { apiName } from "../../iac/src/config";
 import { Database } from "../../iac/src/database";
+import { readStoredSecret } from "../../iac/src/secrets";
 import { VectorIndex } from "../../iac/src/vectorize";
 import {
   ftsSelect,
@@ -199,7 +199,11 @@ export const createApiHandlers = ({
   d1: Cloudflare.D1.QueryDatabaseClient;
   vectorize: Cloudflare.Vectorize.SearchIndexClient;
   ai: Cloudflare.Workers.AIClient;
-  expectedToken: Redacted.Redacted<string>;
+  expectedToken: Effect.Effect<
+    Redacted.Redacted<string>,
+    Error,
+    RuntimeContext
+  >;
   wake: Effect.Effect<void, never, RuntimeContext>;
 }) =>
   // oxlint-disable-next-line max-statements -- assemble route handlers over shared bindings
@@ -2128,9 +2132,10 @@ export default Cloudflare.Worker<{}>()(
     const d1 = yield* Cloudflare.D1.QueryDatabase(Database);
     const vectorize = yield* Cloudflare.Vectorize.SearchIndex(vectorIndex);
     const ai = yield* Cloudflare.Workers.AI();
-    const expectedToken = yield* Config.Redacted(
-      "MACHINE_MEMORY_DB_TOKEN",
-    ).pipe(Effect.orDie);
+    const env = yield* Cloudflare.WorkerEnvironment;
+    const expectedToken = readStoredSecret("MACHINE_MEMORY_DB_TOKEN").pipe(
+      Effect.provideService(Cloudflare.WorkerEnvironment, env),
+    );
     const coordinator = yield* VectorCoordinator;
     const wake = Effect.suspend(() =>
       coordinator.getByName("memory-index").wake(),

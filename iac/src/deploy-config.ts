@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+
 import { Schema } from "effect";
+
 import {
   jsonObject,
   jsonString,
@@ -33,6 +35,22 @@ export type DeployWorkers = {
   readonly docs: string;
 };
 
+const SecretName = Schema.NonEmptyString;
+const SecretsStoreConfigSchema = Schema.Struct({
+  storeId: Schema.NonEmptyString,
+  dbToken: SecretName,
+  oauth: Schema.optionalKey(
+    Schema.Struct({
+      githubClientId: SecretName,
+      githubClientSecret: SecretName,
+      githubAllowedUserId: SecretName,
+      cookieEncryptionKey: SecretName,
+    }),
+  ),
+});
+
+export type SecretsStoreConfig = typeof SecretsStoreConfigSchema.Type;
+
 export type DeployConfig = {
   readonly stackName: string;
   readonly databaseName: string;
@@ -42,6 +60,7 @@ export type DeployConfig = {
   readonly domain: string | undefined;
   readonly docs: boolean;
   readonly configPath: string | undefined;
+  readonly secretsStore: SecretsStoreConfig | undefined;
 };
 
 export type DeployConfigEnv = {
@@ -55,6 +74,7 @@ export type DeployConfigEnv = {
   readonly MACHINE_MEMORY_DOCS_NAME: string;
   readonly MACHINE_MEMORY_DEPLOY_DOCS: string;
   readonly MACHINE_MEMORY_DOMAIN: string;
+  readonly MACHINE_MEMORY_DEPLOY_CONFIG: string;
 };
 
 export const DEFAULT_DEPLOY_CONFIG: Omit<DeployConfig, "configPath"> = {
@@ -70,6 +90,7 @@ export const DEFAULT_DEPLOY_CONFIG: Omit<DeployConfig, "configPath"> = {
   },
   domain: undefined,
   docs: true,
+  secretsStore: undefined,
 };
 
 type DeployOverrides = Partial<{
@@ -132,6 +153,10 @@ function parseDeployFile(raw: string, path: string): Partial<DeployConfig> {
     databaseName: optionalNonEmpty(file, "database"),
     vectorIndexName: optionalNonEmpty(file, "vectorIndex"),
     oauthKvName: optionalNonEmpty(file, "oauthKv"),
+    secretsStore:
+      file.secretsStore === undefined
+        ? undefined
+        : Schema.decodeUnknownSync(SecretsStoreConfigSchema)(file.secretsStore),
     workers: {
       router:
         optionalNonEmpty(workersObject, "router") ??
@@ -305,6 +330,7 @@ export function loadDeployConfig(options?: {
     domain: resolveDomain(overrides, fromFile),
     docs: resolveDocs(overrides, fromFile),
     configPath,
+    secretsStore: fromFile?.secretsStore,
   };
 }
 
@@ -320,5 +346,6 @@ export function deployConfigToEnv(config: DeployConfig): DeployConfigEnv {
     MACHINE_MEMORY_DOCS_NAME: config.workers.docs,
     MACHINE_MEMORY_DEPLOY_DOCS: config.docs ? "1" : "0",
     MACHINE_MEMORY_DOMAIN: config.domain ?? "",
+    MACHINE_MEMORY_DEPLOY_CONFIG: config.configPath ?? "",
   };
 }

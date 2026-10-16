@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import {
   DEFAULT_DEPLOY_CONFIG,
   deployConfigToEnv,
@@ -66,6 +67,10 @@ test("file supplies domain, docs false, and worker names", () => {
         stackName: "my-stack",
         database: "my-db",
         workers: { router: "r1", api: "a1", mcp: "m1", docs: "d1" },
+        secretsStore: {
+          storeId: "store-1",
+          dbToken: "db-token",
+        },
       }),
     );
     const config = loadDeployConfig({ configPath: path });
@@ -80,6 +85,10 @@ test("file supplies domain, docs false, and worker names", () => {
       docs: "d1",
     });
     expect(config.configPath).toBe(path);
+    expect(config.secretsStore).toEqual({
+      storeId: "store-1",
+      dbToken: "db-token",
+    });
   });
 });
 
@@ -127,6 +136,24 @@ test("deployConfigToEnv encodes docs and domain", () => {
   expect(env.MACHINE_MEMORY_DEPLOY_DOCS).toBe("0");
   expect(env.MACHINE_MEMORY_DOMAIN).toBe("x.example");
   expect(env.MACHINE_MEMORY_ROUTER_NAME).toBe("machine-memory-router");
+  expect(env.MACHINE_MEMORY_DEPLOY_CONFIG).toBe("");
+});
+
+test("preserves Secrets Store names as deployment references", () => {
+  withCleanEnv(() => {
+    const dir = mkdtempSync(join(tmpdir(), "mm-deploy-"));
+    const path = join(dir, "secret-references.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        secretsStore: { storeId: "store-1", dbToken: "db-token-name" },
+      }),
+    );
+    expect(loadDeployConfig({ configPath: path }).secretsStore).toEqual({
+      storeId: "store-1",
+      dbToken: "db-token-name",
+    });
+  });
 });
 
 test("rejects non-object config file", () => {

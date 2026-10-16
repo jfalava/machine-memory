@@ -112,7 +112,7 @@ async function call(path: string, body: JsonValue) {
         },
       } as unknown as Cloudflare.Vectorize.SearchIndexClient,
       ai: { run: aiRun } as unknown as Cloudflare.Workers.AIClient,
-      expectedToken: Redacted.make("test"),
+      expectedToken: Effect.succeed(Redacted.make("test")),
       wake: Effect.sync(wake),
     });
     return yield* handleRestRequest(

@@ -28,8 +28,8 @@ Deploys the [Alchemy stack](https://github.com/jfalava/machine-memory/tree/maste
 
 1. Creates the edge **router** (public URL) plus private **API** and **MCP** workers
 2. Optionally builds and deploys the **docs** worker (`docs: true` in config, default for the upstream site)
-3. Generates or reuses a Worker token for REST
-4. Saves the router URL and credentials in the OS keychain
+3. Connects the Workers to existing Cloudflare Secrets Store entries
+4. Leaves existing CLI URL and credentials in the OS keychain unchanged
 
 ### Self-host without docs
 
@@ -46,6 +46,8 @@ machine-memory remote provision --no-docs --domain memory.example.com
 ```
 
 Full field reference: [Deployment options](/infrastructure/deployment).
+
+The config must include `secretsStore.storeId` and `secretsStore.dbToken`. These are references, not secret values. Add the optional `secretsStore.oauth` block to enable GitHub OAuth. `remote provision` does not generate or rotate a bearer token; use `remote setup` separately when configuring a new CLI installation.
 
 ## Names and defaults
 

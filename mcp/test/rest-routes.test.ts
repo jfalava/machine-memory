@@ -34,7 +34,7 @@ function setup(failingProduct?: RestHandlers<never>["handleProduct"]) {
   );
   const vectorize = vi.fn(ok);
   const handlers: RestHandlers<never> = {
-    expectedToken: Redacted.make("token"),
+    expectedToken: Effect.succeed(Redacted.make("token")),
     handleQuery: ok,
     handleMigration: ok,
     handleMigrationLinks: ok,

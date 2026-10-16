@@ -5,10 +5,11 @@ import {
 } from "@machine-memory/contract";
 import type { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import * as Redacted from "effect/Redacted";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+
 import type { JsonValue } from "./json";
 
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
@@ -42,7 +43,7 @@ export type RestHandlerFn<R = RuntimeContext> = (
 ) => Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, R>;
 
 export type RestHandlers<R = RuntimeContext> = {
-  readonly expectedToken: Redacted.Redacted;
+  readonly expectedToken: Effect.Effect<Redacted.Redacted, Error, R>;
   readonly handleQuery: RestHandlerFn<R>;
   readonly handleMigration: RestHandlerFn<R>;
   readonly handleMigrationLinks: RestHandlerFn<R>;
@@ -114,9 +115,6 @@ export function handleRestRequest<R>(
     );
   };
 
-  const guardedRoute = (body: JsonValue) =>
-    catchInternal(route(body), request.url);
-
   return Effect.gen(function* () {
     if (
       request.method !== "POST" ||
@@ -129,9 +127,10 @@ export function handleRestRequest<R>(
       );
     }
 
+    const expectedToken = yield* handlers.expectedToken;
     if (
       request.headers.authorization !==
-      `Bearer ${Redacted.value(handlers.expectedToken)}`
+      `Bearer ${Redacted.value(expectedToken)}`
     ) {
       return HttpServerResponse.jsonUnsafe(
         { error: "Unauthorized" },
@@ -152,6 +151,6 @@ export function handleRestRequest<R>(
         { status: 400 },
       );
     }
-    return yield* guardedRoute(bodyResult.body);
-  });
+    return yield* route(bodyResult.body);
+  }).pipe((effect) => catchInternal(effect, request.url));
 }

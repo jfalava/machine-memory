@@ -1,6 +1,7 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
+
 import Api from "../api/src/worker";
 import Mcp from "../mcp/src/worker";
 import {
@@ -12,6 +13,7 @@ import {
   stackName,
 } from "./src/config";
 import { Database, OAuthKv } from "./src/database";
+import { bindApplicationSecrets } from "./src/secrets";
 import { createVectorMetadataIndexes, VectorIndex } from "./src/vectorize";
 
 /**
@@ -40,6 +42,7 @@ export default Alchemy.Stack(
 
     const api = yield* Api;
     const mcp = yield* Mcp;
+    yield* bindApplicationSecrets(api, mcp, deployConfig.secretsStore);
 
     const docsWorker = deployDocs
       ? yield* Cloudflare.Website.StaticSite("machine-memory-docs", {

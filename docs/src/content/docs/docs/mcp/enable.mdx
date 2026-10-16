@@ -24,13 +24,19 @@ The MCP endpoint is opt-in. Deploy [infrastructure](/infrastructure/overview) fi
 
 ## 2. Set secrets for the stack
 
-When deploying (CLI provision env, `iac/.env`, or your CI secrets), set:
+Provision the values in Cloudflare Secrets Store, then reference their names in `machine-memory.deploy.json`:
 
-```sh
-MACHINE_MEMORY_GITHUB_CLIENT_ID=your-github-oauth-app-client-id
-MACHINE_MEMORY_GITHUB_CLIENT_SECRET=your-github-oauth-app-client-secret
-MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID=your-numeric-github-user-id
-MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY=your-random-cookie-signing-secret
+```json
+"secretsStore": {
+  "storeId": "<cloudflare-secrets-store-id>",
+  "dbToken": "machine-memory-db-token",
+  "oauth": {
+    "githubClientId": "machine-memory-github-client-id",
+    "githubClientSecret": "machine-memory-github-client-secret",
+    "githubAllowedUserId": "machine-memory-github-allowed-user-id",
+    "cookieEncryptionKey": "machine-memory-cookie-encryption-key"
+  }
+}
 ```
 
 Generate the cookie signing key:
@@ -39,7 +45,7 @@ Generate the cookie signing key:
 openssl rand -hex 32
 ```
 
-These are bound on the Worker and read at startup. If any are missing, OAuth/MCP routes return `503` with the missing names listed. REST routes stay available.
+These names are bound on the Worker and values are read only while handling requests. If any OAuth reference or value is missing, OAuth/MCP routes return `503` with the missing names listed. REST routes stay available. The API bearer token is also read from the Secrets Store at request time.
 
 `MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID` is the numeric ID of the one GitHub account allowed to use this MCP endpoint. Find it with:
 
