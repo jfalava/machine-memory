@@ -5,5 +5,9 @@
     "nimbus/internal-link": "error"
   },
   "collections": {},
-  "site": "https://machine-memory.jfa.dev"
+  "site": "https://machine-memory.jfa.dev",
+  "markdownFeatures": {
+    "gfm": true,
+    "smartPunctuation": true
+  }
 }
