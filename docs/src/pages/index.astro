@@ -1,35 +1,182 @@
 ---
 import DocsLayout from "../layouts/DocsLayout.astro";
-import {
-  getBreadcrumbs,
-  getPrevNext,
-  getSidebar,
-} from "@cloudflare/nimbus-docs";
+import { Icon } from "astro-icon/components";
+import { LinkButton } from "../components/ui/link-button";
+import { Tabs, TabItem } from "../components/ui/tabs";
+import { Code } from "../components/ui/code";
 import { config } from "virtual:nimbus/config";
 
-const sidebar = await getSidebar("/", { collection: "docs" });
-const breadcrumbs = await getBreadcrumbs("/", { collection: "docs" });
-const prevNext = await getPrevNext("/", { sidebarTree: sidebar });
+const features = [
+  {
+    icon: "ph:brain",
+    title: "Persistent memory",
+    body: "Memories survive restarts, editor switches, and machine changes. Every session picks up where the last one left off.",
+  },
+  {
+    icon: "ph:magnifying-glass",
+    title: "Semantic search",
+    body: "Find relevant memories by meaning, not just keywords. Hybrid search combines exact matching with vector similarity.",
+  },
+  {
+    icon: "ph:cloud",
+    title: "Remote sync",
+    body: "Share memories across machines via Cloudflare D1 and Vectorize. One source of truth for every workstation.",
+  },
+  {
+    icon: "ph:robot",
+    title: "Agent workflow integration",
+    body: "AGENTS.md instructions that any AI coding tool can follow. Works with Claude, Cursor, Gemini, and any MCP client.",
+  },
+];
+
+const guides = [
+  {
+    title: "Installation",
+    body: "Install the CLI on Linux, macOS, or Windows.",
+    href: "/installation/",
+  },
+  {
+    title: "Human commands",
+    body: "Setup, provisioning, and maintenance.",
+    href: "/human/overview/",
+  },
+  {
+    title: "Machine commands",
+    body: "The agent-facing command surface.",
+    href: "/machine/overview/",
+  },
+  {
+    title: "MCP server",
+    body: "Use with Claude, Cursor, and other MCP clients.",
+    href: "/docs/mcp/overview/",
+  },
+  {
+    title: "Infrastructure",
+    body: "Deploy your own remote backend.",
+    href: "/infrastructure/overview/",
+  },
+  {
+    title: "Troubleshooting",
+    body: "Common issues and fixes.",
+    href: "/troubleshooting/mcp/",
+  },
+];
+
+const addMemoryCommand = `machine-memory add "Project uses Bun, not npm" \\
+  --type decision --remote`;
+const queryCommand = `machine-memory query "package manager" \\
+  --semantic --remote`;
 ---
 
 <DocsLayout
   title={config.title}
   description={config.description}
-  sidebar={sidebar}
+  sidebar={false}
   headings={false}
-  breadcrumbs={breadcrumbs}
-  prevNext={prevNext}
+  breadcrumbs={[]}
+  prevNext={{}}
+  mode="custom"
 >
-  <h2 id="overview">Overview</h2>
-  <p>
-    MACHINE-MEMORY records memories for the current repository and keeps the
-    command surface deliberately scriptable: database-backed commands return
-    JSON, while setup commands guide humans through configuration.
-  </p>
+  <section class="border-b border-border">
+    <div class="mx-auto max-w-5xl px-6 pb-16 pt-16 sm:pt-24">
+      <h1 class="hero-title max-w-3xl text-balance text-foreground">
+        Memory that outlives every session
+      </h1>
+      <p class="mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
+        Give AI coding agents a durable memory layer that persists decisions,
+        references, and context across sessions, editors, and machines.
+      </p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <LinkButton href="/installation/" variant="primary" size="lg" icon>
+          Get started
+        </LinkButton>
+        <LinkButton href="/machine/overview/" variant="secondary" size="lg">
+          CLI reference
+        </LinkButton>
+      </div>
+    </div>
+  </section>
 
-  <h2 id="getting-started">Getting started</h2>
-  <p>
-    Start with <a href="/installation">Installation</a>: install the CLI binary,
-    or set up MCP-only agent access without one.
-  </p>
+  <section class="mx-auto max-w-5xl px-6 py-16">
+    <h2 class="section-title text-foreground">Install</h2>
+    <Tabs syncKey="os" class="mt-6 max-w-2xl">
+      <TabItem label="Linux and macOS">
+        <pre class="overflow-x-auto rounded-lg bg-card p-4 font-mono text-sm text-foreground ring ring-border"><code>curl -fsSL https://machine-memory.jfa.dev/install | bash</code></pre>
+      </TabItem>
+      <TabItem label="Windows">
+        <pre class="overflow-x-auto rounded-lg bg-card p-4 font-mono text-sm text-foreground ring ring-border"><code>irm https://machine-memory.jfa.dev/install.ps1 | iex</code></pre>
+      </TabItem>
+    </Tabs>
+  </section>
+
+  <section class="mx-auto max-w-5xl px-6 pb-16">
+    <h2 class="section-title text-foreground">Try it</h2>
+    <p class="mt-4 max-w-2xl text-pretty leading-relaxed text-muted-foreground">
+      Store a decision, then retrieve it by meaning.
+    </p>
+    <div class="mt-6 grid gap-4 sm:grid-cols-2 max-w-2xl">
+      <div>
+        <p class="mb-2 text-sm font-semibold text-foreground">Add a memory</p>
+        <Code code={addMemoryCommand} lang="sh" />
+      </div>
+      <div>
+        <p class="mb-2 text-sm font-semibold text-foreground">Query by meaning</p>
+        <Code code={queryCommand} lang="sh" />
+      </div>
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-5xl px-6 pb-16">
+    <h2 class="section-title text-foreground">What it does</h2>
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+      {features.map((feature) => (
+        <article class="rounded-lg bg-card p-5 shadow-sm ring ring-border">
+          <Icon name={feature.icon} class="mb-2.5 block h-6 w-6 text-primary" />
+          <h3 class="m-0 text-base font-semibold leading-snug text-foreground">
+            {feature.title}
+          </h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+            {feature.body}
+          </p>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="mx-auto max-w-5xl px-6 pb-24">
+    <h2 class="section-title text-foreground">Explore the docs</h2>
+    <ul class="mt-6 grid list-none gap-x-8 gap-y-4 p-0 sm:grid-cols-2">
+      {guides.map((guide) => (
+        <li class="m-0 border-t border-border pt-3">
+          <a
+            href={guide.href}
+            class="font-semibold text-foreground no-underline hover:text-primary"
+          >
+            {guide.title}
+          </a>
+          <p class="mt-1 text-sm leading-relaxed text-muted-foreground">
+            {guide.body}
+          </p>
+        </li>
+      ))}
+    </ul>
+  </section>
 </DocsLayout>
+
+<style>
+  .hero-title {
+    font-size: clamp(2.25rem, 6vw, 4rem);
+    font-weight: var(--nb-h1-weight);
+    letter-spacing: var(--nb-h1-tracking);
+    line-height: 1.05;
+    text-transform: var(--nb-h1-transform);
+  }
+
+  .section-title {
+    font-size: var(--nb-h2-size);
+    font-weight: var(--nb-h2-weight);
+    letter-spacing: var(--nb-h2-tracking);
+    line-height: 1.1;
+    text-transform: var(--nb-h2-transform);
+  }
+</style>
