@@ -5,66 +5,50 @@ sidebar:
   order: 8.5
 ---
 
-## Inspect previous revisions
+## Usage
 
 ```sh
 machine-memory history <id> (--local|--remote) [--limit <n>] [--offset <n>]
+machine-memory restore <id> --revision <revision_id> --expected-update-count <n> (--local|--remote)
 ```
 
-Each update saves the complete previous row atomically, including content,
-tags, context, type, status, replacement, refs, expiry, attribution, and
-timestamps. This covers updates by ID or match, upserts, deprecation, and
-raw SQL updates. History lists snapshots newest first by `revision_id`.
+## History
 
-The response includes `results`, `current_update_count`, `count`,
-`total_count`, `offset`, `limit`, and `has_more`. Each snapshot includes its
-`revision_id`, `snapshot_at`, and the old row's `update_count`.
-The current row is still available through `get`; it is not a history entry
-until another update replaces it.
+`history` lists previous revisions of a memory, newest first.
 
-## Restore a revision
-
-Inspect the revision before restoring it. Use the response's
-**`current_update_count`**, not the historical row's `update_count`:
+Each update automatically saves a complete snapshot of the previous memory row,
+including its content, metadata, attribution, and timestamps.
 
 ```sh
 machine-memory history 42 --remote
+```
+
+The response includes:
+
+- `results`: List of historical revisions, each containing its `revision_id`, `snapshot_at`, and previous metadata.
+- `current_update_count`: The current update count of the live memory, used when restoring.
+- Pagination fields: `count`, `total_count`, `offset`, `limit`, and `has_more`.
+
+Historical revisions are text records and are not indexed for search.
+
+## Restore
+
+`restore` reverts an existing memory to a previous revision in place, preserving its ID and repository.
+
+```sh
 machine-memory restore 42 --revision 123 --expected-update-count 5 --remote
 ```
 
-Restore replaces the complete row's content and metadata in place while
-preserving its ID and repository. The current `update_count` increments,
-`updated_at` becomes now, and `last_updated_by` becomes `restore`.
-The original `created_at` and `source_agent` are restored. For status
-memories, the restored expiry window starts at the new `updated_at`.
+Provide the `revision_id` and the memory's `current_update_count` (obtained from `history`). If the memory was modified concurrently and the count does not match, the restore is rejected.
 
-If another update changed the count, restore refuses without changing the
-memory or its history. Read history again and review the newer state before
-retrying. A revision must belong to this memory and repository. Invalid
-historical metadata, missing replacement memories, and active memories over
-the current embedding budget cannot be restored.
+When restored:
 
-The overwritten state is also saved, so a restore can itself be undone.
+- The content and metadata revert to the selected snapshot.
+- The memory's `update_count` increments, and the state prior to restoration is saved as a new snapshot so the restore can be undone.
+- If the restored memory is active, it is automatically re-embedded for search.
 
-## Embeddings and retention
+Deleting a memory permanently purges all of its history snapshots; restore cannot recover deleted memories.
 
-Historical snapshots are text only. They are not embedded or included in
-keyword, semantic, or hybrid memory searches. Restore queues the current
-canonical row through the existing vector-sync flow: active memories are
-embedded; deprecated or superseded memories have their vectors removed.
-Synchronization is asynchronous, so semantic results can briefly lag.
-No reindex is required when applying the history migration.
+## Output flags
 
-History starts when migration `0004_memory_history.sql` is applied; it
-cannot recover earlier overwrites. Alchemy applies the numbered migration
-during deployment. For an existing local database, run
-`machine-memory migrate --local` before reading history.
-
-History has no automatic pruning in this version. It stays in its original
-backend and is not included in existing import/export or local-to-remote
-memory transfers. **Deletion is permanent and purges the memory's history.**
-Use `deprecate` when the record should remain recoverable.
-
-MCP clients use `memory_history` (read scope) and `memory_restore` (write
-scope), with the same revision and concurrency rules. See
-[MCP tools](/docs/mcp/tools).
+Both commands accept `--brief`, `--json-min`, and `--quiet` for compact machine-readable output.
