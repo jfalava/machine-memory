@@ -27,12 +27,12 @@
     "typecheck": "astro check"
   },
   "dependencies": {
-    "@cloudflare/nimbus-docs": "0.18.1",
+    "@cloudflare/nimbus-docs": "0.19.1",
     "@fontsource/google-sans-code": "5.3.2",
     "@fontsource/ibm-plex-sans": "5.3.0",
     "@fontsource/zilla-slab": "5.3.0",
     "@iconify-json/ph": "1.2.2",
-    "astro": "7.4.0",
+    "astro": "7.4.4",
     "astro-icon": "1.2.0",
     "astro-og-canvas": "0.13.2",
     "canvaskit-wasm": "0.42.0",
@@ -40,9 +40,9 @@
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
-    "@astrojs/check": "0.9.10",
+    "@astrojs/check": "0.9.12",
     "@tailwindcss/vite": "4.3.3",
-    "@typescript-eslint/parser": "8.71.2",
+    "@typescript-eslint/parser": "8.72.1",
     "cross-spawn": "7.0.6",
     "eslint": "10.13.0",
     "eslint-plugin-astro": "3.2.1",
@@ -51,16 +51,16 @@
     "oxlint-tsgolint": "catalog:build",
     "pagefind": "1.5.2",
     "prettier": "3.9.10",
-    "prettier-plugin-astro": "1.1.1",
-    "satteri": "^0.10.5",
+    "prettier-plugin-astro": "1.1.2",
+    "satteri": "^0.11.6",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "wrangler": "catalog:build"
   },
   "optionalDependencies": {
-    "@bruits/satteri-darwin-arm64": "0.10.5",
-    "@bruits/satteri-linux-arm64-gnu": "0.10.5",
-    "@bruits/satteri-linux-x64-gnu": "0.10.5",
-    "@bruits/satteri-win32-x64-msvc": "0.10.5"
+    "@bruits/satteri-darwin-arm64": "0.11.6",
+    "@bruits/satteri-linux-arm64-gnu": "0.11.6",
+    "@bruits/satteri-linux-x64-gnu": "0.11.6",
+    "@bruits/satteri-win32-x64-msvc": "0.11.6"
   }
 }

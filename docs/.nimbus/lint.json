@@ -9,5 +9,6 @@
   "markdownFeatures": {
     "gfm": true,
     "smartPunctuation": true
-  }
+  },
+  "base": ""
 }

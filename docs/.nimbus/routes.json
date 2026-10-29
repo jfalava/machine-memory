@@ -228,5 +228,9 @@
   "redirects": [],
   "redirectPages": [],
   "redirectRules": "cloudflare",
-  "opaqueNamespaces": []
+  "mounts": {
+    "docs": ""
+  },
+  "opaqueNamespaces": [],
+  "builtAt": "2026-10-29T20:58:32.125Z"
 }

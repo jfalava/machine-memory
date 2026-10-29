@@ -11,19 +11,19 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "1.2.1",
+    "@cloudflare/workers-oauth-provider": "1.2.4",
     "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
     "@effect/sql-d1": "catalog:effect",
     "@machine-memory/contract": "workspace:*",
-    "@modelcontextprotocol/server": "2.3.0",
-    "agents": "0.26.0",
+    "@modelcontextprotocol/server": "2.4.0",
+    "agents": "0.32.0",
     "alchemy": "catalog:iac",
     "effect": "catalog:effect"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.3.0",
+    "@modelcontextprotocol/client": "2.4.0",
     "bun-types": "catalog:types",
     "esbuild": "0.28.2",
     "miniflare": "5.20261001.0-alpha",
