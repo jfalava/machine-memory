@@ -24,6 +24,9 @@ export const MEMORY_STATUSES = [
 
 export const SEARCH_MODES = ["keyword", "semantic", "hybrid"] as const;
 
+/** Absolute per-result relevance label, independent of batch-relative scores. */
+export const MATCH_STRENGTHS = ["strong", "weak", "none"] as const;
+
 export const QUERY_OPERATIONS = ["run", "get", "all"] as const;
 
 export const MIGRATION_ITEM_STATUSES = ["inserted", "duplicate"] as const;
@@ -62,4 +65,5 @@ export type MemoryType = (typeof MEMORY_TYPES)[number];
 export type Certainty = (typeof CERTAINTY_LEVELS)[number];
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
 export type SearchMode = (typeof SEARCH_MODES)[number];
+export type MatchStrength = (typeof MATCH_STRENGTHS)[number];
 export type QueryOperation = (typeof QUERY_OPERATIONS)[number];

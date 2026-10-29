@@ -14,6 +14,10 @@ import {
   embeddingSizeReport,
   encodeResponse,
   ErrorBodySchema,
+  extractQueryIdentifiers,
+  fileIdentifiers,
+  hasStrongMatch,
+  orderByMatchStrength,
   jsonNumber,
   jsonString,
   MigrationLinksRequestSchema,
@@ -82,6 +86,7 @@ import {
 import {
   buildFtsQuery,
   analyzeMemoryDoctor,
+  assessRowMatch,
   compareMemoryFact,
   contentHead,
   deriveFileNeighborhood,
@@ -91,12 +96,14 @@ import {
   parseSuggestFilesParam,
   scoredResultRow,
   scoreMemoryRows,
+  strongerMatch,
   summarizeMemoryStats,
   toProductRow,
   toHistoryRow,
   toRankedRow,
   uniqueLowerPreserveOrder,
   UPSERT_MIN_SIMILARITY,
+  type MatchQuery,
 } from "./product-logic";
 import {
   handleRestRequest,
@@ -526,7 +533,10 @@ export const createApiHandlers = ({
           { status: "active" },
           5,
         );
-        const scored = scoreMemoryRows(rows, terms);
+        const scored = scoreMemoryRows(rows, {
+          terms,
+          identifiers: extractQueryIdentifiers(query),
+        });
         const best = scored[0];
         if (!best) {
           return null;
@@ -988,7 +998,7 @@ export const createApiHandlers = ({
         tags?: string;
       },
       limit: number,
-      terms: string[],
+      match: MatchQuery,
     ) =>
       Effect.gen(function* () {
         const rows = yield* fetchRankedProductRows(
@@ -997,7 +1007,7 @@ export const createApiHandlers = ({
           filters,
           100,
         );
-        return scoreMemoryRows(rows, terms)
+        return scoreMemoryRows(rows, match)
           .slice(0, limit)
           .map(scoredResultRow);
       });
@@ -1006,8 +1016,13 @@ export const createApiHandlers = ({
       repository: string,
       query: string,
       topK: number,
-      filters: { status?: string; memory_type?: string; certainty?: string },
-      tags: string | undefined,
+      filters: {
+        status?: string;
+        memory_type?: string;
+        certainty?: string;
+        tags?: string;
+      },
+      match: MatchQuery,
     ) =>
       Effect.gen(function* () {
         const values = yield* embed(query);
@@ -1024,10 +1039,7 @@ export const createApiHandlers = ({
         const list = Schema.decodeUnknownSync(VectorizeSearchResultSchema)(
           matches,
         ).matches;
-        return yield* resolveSemanticRows(repository, list, {
-          ...filters,
-          tags,
-        });
+        return yield* resolveSemanticRows(repository, list, filters, match);
       });
 
     const resolveSemanticRows = (
@@ -1039,11 +1051,17 @@ export const createApiHandlers = ({
         certainty?: string;
         tags?: string;
       },
+      query: MatchQuery,
     ) =>
       Effect.gen(function* () {
         const collected: Array<ReturnType<typeof scoredResultRow>> = [];
         for (const match of matches) {
-          const row = yield* resolveSemanticMatch(repository, match, filters);
+          const row = yield* resolveSemanticMatch(
+            repository,
+            match,
+            filters,
+            query,
+          );
           if (row) {
             collected.push(row);
           }
@@ -1060,6 +1078,7 @@ export const createApiHandlers = ({
         certainty?: string;
         tags?: string;
       },
+      query: MatchQuery,
     ) =>
       Effect.gen(function* () {
         const id = Number(match.id);
@@ -1081,7 +1100,11 @@ export const createApiHandlers = ({
         ) {
           return undefined;
         }
-        return { ...row, score: match.score };
+        return scoredResultRow({
+          ...row,
+          ...assessRowMatch(row, query, match.score),
+          score: match.score,
+        });
       });
 
     const handleProductQuery = (body: JsonValue) =>
@@ -1132,23 +1155,26 @@ export const createApiHandlers = ({
             tags: args.tags,
           },
           args.limit,
-          terms,
+          { terms, identifiers: extractQueryIdentifiers(args.query) },
         );
-        return yield* HttpServerResponse.json(
-          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
-            ok: true,
-            result: { count: results.length, results },
-          }),
-        );
+        return yield* queryResultsResponse(results);
       });
 
-    const emptyQueryResponse = () =>
+    const queryResultsResponse = (
+      results: ReadonlyArray<ReturnType<typeof scoredResultRow>>,
+    ) =>
       HttpServerResponse.json(
         encodeResponse(PRODUCT_OPERATIONS["query"].response, {
           ok: true,
-          result: { count: 0, results: [] },
+          result: {
+            count: results.length,
+            no_strong_match: !hasStrongMatch(results),
+            results,
+          },
         }),
       );
+
+    const emptyQueryResponse = () => queryResultsResponse([]);
 
     const semanticProductResponse = (args: {
       repository: string;
@@ -1169,15 +1195,15 @@ export const createApiHandlers = ({
             status: args.status,
             memory_type: args.memory_type,
             certainty: args.certainty,
+            tags: args.tags,
           },
-          args.tags,
+          {
+            terms: extractTerms(args.query),
+            identifiers: extractQueryIdentifiers(args.query),
+          },
         );
-        const sliced = results.slice(0, args.limit);
-        return yield* HttpServerResponse.json(
-          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
-            ok: true,
-            result: { count: sliced.length, results: sliced },
-          }),
+        return yield* queryResultsResponse(
+          orderByMatchStrength(results).slice(0, args.limit),
         );
       });
 
@@ -1192,6 +1218,10 @@ export const createApiHandlers = ({
     }) =>
       Effect.gen(function* () {
         const terms = extractTerms(args.query);
+        const match = {
+          terms,
+          identifiers: extractQueryIdentifiers(args.query),
+        };
         const ftsQuery = buildFtsQuery(terms);
         const keyword =
           ftsQuery === undefined
@@ -1206,7 +1236,7 @@ export const createApiHandlers = ({
                   tags: args.tags,
                 },
                 100,
-                terms,
+                match,
               );
         const semantic = yield* fetchSemanticScored(
           args.repository,
@@ -1216,8 +1246,9 @@ export const createApiHandlers = ({
             status: args.status,
             memory_type: args.memory_type,
             certainty: args.certainty,
+            tags: args.tags,
           },
-          args.tags,
+          match,
         );
         // Reciprocal-rank fusion compares ranks rather than unrelated lexical
         // and cosine score scales. Overlapping results receive both contributions.
@@ -1227,19 +1258,15 @@ export const createApiHandlers = ({
             const previous = byId.get(row.id);
             byId.set(row.id, {
               ...row,
+              ...(previous ? strongerMatch(previous, row) : row),
               score: (previous?.score ?? 0) + 1 / (60 + rank + 1),
             });
           }
         }
-        const results = [...byId.values()]
-          .sort((a, b) => b.score - a.score || a.id - b.id)
-          .slice(0, args.limit);
-        return yield* HttpServerResponse.json(
-          encodeResponse(PRODUCT_OPERATIONS["query"].response, {
-            ok: true,
-            result: { count: results.length, results },
-          }),
-        );
+        const results = orderByMatchStrength(
+          [...byId.values()].sort((a, b) => b.score - a.score || a.id - b.id),
+        ).slice(0, args.limit);
+        return yield* queryResultsResponse(results);
       });
 
     const fetchSuggestNeighborhood = (
@@ -1337,6 +1364,7 @@ export const createApiHandlers = ({
           ftsRows,
           neighborhoodRows,
           limit: args.limit,
+          identifiers: fileIdentifiers(files),
         });
       });
 
@@ -1348,13 +1376,16 @@ export const createApiHandlers = ({
       ftsRows: ReturnType<typeof toRankedRow>[];
       neighborhoodRows: ReturnType<typeof toRankedRow>[];
       limit: number;
+      identifiers: string[];
     }) =>
       Effect.gen(function* () {
-        const primary = scoreMemoryRows(input.ftsRows, input.scoreTerms);
-        const secondary = scoreMemoryRows(
-          input.neighborhoodRows,
-          input.scoreTerms,
-        );
+        const match = {
+          terms: input.scoreTerms,
+          identifiers: input.identifiers,
+          scope: "files" as const,
+        };
+        const primary = scoreMemoryRows(input.ftsRows, match);
+        const secondary = scoreMemoryRows(input.neighborhoodRows, match);
         const results = mergeSuggestScored(primary, secondary)
           .slice(0, input.limit)
           .map(scoredResultRow);
@@ -1370,6 +1401,7 @@ export const createApiHandlers = ({
                 paths: input.neighborhood.pathHints,
               },
               count: results.length,
+              no_strong_match: !hasStrongMatch(results),
               results,
             },
           }),
@@ -1398,7 +1430,9 @@ export const createApiHandlers = ({
           score: Number(Math.max(existing.score, row.score + 12).toFixed(3)),
         });
       }
-      return [...byId.values()].sort((left, right) => right.score - left.score);
+      return orderByMatchStrength(
+        [...byId.values()].sort((left, right) => right.score - left.score),
+      );
     };
 
     const insertProductRow = (input: InsertInput) =>
@@ -1435,7 +1469,10 @@ export const createApiHandlers = ({
           { status: "active" },
           5,
         );
-        return scoreMemoryRows(rows, terms)
+        return scoreMemoryRows(rows, {
+          terms,
+          identifiers: extractQueryIdentifiers(content),
+        })
           .filter((candidate) => candidate.id !== excludeId)
           .slice(0, 5)
           .map(scoredResultRow);

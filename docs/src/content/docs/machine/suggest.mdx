@@ -16,6 +16,13 @@ Provide exactly one of `--files` or `--files-json`. `suggest` derives path
 terms and nearby directory context, combines that with full-text matching and
 path/tag signals, then returns the highest-scoring relevant memories.
 
+A suggestion is `strong` only when the memory names one of the files literally,
+by full path or specific file name (generic names such as `index.ts` do not
+count). Path-derived words like `cli` or `ts` are too common to be decisive, so
+matches on them alone are at most `weak`. Strong results come first, and
+`no_strong_match: true` means no memory names the files. See
+[`query`](/machine/query#match-strength) for the strength fields.
+
 `--tags`, `--type`, and `--certainty` filter candidates. Use
 `--include-deprecated`, `--limit`, and `--explain-score` to change the search;
 `--brief`, `--json-min`, and `--quiet` reduce the response for an agent loop.

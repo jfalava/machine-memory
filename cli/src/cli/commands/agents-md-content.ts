@@ -43,7 +43,7 @@ function agentsMdSizeGuidance(backend: AgentsMemoryBackend): string {
 }
 
 function agentsMdRetrievalCaveat(preferred: string): string {
-  return `Search results are ranked candidates, not an exhaustive or authoritative list. Scores blend relevance with recency, certainty, and update count, and hybrid scores are normalized within the returned batch, so a high score does not prove a strong match and directly relevant records can rank below loosely related ones. Prefer ${preferred} over broad queries, read full records before relying on them, and treat "nothing directly relevant" as a valid outcome instead of adopting the nearest hit.`;
+  return `Search results are ranked candidates, not an exhaustive or authoritative list. Scores only rank results within one response, so a high score does not prove a strong match. Use each result's \`match_strength\` (strong, weak, none) and \`exact_matches\` instead; when the response reports \`no_strong_match\`, nothing matched well. Prefer ${preferred} over broad queries, read full records before relying on them, and treat "nothing directly relevant" as a valid outcome instead of adopting the nearest hit.`;
 }
 
 function agentsMdDelegationSection(scan: string): string[] {

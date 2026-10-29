@@ -21,7 +21,7 @@ Before touching code, complete this scan from the repository root. Every databas
 
 If results look relevant, fetch full records before editing: `machine-memory get <id> --remote` or `machine-memory get <id,id,...> --remote`.
 
-Search results are ranked candidates, not an exhaustive or authoritative list. Scores blend relevance with recency, certainty, and update count, and hybrid scores are normalized within the returned batch, so a high score does not prove a strong match and directly relevant records can rank below loosely related ones. Prefer known IDs (`get`), file-scoped `suggest --files`, and `--tags` filters over broad queries, read full records before relying on them, and treat "nothing directly relevant" as a valid outcome instead of adopting the nearest hit.
+Search results are ranked candidates, not an exhaustive or authoritative list. Scores only rank results within one response, so a high score does not prove a strong match. Use each result's `match_strength` (strong, weak, none) and `exact_matches` instead; when the response reports `no_strong_match`, nothing matched well. Prefer known IDs (`get`), file-scoped `suggest --files`, and `--tags` filters over broad queries, read full records before relying on them, and treat "nothing directly relevant" as a valid outcome instead of adopting the nearest hit.
 
 Recover accidental overwrites with `machine-memory history <id> --remote`, then `machine-memory restore <id> --revision <revision_id> --expected-update-count <current_update_count> --remote`. Use the current count from history, not the snapshot's count. Restore preserves the id and re-syncs only the current memory's vector; snapshots are not embedded. Delete is permanent and removes history.
 

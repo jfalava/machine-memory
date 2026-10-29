@@ -8,6 +8,7 @@ import {
   MemoryTypeSchema,
   MemoryStatusSchema,
 } from "../entities";
+import { MatchStrengthSchema } from "../search";
 
 export const FactCheckResultSchema = Schema.Struct({
   similarity: Schema.Number,
@@ -20,6 +21,9 @@ export type FactCheckResult = typeof FactCheckResultSchema.Type;
 export const ScoredMemoryRowSchema = Schema.Struct({
   ...MemorySummarySchema.fields,
   score: Schema.Number,
+  match_strength: MatchStrengthSchema,
+  term_coverage: Schema.Number,
+  exact_matches: Schema.Array(Schema.String),
 });
 export type ScoredMemoryRow = typeof ScoredMemoryRowSchema.Type;
 
@@ -118,6 +122,7 @@ export type MemoryListSuccess = typeof MemoryListSuccessSchema.Type;
 
 export const MemoryQueryResultSchema = Schema.Struct({
   count: Schema.Number,
+  no_strong_match: Schema.Boolean,
   results: Schema.Array(ScoredMemoryRowSchema),
 });
 export type MemoryQueryResult = typeof MemoryQueryResultSchema.Type;
@@ -135,6 +140,7 @@ export const MemorySuggestResultSchema = Schema.Struct({
     paths: Schema.Array(Schema.String),
   }),
   count: Schema.Number,
+  no_strong_match: Schema.Boolean,
   results: Schema.Array(ScoredMemoryRowSchema),
 });
 export type MemorySuggestResult = typeof MemorySuggestResultSchema.Type;

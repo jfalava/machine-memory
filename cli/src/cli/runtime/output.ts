@@ -1,9 +1,10 @@
 import { Flag, GlobalFlag } from "effect/cli";
+
 import { printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
+import type { JsonObject, JsonValue } from "../../json";
 import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";
 import { renderPretty } from "./pretty";
-import type { JsonObject, JsonValue } from "../../json";
 
 export const prettyOutput = GlobalFlag.Setting("pretty")({
   flag: Flag.Boolean("pretty").pipe(
@@ -64,8 +65,20 @@ function formatBriefMemoryLine(row: JsonObject): string {
   const id = Number(row.id ?? 0);
   const certainty = normalizeCertaintyValue(row.certainty);
   const type = stringValue(row.memory_type, "convention");
+  const strength = stringValue(row.match_strength);
+  const match = strength ? ` <match:${strength}>` : "";
   const content = stringValue(row.content).replace(/\s+/g, " ").trim();
-  return `[${id}] <${certainty}> <${type}>: ${content} ${briefTagText(row.tags)}`;
+  return `[${id}] <${certainty}> <${type}>${match}: ${content} ${briefTagText(row.tags)}`;
+}
+
+const SNIPPET_MAX_CHARS = 140;
+
+/** Content head for triage in minimal output, so relevance can be judged without a full get. */
+export function contentSnippet(content: JsonValue | undefined): string {
+  const flattened = stringValue(content).replace(/\s+/g, " ").trim();
+  return flattened.length > SNIPPET_MAX_CHARS
+    ? `${flattened.slice(0, SNIPPET_MAX_CHARS - 1)}…`
+    : flattened;
 }
 
 export function printBriefLines(rows: JsonObject[]) {
@@ -73,13 +86,22 @@ export function printBriefLines(rows: JsonObject[]) {
 }
 
 export function minimalResultSummary(row: JsonObject): JsonObject {
-  return {
+  const summary: JsonObject = {
     id: Number(row.id ?? 0),
     score: Number(row.score ?? 0),
     memory_type: stringValue(row.memory_type, "convention"),
     certainty: normalizeCertaintyValue(row.certainty),
     tags: parseTags(stringValue(row.tags)),
-  } satisfies JsonObject;
+  };
+  const strength = stringValue(row.match_strength);
+  if (strength) {
+    summary.match_strength = strength;
+  }
+  if (Array.isArray(row.exact_matches) && row.exact_matches.length > 0) {
+    summary.exact_matches = row.exact_matches;
+  }
+  summary.snippet = contentSnippet(row.content);
+  return summary;
 }
 
 export function queryEmptyResultPayload(
@@ -89,6 +111,7 @@ export function queryEmptyResultPayload(
 ) {
   return {
     results: [],
+    no_strong_match: true,
     search_term: term,
     derived_terms: queryTokens,
     filters: {

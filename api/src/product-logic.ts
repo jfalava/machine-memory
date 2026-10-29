@@ -1,8 +1,20 @@
 import {
+  assessMatch,
+  certaintyPoints,
   composeEmbeddingText,
+  exactMatchPoints,
+  ftsRankPoints,
+  matchStrengthRank,
+  matchText,
+  recencyPoints,
   StoredMemoryRowSchema,
   MemorySummarySchema,
   normalizeStoredMemoryRow,
+  tagMatchPoints,
+  termCoveragePoints,
+  updateCountPoints,
+  type MatchAssessment,
+  type MatchScope,
   type MemoryRow,
   type MemoryHistoryEntry,
   type MemorySummary,
@@ -24,10 +36,18 @@ import { Schema } from "effect";
 export type RankedMemoryRow = MemorySummary & {
   readonly updated_at: string;
   readonly update_count: number;
+  readonly refs: readonly string[];
 };
 
 export type FtsRankedMemoryRow = RankedMemoryRow & {
   readonly fts_rank: number;
+};
+
+/** Search terms plus literal identifiers used to assess absolute match strength. */
+export type MatchQuery = {
+  readonly terms: readonly string[];
+  readonly identifiers: readonly string[];
+  readonly scope?: MatchScope;
 };
 
 /** Decode at the database boundary; invalid stored enums must not become typed rows. */
@@ -57,25 +77,36 @@ export function toRankedRow(value: JsonObject): FtsRankedMemoryRow {
     ...Schema.decodeUnknownSync(MemorySummarySchema)(row),
     updated_at: row.updated_at ?? "",
     update_count: row.update_count,
+    refs: row.refs,
     fts_rank: Number(value.fts_rank ?? 0),
   };
 }
 
-export function toScoredRow(
-  row: RankedMemoryRow,
-  score: number,
-): ScoredMemoryRow {
-  return {
-    id: row.id,
-    repository: row.repository,
-    content: row.content,
-    tags: row.tags,
-    context: row.context,
-    memory_type: row.memory_type,
-    status: row.status,
-    certainty: row.certainty,
-    score,
-  };
+export function assessRowMatch(
+  row: Pick<MemorySummary, "content" | "tags" | "context"> & {
+    readonly refs: readonly string[];
+  },
+  query: MatchQuery,
+  semanticScore?: number,
+): MatchAssessment {
+  return assessMatch({
+    queryTerms: query.terms,
+    identifiers: query.identifiers,
+    text: matchText([row.content, row.tags, row.context, ...row.refs]),
+    semanticScore,
+    scope: query.scope,
+  });
+}
+
+/** Keeps the stronger assessment when one memory arrives from two retrievers. */
+export function strongerMatch(
+  left: MatchAssessment,
+  right: MatchAssessment,
+): MatchAssessment {
+  return matchStrengthRank(right.match_strength) >
+    matchStrengthRank(left.match_strength)
+    ? right
+    : left;
 }
 
 const STOPWORDS = new Set([
@@ -653,93 +684,35 @@ export function contentHead(text: string, maxChars = 120): string {
     : flattened;
 }
 
-function certaintyPoints(certainty: string): number {
-  if (certainty === "verified") {
-    return 20;
-  }
-  if (certainty === "inferred") {
-    return 10;
-  }
-  return 2;
-}
-
-function recencyPoints(updatedAt: string): number {
-  const ms = sqliteDateToMs(updatedAt);
-  if (ms === null) {
-    return 0;
-  }
-  const ageDays = Math.max(0, (Date.now() - ms) / (1000 * 60 * 60 * 24));
-  const capped = Math.min(ageDays, 180);
-  return Number((30 * (1 - capped / 180)).toFixed(3));
-}
-
-function tagMatchPoints(tags: string, queryTokens: string[]): number {
-  if (tags === "" || queryTokens.length === 0) {
-    return 0;
-  }
-  const tagList = tags
-    .split(",")
-    .map((tag) => tag.trim().toLowerCase())
-    .filter(Boolean);
-  const tokenSet = new Set(queryTokens.map((token) => token.toLowerCase()));
-  if (tagList.some((tag) => tokenSet.has(tag))) {
-    return 18;
-  }
-  if (
-    tagList.some((tag) =>
-      queryTokens.some((token) => tag.includes(token.toLowerCase())),
-    )
-  ) {
-    return 8;
-  }
-  return 0;
-}
-
-function updateCountPoints(updateCount: number): number {
-  if (!Number.isFinite(updateCount) || updateCount <= 0) {
-    return 0;
-  }
-  return Math.min(updateCount, 10) * 2;
-}
-
-function ftsRankPoints(ftsRank: number): number {
-  if (!Number.isFinite(ftsRank)) {
-    return 0;
-  }
-  return Number(Math.max(0, Math.min(30, ftsRank * -10)).toFixed(3));
-}
+export type ScoredRankedRow = RankedMemoryRow &
+  MatchAssessment & { readonly score: number };
 
 export function scoreMemoryRows(
   rows: readonly FtsRankedMemoryRow[],
-  queryTokens: string[],
-): Array<RankedMemoryRow & { score: number }> {
+  query: MatchQuery,
+): ScoredRankedRow[] {
   return rows
-    .map((row) => ({
-      id: row.id,
-      repository: row.repository,
-      content: row.content,
-      tags: row.tags,
-      context: row.context,
-      memory_type: row.memory_type,
-      status: row.status,
-      certainty: row.certainty,
-      updated_at: row.updated_at,
-      update_count: row.update_count,
-      score: Number(
-        (
-          recencyPoints(row.updated_at) +
-          certaintyPoints(row.certainty) +
-          tagMatchPoints(row.tags, queryTokens) +
-          updateCountPoints(row.update_count) +
-          ftsRankPoints(row.fts_rank)
-        ).toFixed(3),
-      ),
-    }))
-    .sort((left, right) => right.score - left.score);
+    .map((row) => {
+      const match = assessRowMatch(row, query);
+      const score =
+        ftsRankPoints(row.fts_rank) +
+        termCoveragePoints(match.term_coverage) +
+        exactMatchPoints(match.exact_matches.length) +
+        tagMatchPoints(memoryTags(row.tags), query.terms) +
+        recencyPoints(sqliteDateToMs(row.updated_at)) +
+        certaintyPoints(row.certainty) +
+        updateCountPoints(row.update_count);
+      return { ...row, ...match, score: Number(score.toFixed(3)) };
+    })
+    .sort(
+      (left, right) =>
+        matchStrengthRank(right.match_strength) -
+          matchStrengthRank(left.match_strength) || right.score - left.score,
+    );
 }
 
 export function scoredResultRow(
-  row: RankedMemoryRow & { score: number },
+  row: MemorySummary & MatchAssessment & { readonly score: number },
 ): ScoredMemoryRow {
   return {
     id: row.id,
@@ -751,42 +724,10 @@ export function scoredResultRow(
     status: row.status,
     certainty: row.certainty,
     score: row.score,
+    match_strength: row.match_strength,
+    term_coverage: row.term_coverage,
+    exact_matches: row.exact_matches,
   };
-}
-
-function mergeSuggestRows(
-  primary: Array<RankedMemoryRow & { score: number }>,
-  secondary: Array<RankedMemoryRow & { score: number }>,
-): Array<RankedMemoryRow & { score: number }> {
-  const byId = new Map<number, RankedMemoryRow & { score: number }>();
-  for (const row of primary) {
-    byId.set(row.id, row);
-  }
-  for (const row of secondary) {
-    const existing = byId.get(row.id);
-    if (!existing) {
-      byId.set(row.id, {
-        ...row,
-        score: Number((row.score + 12).toFixed(3)),
-      });
-      continue;
-    }
-    const nextScore = Math.max(existing.score, row.score + 12);
-    byId.set(row.id, { ...existing, score: Number(nextScore.toFixed(3)) });
-  }
-  return [...byId.values()].sort((left, right) => right.score - left.score);
-}
-
-export function mergeScoredSuggestRows(
-  primary: ScoredMemoryRow[],
-  secondaryRanks: Array<RankedMemoryRow & { score: number }>,
-): ScoredMemoryRow[] {
-  const primaryRanks = primary.map((row) => ({
-    ...row,
-    updated_at: "",
-    update_count: 0,
-  }));
-  return mergeSuggestRows(primaryRanks, secondaryRanks).map(scoredResultRow);
 }
 
 export function normalizeSuggestPath(value: string): string {

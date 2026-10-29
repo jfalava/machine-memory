@@ -1,19 +1,30 @@
-import { SEARCH_LIMIT_MAX } from "@machine-memory/contract";
+import {
+  SEARCH_LIMIT_MAX,
+  extractQueryIdentifiers,
+  fileIdentifiers,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
+
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { jsonNumber, type JsonObject } from "../../json";
+import { repositoryForCurrentDirectory } from "../../repository";
+import { requireDatabase, type CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
 import {
   HYBRID_SCORE_WEIGHTS,
   SCORE_COMPONENT_WEIGHTS,
+  annotateMatches,
   applySqlFilters,
   buildFtsQueryFromTerms,
   combineHybridResults,
   deriveNeighborhoodFromFiles,
   extractPathTermsFromFiles,
   extractTerms,
+  hasStrongMatchRow,
   mergeSuggestionResults,
   minimalResultSummary,
+  orderRowsByMatchStrength,
   normalizeSqliteRow,
   parseCommonFilters,
   parseResultLimit,
@@ -25,10 +36,8 @@ import {
   sortByScoreThenRecency,
   stringValue,
   uniqueLowerPreserveOrder,
+  type SearchMatchQuery,
 } from "../shared";
-import { repositoryForCurrentDirectory } from "../../repository";
-import { requireDatabase, type CommandContext } from "../runtime/context";
-import { printCommandOutput } from "../runtime/output";
 
 const SWEEP_USAGE =
   'sweep (--files "src/a.ts,src/b.ts" | --files-json \'["src/a.ts","src/b.ts"]\') [--query <search_term>] [--tags <tag>] [--limit <n>] [--brief|--json-min|--quiet]';
@@ -55,6 +64,9 @@ type SuggestSnapshot = {
 
 type SweepSource = "suggest" | "query" | "list";
 
+/** Candidates gathered per suggest source before tiering by match strength. */
+const SUGGEST_CANDIDATE_POOL = 20;
+
 function explainScoreEnabled(args: string[]): boolean {
   return hasFlag(args, "--explain-score");
 }
@@ -65,13 +77,42 @@ function resultIds(results: JsonObject[]): JsonObject["id"][] {
 
 function minimalScoredResultSummary(row: JsonObject): JsonObject {
   const summary = minimalResultSummary(row);
-  for (const component of ["fts_score", "semantic_score", "hybrid_score"]) {
+  for (const component of [
+    "fts_score",
+    "semantic_score",
+    "hybrid_score",
+    "term_coverage",
+  ]) {
     const score = jsonNumber(row[component]);
     if (score !== undefined) {
       summary[component] = score;
     }
   }
   return summary;
+}
+
+function minimalScoredPayload(
+  results: JsonObject[],
+  options: {
+    jsonMin: boolean;
+    scoreWeights?: JsonObject;
+    summarize?: (row: JsonObject) => JsonObject;
+  },
+): JsonObject {
+  const payload: JsonObject = {
+    count: results.length,
+    no_strong_match: !hasStrongMatchRow(results),
+    ids: resultIds(results),
+  };
+  if (options.jsonMin) {
+    payload.results = results.map(
+      options.summarize ?? minimalScoredResultSummary,
+    );
+  }
+  if (options.scoreWeights !== undefined) {
+    payload.score_weights = options.scoreWeights;
+  }
+  return payload;
 }
 
 function printScoredResults(
@@ -88,19 +129,12 @@ function printScoredResults(
   const showScoreWeights =
     options.explainScore && options.scoreWeights !== undefined;
   if (outputMode.jsonMin || outputMode.quiet) {
-    const payload = {
-      count: results.length,
-      ids: resultIds(results),
-    } satisfies JsonObject;
-    if (outputMode.jsonMin) {
-      Object.assign(payload, {
-        results: results.map(minimalScoredResultSummary),
-      });
-    }
-    if (showScoreWeights) {
-      Object.assign(payload, { score_weights: options.scoreWeights });
-    }
-    printJson(payload);
+    printJson(
+      minimalScoredPayload(results, {
+        jsonMin: outputMode.jsonMin,
+        scoreWeights: showScoreWeights ? options.scoreWeights : undefined,
+      }),
+    );
     return;
   }
   if (outputMode.brief) {
@@ -108,7 +142,10 @@ function printScoredResults(
     return;
   }
   if (options.wrapResults) {
-    const output = { results } satisfies JsonObject;
+    const output = {
+      no_strong_match: !hasStrongMatchRow(results),
+      results,
+    } satisfies JsonObject;
     if (showScoreWeights) {
       Object.assign(output, { score_weights: options.scoreWeights });
     }
@@ -133,6 +170,21 @@ function printEmptyQueryResults(
     commandCtx,
     queryEmptyResultPayload(term, filters, queryTokens),
   );
+}
+
+function termMatchQuery(term: string): SearchMatchQuery {
+  return {
+    terms: extractTerms(term),
+    identifiers: extractQueryIdentifiers(term),
+  };
+}
+
+function suggestMatchQuery(snapshot: SuggestSnapshot): SearchMatchQuery {
+  return {
+    terms: snapshot.suggestTerms,
+    identifiers: fileIdentifiers(snapshot.files),
+    scope: "files",
+  };
 }
 
 function fetchQueryResults(
@@ -170,6 +222,7 @@ function fetchQueryResults(
       Effect.map((rows) => ({
         results: scoreRowsWithDetails(rows, queryTokens, {
           explainScore: options.explainScore,
+          identifiers: extractQueryIdentifiers(term),
         }).slice(0, options.limit ?? 8),
         queryTokens,
         filters,
@@ -287,7 +340,9 @@ function fetchSemanticResults(
   }).pipe(
     Effect.map((result) => ({
       ...result,
-      results: result.results.slice(0, limit),
+      results: orderRowsByMatchStrength(
+        annotateMatches(result.results, termMatchQuery(term)),
+      ).slice(0, limit),
     })),
   );
 }
@@ -318,6 +373,7 @@ function fetchHybridResults(
         semantic.results,
         limit,
         options.explainScore,
+        termMatchQuery(term),
       ),
       queryTokens: fts.queryTokens,
       filters: fts.filters,
@@ -343,13 +399,13 @@ export function handleQueryCommand(commandCtx: CommandContext) {
       : semantic
         ? fetchSemanticResults
         : fetchQueryResults;
-    const { results, queryTokens, filters } = yield* fetchResults(
-      commandCtx,
-      term,
-      {
-        explainScore,
-        limit: parseResultLimit(args),
-      },
+    const fetched = yield* fetchResults(commandCtx, term, {
+      explainScore,
+      limit: parseResultLimit(args),
+    });
+    const { queryTokens, filters } = fetched;
+    const results = orderRowsByMatchStrength(
+      annotateMatches(fetched.results, termMatchQuery(term)),
     );
     yield* Effect.sync(() => {
       if (results.length === 0) {
@@ -455,6 +511,8 @@ function fetchFtsSuggestResults(
       Effect.map((rows) =>
         scoreRowsWithDetails(rows, snapshot.suggestTerms, {
           explainScore: options.explainScore,
+          identifiers: fileIdentifiers(snapshot.files),
+          scope: "files",
         }).slice(0, options.limit ?? 8),
       ),
     );
@@ -466,21 +524,24 @@ function collectSuggestResults(
   options: FetchResultsOptions,
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   return Effect.gen(function* () {
+    const limit = options.limit ?? 8;
+    const candidateLimit = Math.max(SUGGEST_CANDIDATE_POOL, limit);
     const neighborhoodResults = yield* queryNeighborhoodMatches(
       requireDatabase(commandCtx),
       snapshot.neighborhood,
       snapshot.filters,
-      options.limit ?? 8,
+      candidateLimit,
     );
-    const ftsResults = yield* fetchFtsSuggestResults(
-      commandCtx,
-      snapshot,
-      options,
-    );
-    return mergeSuggestionResults(ftsResults, neighborhoodResults).slice(
-      0,
-      options.limit ?? 8,
-    );
+    const ftsResults = yield* fetchFtsSuggestResults(commandCtx, snapshot, {
+      ...options,
+      limit: candidateLimit,
+    });
+    return orderRowsByMatchStrength(
+      annotateMatches(
+        mergeSuggestionResults(ftsResults, neighborhoodResults),
+        suggestMatchQuery(snapshot),
+      ),
+    ).slice(0, limit);
   });
 }
 
@@ -492,19 +553,14 @@ function printSuggestResults(
 ) {
   const { outputMode } = commandCtx;
   if (outputMode.jsonMin || outputMode.quiet) {
-    const payload = {
-      count: results.length,
-      ids: resultIds(results),
-    } satisfies JsonObject;
-    if (outputMode.jsonMin) {
-      Object.assign(payload, {
-        results: results.map(minimalResultSummary),
-      });
-    }
-    if (options.explainScore) {
-      Object.assign(payload, { score_weights: SCORE_COMPONENT_WEIGHTS });
-    }
-    printJson(payload);
+    printJson(
+      minimalScoredPayload(results, {
+        jsonMin: outputMode.jsonMin,
+        scoreWeights: options.explainScore
+          ? SCORE_COMPONENT_WEIGHTS
+          : undefined,
+      }),
+    );
     return;
   }
   if (outputMode.brief) {
@@ -521,6 +577,7 @@ function printSuggestResults(
       tags: snapshot.neighborhood.tagHints,
       paths: snapshot.neighborhood.pathHints,
     },
+    no_strong_match: !hasStrongMatchRow(results),
     results,
   } satisfies JsonObject;
   if (options.explainScore) {
@@ -598,6 +655,24 @@ function fetchListScoredResults(
         filters,
       })),
     );
+}
+
+/** A sweep query makes lexical matches meaningful; file terms alone do not. */
+function sweepMatchQuery(
+  snapshot: SuggestSnapshot,
+  queryTerm: string | undefined,
+): SearchMatchQuery {
+  const files = fileIdentifiers(snapshot.files);
+  if (queryTerm === undefined) {
+    return suggestMatchQuery(snapshot);
+  }
+  return {
+    terms: extractTerms(queryTerm),
+    identifiers: uniqueLowerPreserveOrder([
+      ...files,
+      ...extractQueryIdentifiers(queryTerm),
+    ]),
+  };
 }
 
 function mergeSweepRows(
@@ -680,29 +755,28 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         limit,
       },
     );
-    const results = mergeSweepResults([
-      { source: "suggest", rows: suggestResults },
-      { source: "query", rows: queryBundle.results },
-      { source: "list", rows: listBundle.results },
-    ]).slice(0, limit);
+    const results = orderRowsByMatchStrength(
+      annotateMatches(
+        mergeSweepResults([
+          { source: "suggest", rows: suggestResults },
+          { source: "query", rows: queryBundle.results },
+          { source: "list", rows: listBundle.results },
+        ]),
+        sweepMatchQuery(snapshot, queryTerm),
+      ),
+    ).slice(0, limit);
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
-        const payload = {
-          count: results.length,
-          ids: resultIds(results),
-        } satisfies JsonObject;
-        if (outputMode.jsonMin) {
-          Object.assign(payload, {
-            results: results.map((row) => ({
-              ...minimalResultSummary(row),
-              sources: row.sources,
-            })),
-          });
-        }
-        if (explainScore) {
-          Object.assign(payload, { score_weights: SCORE_COMPONENT_WEIGHTS });
-        }
-        printJson(payload);
+        printJson(
+          minimalScoredPayload(results, {
+            jsonMin: outputMode.jsonMin,
+            scoreWeights: explainScore ? SCORE_COMPONENT_WEIGHTS : undefined,
+            summarize: (row) => ({
+              ...minimalScoredResultSummary(row),
+              sources: row.sources ?? [],
+            }),
+          }),
+        );
         return;
       }
       if (outputMode.brief) {
@@ -716,6 +790,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         derived_terms: snapshot.suggestTerms,
         query: queryTerm ?? null,
         filters: { tags: listBundle.filters.tag ?? null },
+        no_strong_match: !hasStrongMatchRow(results),
         results,
       } satisfies JsonObject;
       if (explainScore) {

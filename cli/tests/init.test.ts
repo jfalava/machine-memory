@@ -84,6 +84,7 @@ describe("init templates", () => {
       const content = agentsMdContent(backend);
 
       expect(content).toContain("not an exhaustive or authoritative list");
+      expect(content).toContain("no_strong_match");
       expect(content).toContain("### Delegated work (parent and child agents)");
       expect(content).toContain("The parent agent owns memory.");
       expect(content).toContain("return persistence candidates");

@@ -23,6 +23,27 @@ embeddings. `--hybrid` combines normalized full-text relevance at 55% with
 normalized Vectorize similarity at 45%, producing a `hybrid_score` on a
 0–100 scale. Hybrid results also include `fts_score` and `semantic_score`.
 
+Full-text ranking is led by relevance: the FTS rank, the share of query terms
+the memory contains, literal identifier matches, and tag matches. Recency,
+certainty, and update count only break ties.
+
+## Match strength
+
+Scores rank results within one response; they do not say whether anything
+matched well. Every result therefore carries an absolute `match_strength`:
+
+| Value    | Meaning                                                                                                                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `strong` | Every identifier in the query (path, flag, `snake_case`, `kebab-case`, `camelCase`, dotted or `area:tag` token) appears literally, or one does with strong term coverage; 60% or more of the query terms appear; or semantic similarity is at least 0.75. |
+| `weak`   | Some identifiers appear, 30% or more of the terms appear, or semantic similarity is at least 0.68.                                                                                                     |
+| `none`   | Anything else.                                                                                                                                                                                         |
+
+Results are ordered strong, then weak, then none, keeping score order inside
+each tier. `exact_matches` lists the identifiers found and `term_coverage` the
+fraction of query terms found. When nothing is strong, `--json-min`, `--quiet`,
+and `--explain-score` output report `no_strong_match: true`: treat the results
+as loosely related candidates rather than an answer.
+
 Run [`reindex`](/human/reindex) once after provisioning the remote stack to
 embed existing memories. New and updated memories synchronize automatically.
 
@@ -33,3 +54,5 @@ Use `--tags`, `--type`, and `--certainty` to narrow matches; add
 the result count and `--explain-score` includes the score components used for
 ranking. `--semantic` and `--hybrid` require `--remote` and are mutually
 exclusive. `--brief`, `--json-min`, and `--quiet` are useful for agent loops.
+`--json-min` summaries include `match_strength`, any `exact_matches`, and a
+140-character content `snippet` so relevance can be judged before a full `get`.

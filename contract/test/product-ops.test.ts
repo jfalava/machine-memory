@@ -114,6 +114,7 @@ describe("product ops schemas", () => {
       ok: true as const,
       result: {
         count: 1,
+        no_strong_match: false,
         results: [
           {
             id: 7,
@@ -125,6 +126,9 @@ describe("product ops schemas", () => {
             status: "active" as const,
             certainty: "verified" as const,
             score: 42.5,
+            match_strength: "strong" as const,
+            term_coverage: 1,
+            exact_matches: [],
           },
         ],
       },
@@ -181,6 +185,7 @@ describe("product ops schemas", () => {
         derived_terms: ["a"],
         neighborhood: { tags: [], paths: [] },
         count: 0,
+        no_strong_match: true,
         results: [],
       },
     };

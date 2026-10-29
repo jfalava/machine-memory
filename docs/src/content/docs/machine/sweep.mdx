@@ -17,6 +17,11 @@ machine-memory sweep --files "src/a.ts" --query "backend" (--local|--remote)
 listing results, merges duplicate IDs, and returns the combined ranking. Each
 result records whether it came from suggestions, full-text query, or listing.
 
+Every merged result is re-labelled with one `match_strength`: against the
+`--query` terms plus the file paths when a query is given, otherwise with the
+file-scoped rules from [`suggest`](/machine/suggest). Strong results come first
+and `no_strong_match` reports when none exist.
+
 Use `--tags` and `--limit` to narrow the sweep. `--explain-score` exposes
 ranking weights, while `--brief`, `--json-min`, and `--quiet` keep the output
 small.

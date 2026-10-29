@@ -154,13 +154,13 @@ export function createMemoryServer(
     "memory_query",
     {
       description:
-        "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text) and semantic (embedding-based) search. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
+        "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none) and the query identifiers it matched exactly. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
       inputSchema: memoryQueryInput,
     },
     async (args: MemoryQueryArgs) => {
       try {
         const success = await postProduct(api, apiToken, "query", args);
-        return textResult(success.result.results);
+        return textResult([success.result]);
       } catch (cause) {
         return errorResult(cause);
       }
@@ -273,7 +273,7 @@ export function createMemoryServer(
     "memory_suggest",
     {
       description:
-        "Suggest memories relevant to file paths, e.g. the files about to be edited. Ports the CLI suggest command: full-text search over path-derived terms plus directory neighborhood matches (tags and content/context path hints), merged and scored. Use this for the pre-edit scan when touched paths are known.",
+        "Suggest memories relevant to file paths, e.g. the files about to be edited. Ports the CLI suggest command: full-text search over path-derived terms plus directory neighborhood matches (tags and content/context path hints), merged and scored. Results are strong only when a memory names a suggested file path or specific file name literally; no_strong_match is true otherwise. Use this for the pre-edit scan when touched paths are known.",
       inputSchema: memorySuggestInput,
     },
     async (args: MemorySuggestArgs) => {

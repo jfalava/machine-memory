@@ -60,7 +60,7 @@ Every tool that takes `repository` expects `owner/name`. Rows live in D1; embedd
 
 ### Suggest
 
-`memory_suggest` ports the CLI `suggest` command for the pre-edit scan. Pass comma-separated `files` plus an optional extra `query`; it returns the derived path terms, the directory neighborhood (`tags` / `paths` hints), and scored results.
+`memory_suggest` ports the CLI `suggest` command for the pre-edit scan. Pass comma-separated `files` plus an optional extra `query`; it returns the derived path terms, the directory neighborhood (`tags` / `paths` hints), `no_strong_match`, and scored results. A result is `strong` only when the memory names a suggested file by full path or specific file name.
 
 ### Verify and diff
 
@@ -106,6 +106,8 @@ See [history and restore](/machine/history) for CLI usage and constraints.
 | `hybrid`   | Merge both (default) |
 
 Filters `status`, `memory_type`, and `certainty` use the same enums as the CLI.
+
+`memory_query` returns `{ count, no_strong_match, results }`. Each result includes `score`, which only ranks within the response, plus absolute relevance fields: `match_strength` (`strong`, `weak`, or `none`), `term_coverage`, and `exact_matches`. Strong results come first. When `no_strong_match` is true, treat the results as loosely related candidates. The thresholds match the CLI; see [query match strength](/machine/query#match-strength).
 
 ### Writes
 

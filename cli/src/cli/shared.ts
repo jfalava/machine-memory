@@ -1,5 +1,23 @@
 import { resolve, relative, sep, dirname as pathDirname } from "node:path";
 
+import {
+  assessMatch,
+  certaintyPoints,
+  exactMatchPoints,
+  ftsRankPoints,
+  MATCH_STRENGTHS,
+  matchStrengthRank,
+  matchText,
+  orderByMatchStrength,
+  recencyPoints,
+  SEARCH_SCORE_WEIGHTS,
+  tagMatchPoints,
+  termCoveragePoints,
+  updateCountPoints,
+  type MatchAssessment,
+  type MatchScope,
+  type MatchStrength,
+} from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 
@@ -374,13 +392,7 @@ export function buildFtsQueryFromTerms(terms: string[]): string | undefined {
   return usable.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
 }
 
-export const SCORE_COMPONENT_WEIGHTS = {
-  recency: { maxPoints: 30, maxAgeDays: 180 },
-  certainty: { verified: 20, inferred: 10, speculative: 2 },
-  tagMatch: { exact: 18, partial: 8 },
-  updateCount: { maxUpdatesCounted: 10, pointsPerUpdate: 2 },
-  ftsRank: { multiplier: -10, minPoints: 0, maxPoints: 30 },
-} as const;
+export const SCORE_COMPONENT_WEIGHTS = SEARCH_SCORE_WEIGHTS;
 
 export const HYBRID_SCORE_WEIGHTS = {
   fts: 0.55,
@@ -389,107 +401,118 @@ export const HYBRID_SCORE_WEIGHTS = {
 } as const;
 
 export type ScoreBreakdown = {
+  fts_rank: number;
+  term_coverage: number;
+  exact_match: number;
+  tag_match: number;
   recency: number;
   certainty: number;
-  tag_match: number;
   update_count: number;
-  fts_rank: number;
   total: number;
+};
+
+/** Query terms plus literal identifiers used for absolute match strength. */
+export type SearchMatchQuery = {
+  terms: string[];
+  identifiers: string[];
+  scope?: MatchScope;
 };
 
 type ScoreRowsOptions = {
   explainScore?: boolean;
+  identifiers?: string[];
+  scope?: MatchScope;
 };
 
-function certaintyWeight(certainty: JsonValue | undefined): number {
-  const normalized = normalizeCertaintyValue(certainty, "speculative");
-  if (normalized === "verified") {
-    return SCORE_COMPONENT_WEIGHTS.certainty.verified;
-  }
-  if (normalized === "inferred") {
-    return SCORE_COMPONENT_WEIGHTS.certainty.inferred;
-  }
-  return SCORE_COMPONENT_WEIGHTS.certainty.speculative;
+export function assessRowMatch(
+  row: JsonObject,
+  query: SearchMatchQuery,
+  semanticScore?: number,
+): MatchAssessment {
+  return assessMatch({
+    queryTerms: query.terms,
+    identifiers: query.identifiers,
+    text: matchText([
+      stringValue(row.content),
+      stringValue(row.tags),
+      stringValue(row.context),
+      ...parseStoredRefs(row.refs),
+    ]),
+    semanticScore,
+    scope: query.scope,
+  });
 }
 
-function recencyWeight(updatedAt: JsonValue | undefined): number {
-  const ms = sqliteDateToMs(updatedAt);
-  if (ms === null) {
-    return 0;
-  }
-  const ageDays = Math.max(0, (Date.now() - ms) / (1000 * 60 * 60 * 24));
-  const capped = Math.min(ageDays, SCORE_COMPONENT_WEIGHTS.recency.maxAgeDays);
-  return Number(
-    (
-      SCORE_COMPONENT_WEIGHTS.recency.maxPoints *
-      (1 - capped / SCORE_COMPONENT_WEIGHTS.recency.maxAgeDays)
-    ).toFixed(3),
-  );
+function matchFields(match: MatchAssessment): JsonObject {
+  return {
+    match_strength: match.match_strength,
+    term_coverage: match.term_coverage,
+    exact_matches: [...match.exact_matches],
+  };
 }
 
-function tagExactnessWeight(
-  tags: JsonValue | undefined,
-  queryTokens: string[],
-): number {
-  const rawTags = jsonString(tags);
-  if (rawTags === undefined || queryTokens.length === 0) {
-    return 0;
-  }
-  const tagList = parseTags(rawTags).map((tag) => tag.toLowerCase());
-  const tokenSet = new Set(queryTokens.map((token) => token.toLowerCase()));
-  if (tagList.some((tag) => tokenSet.has(tag))) {
-    return SCORE_COMPONENT_WEIGHTS.tagMatch.exact;
-  }
-  if (tagList.some((tag) => queryTokens.some((token) => tag.includes(token)))) {
-    return SCORE_COMPONENT_WEIGHTS.tagMatch.partial;
-  }
-  return 0;
+/** Re-labels final rows against one query, using raw semantic similarity when present. */
+export function annotateMatches(
+  rows: JsonObject[],
+  query: SearchMatchQuery,
+): JsonObject[] {
+  return rows.map((row) => ({
+    ...row,
+    ...matchFields(assessRowMatch(row, query, jsonNumber(row.semantic_score))),
+  }));
 }
 
-function updateCountWeight(updateCount: JsonValue | undefined): number {
-  const count = jsonNumber(updateCount) ?? 0;
-  if (!Number.isFinite(count) || count <= 0) {
-    return 0;
-  }
-  return (
-    Math.min(count, SCORE_COMPONENT_WEIGHTS.updateCount.maxUpdatesCounted) *
-    SCORE_COMPONENT_WEIGHTS.updateCount.pointsPerUpdate
-  );
+export function hasStrongMatchRow(rows: JsonObject[]): boolean {
+  return rows.some((row) => row.match_strength === "strong");
 }
 
-function ftsWeight(ftsRank: JsonValue | undefined): number {
-  const rank = jsonNumber(ftsRank) ?? 0;
-  if (!Number.isFinite(rank)) {
-    return 0;
-  }
-  const transformed = Math.max(
-    SCORE_COMPONENT_WEIGHTS.ftsRank.minPoints,
-    Math.min(
-      SCORE_COMPONENT_WEIGHTS.ftsRank.maxPoints,
-      rank * SCORE_COMPONENT_WEIGHTS.ftsRank.multiplier,
-    ),
-  );
-  return Number(transformed.toFixed(3));
+function rowMatchStrength(row: JsonObject): MatchStrength {
+  const value = jsonString(row.match_strength);
+  return MATCH_STRENGTHS.find((strength) => strength === value) ?? "none";
+}
+
+export function orderRowsByMatchStrength(rows: JsonObject[]): JsonObject[] {
+  return orderByMatchStrength(
+    rows.map((row) => ({ row, match_strength: rowMatchStrength(row) })),
+  ).map((entry) => entry.row);
 }
 
 function scoreBreakdown(
   row: JsonObject,
   queryTokens: string[],
+  match: MatchAssessment,
 ): ScoreBreakdown {
-  const recency = recencyWeight(row.updated_at);
-  const tagMatch = tagExactnessWeight(row.tags, queryTokens);
-  const updateCount = updateCountWeight(row.update_count);
-  const certainty = certaintyWeight(row.certainty);
-  const ftsRank = ftsWeight(row.fts_rank);
+  const ftsRank = ftsRankPoints(jsonNumber(row.fts_rank) ?? 0);
+  const termCoverage = termCoveragePoints(match.term_coverage);
+  const exactMatch = exactMatchPoints(match.exact_matches.length);
+  const tagMatch = tagMatchPoints(
+    parseTags(stringValue(row.tags)),
+    queryTokens,
+  );
+  const recency = recencyPoints(sqliteDateToMs(row.updated_at));
+  const certainty = certaintyPoints(
+    normalizeCertaintyValue(row.certainty, "speculative"),
+  );
+  const updateCount = updateCountPoints(jsonNumber(row.update_count) ?? 0);
   const total = Number(
-    (recency + tagMatch + updateCount + certainty + ftsRank).toFixed(3),
+    (
+      ftsRank +
+      termCoverage +
+      exactMatch +
+      tagMatch +
+      recency +
+      certainty +
+      updateCount
+    ).toFixed(3),
   );
   return {
+    fts_rank: ftsRank,
+    term_coverage: termCoverage,
+    exact_match: exactMatch,
+    tag_match: tagMatch,
     recency,
     certainty,
-    tag_match: tagMatch,
     update_count: updateCount,
-    fts_rank: ftsRank,
     total,
   };
 }
@@ -499,12 +522,19 @@ export function scoreRowsWithDetails(
   queryTokens: string[],
   options: ScoreRowsOptions = {},
 ): JsonObject[] {
+  const query = {
+    terms: queryTokens,
+    identifiers: options.identifiers ?? [],
+    scope: options.scope,
+  };
   const normalized = rows.map((row) => normalizeSqliteRow(row));
   const withScore = normalized.map((row) => {
-    const breakdown = scoreBreakdown(row, queryTokens);
+    const match = assessRowMatch(row, query);
+    const breakdown = scoreBreakdown(row, queryTokens, match);
     const scored =
       jsonObject({
         ...row,
+        ...matchFields(match),
         score: breakdown.total,
       }) ?? {};
     if (options.explainScore) {
@@ -512,7 +542,12 @@ export function scoreRowsWithDetails(
     }
     return scored;
   });
-  withScore.sort((a, b) => Number(b.score) - Number(a.score));
+  withScore.sort(
+    (a, b) =>
+      matchStrengthRank(rowMatchStrength(b)) -
+        matchStrengthRank(rowMatchStrength(a)) ||
+      Number(b.score) - Number(a.score),
+  );
   return withScore.map((row) => {
     const rest = jsonObject({ ...row }) ?? {};
     delete rest["fts_rank"];
@@ -541,6 +576,7 @@ export function combineHybridResults(
   semanticResults: JsonObject[],
   limit: number,
   explainScore = false,
+  matchQuery?: SearchMatchQuery,
 ): JsonObject[] {
   const ftsById = new Map(
     ftsResults.map(
@@ -616,7 +652,14 @@ export function combineHybridResults(
     return row;
   });
 
-  return sortByScoreThenRecency(combined).slice(0, limit);
+  const sorted = sortByScoreThenRecency(combined);
+  if (matchQuery === undefined) {
+    return sorted.slice(0, limit);
+  }
+  return orderRowsByMatchStrength(annotateMatches(sorted, matchQuery)).slice(
+    0,
+    limit,
+  );
 }
 
 export function sortByScoreThenRecency(rows: JsonObject[]): JsonObject[] {

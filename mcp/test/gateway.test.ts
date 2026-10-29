@@ -67,6 +67,13 @@ const ROW = {
   certainty: "verified",
 };
 
+const SCORED_ROW = {
+  ...ROW,
+  match_strength: "strong",
+  term_coverage: 1,
+  exact_matches: [],
+};
+
 const FULL_ROW = {
   ...ROW,
   superseded_by: 12,
@@ -366,7 +373,11 @@ describe("mcp gateway to api product routes", () => {
             status: 200,
             body: {
               ok: true,
-              result: { count: 1, results: [{ ...ROW, score: 12.5 }] },
+              result: {
+                count: 1,
+                no_strong_match: false,
+                results: [{ ...SCORED_ROW, score: 12.5 }],
+              },
             },
           },
         },
@@ -379,7 +390,13 @@ describe("mcp gateway to api product routes", () => {
       arguments: { repository: "o/r", query: "deploy" },
     });
     expect(result.isError).toBeFalsy();
-    expect(JSON.parse(firstText(result))).toEqual([{ ...ROW, score: 12.5 }]);
+    expect(JSON.parse(firstText(result))).toEqual([
+      {
+        count: 1,
+        no_strong_match: false,
+        results: [{ ...SCORED_ROW, score: 12.5 }],
+      },
+    ]);
     expect(seen).toHaveLength(1);
     expect(seen[0]?.url).toContain("/product/query");
     expect(seen[0]?.authorization).toBe("Bearer test-token");

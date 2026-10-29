@@ -36,6 +36,16 @@ export function helpPayload() {
         "For a newly added status memory: how many other active status memories share its tags and are candidates to deprecate (see status_cascade.suggested_command).",
       tokens:
         "Per-part BGE token breakdown with bytes_estimate (UTF-8 bytes + 2) attached when --token-report is passed or a write fails the size gate.",
+      match_strength:
+        "Absolute per-result relevance for query/suggest/sweep. strong: every query identifier found literally (or one plus strong term coverage), at least 60% of query terms, a suggested file path or file name, or semantic similarity >= 0.75. weak: a partial identifier hit, at least 30% of terms, or similarity >= 0.68. Otherwise none. Scores rank within one response; match_strength is comparable across queries.",
+      no_strong_match:
+        "True when no returned result is strong. Treat the results as loosely related candidates, not as the answer.",
+      exact_matches:
+        "Query identifiers (paths, flags, snake/kebab/camel case, dotted or tag-like tokens) or suggested file paths found literally in the memory.",
+      term_coverage:
+        "Fraction of distinct query terms found in the memory's content, tags, context, or refs.",
+      snippet:
+        "First 140 characters of content in --json-min summaries, for triage before a full get.",
     },
     global_options: {
       pretty:
