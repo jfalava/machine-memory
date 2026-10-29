@@ -78,6 +78,38 @@ describe("init templates", () => {
     expect(content).not.toContain("--remote");
   });
 
+  it.each(["local", "remote", "mcp"] as const)(
+    "generates %s memory hygiene guidance",
+    (backend) => {
+      const content = agentsMdContent(backend);
+
+      expect(content).toContain("not an exhaustive or authoritative list");
+      expect(content).toContain("### Delegated work (parent and child agents)");
+      expect(content).toContain("The parent agent owns memory.");
+      expect(content).toContain("return persistence candidates");
+      expect(content).toContain(
+        "### End-of-task checkpoint (before the final response)",
+      );
+      for (const classification of [
+        "1. Already covered",
+        "2. New durable knowledge",
+        "3. Superseded or conflicting",
+        "4. Transient delivery or verification status",
+        "5. Intentionally omitted",
+      ]) {
+        expect(content).toContain(classification);
+      }
+      expect(content).toContain(
+        "A rejected remedy does not make the verified mechanism behind its failure disposable.",
+      );
+      expect(content).toContain("Set certainty from evidence");
+      expect(content).toContain("tested end-user behavior");
+      expect(content).toContain("never describe local work as deployed");
+      expect(content).toContain("Reconcile dependents.");
+      expect(content).toContain("carry over unrelated valid details");
+    },
+  );
+
   it("replaces an existing managed block without removing user content", () => {
     const content = replaceMemoryBlock(
       "# Local notes\n\n<!-- machine-memory:start -->\nold\n<!-- machine-memory:end -->\n",

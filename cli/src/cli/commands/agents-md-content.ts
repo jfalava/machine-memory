@@ -42,6 +42,49 @@ function agentsMdSizeGuidance(backend: AgentsMemoryBackend): string {
   ].join(" ");
 }
 
+function agentsMdRetrievalCaveat(preferred: string): string {
+  return `Search results are ranked candidates, not an exhaustive or authoritative list. Scores blend relevance with recency, certainty, and update count, and hybrid scores are normalized within the returned batch, so a high score does not prove a strong match and directly relevant records can rank below loosely related ones. Prefer ${preferred} over broad queries, read full records before relying on them, and treat "nothing directly relevant" as a valid outcome instead of adopting the nearest hit.`;
+}
+
+function agentsMdDelegationSection(scan: string): string[] {
+  return [
+    "### Delegated work (parent and child agents)",
+    "",
+    `- The parent agent owns memory. It runs the scan once and passes relevant memory IDs and constraints to child agents; children skip the mandatory scan unless their scope differs, and then use focused ${scan} calls.`,
+    "- Children do not write memory unless the parent explicitly delegates writes to exactly one child. Otherwise they return persistence candidates: the finding, its evidence (file paths, commands, versions, test output), the evidence kind, and related memory IDs.",
+    "- The parent reconciles its own findings and every child candidate in the end-of-task checkpoint.",
+  ];
+}
+
+function agentsMdCheckpointSection(
+  add: string,
+  update: string,
+  deprecate: string,
+): string[] {
+  return [
+    "### End-of-task checkpoint (before the final response)",
+    "",
+    "Collect every validated finding from the task, including child results and mechanisms discovered while investigating approaches that were later abandoned. A rejected remedy does not make the verified mechanism behind its failure disposable. Classify each finding:",
+    "",
+    `1. Already covered: cite the memory ID; change it with ${update} only when evidence, scope, or wording is wrong.`,
+    `2. New durable knowledge: create a \`decision\`, \`constraint\`, \`preference\`, \`reference\`, or \`gotcha\` record with ${add}.`,
+    `3. Superseded or conflicting: fix the affected records with ${update} or ${deprecate}, including records that depend on the old premise.`,
+    "4. Transient delivery or verification status: add or update one expiring `status` record.",
+    "5. Intentionally omitted: have a reason, such as obvious from code, routine test result, duplicate, or not reusable.",
+    "",
+    "Saved records keep their source and version evidence and their verification boundaries.",
+  ];
+}
+
+const AGENTS_MD_CERTAINTY_STEP =
+  "Set certainty from evidence, not from how accurately a record describes the code. Kinds of evidence: explicit user requirement or preference, observed implementation behavior, verified technical mechanism, tested end-user behavior. Observing that the code does X establishes only that the implementation does X, not that X is intended or works on every platform. Use `verified` only for the dimension the evidence establishes, name that dimension, and record remaining gaps (unconfirmed intent, untested platforms) in the content or context.";
+
+const AGENTS_MD_STATUS_STEP =
+  "Durable mechanisms and decisions go in `decision`, `reference`, `gotcha`, `constraint`, or `preference` records. Implementation, delivery, and verification state goes in one `status` record that expires and is updated rather than duplicated. State exactly where work stands (local only, uncommitted, committed, pushed, deployed or active) and which verification remains; never describe local work as deployed. When a caveat leaves a durable record, keep it in a status record.";
+
+const AGENTS_MD_RECONCILE_STEP =
+  "Reconcile dependents. When a decision changes or is reversed, search for other active records that rely on the old premise and update or deprecate them. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it.";
+
 function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
   return [
     "Before touching code, complete this scan from the repository root. Every database command must include the backend flag shown below:",
@@ -52,26 +95,39 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
     "",
     `If results look relevant, fetch full records before editing: \`machine-memory get <id> ${backendFlag}\` or \`machine-memory get <id,id,...> ${backendFlag}\`.`,
     "",
+    agentsMdRetrievalCaveat(
+      "known IDs (`get`), file-scoped `suggest --files`, and `--tags` filters",
+    ),
+    "",
     `Recover accidental overwrites with \`machine-memory history <id> ${backendFlag}\`, then \`machine-memory restore <id> --revision <revision_id> --expected-update-count <current_update_count> ${backendFlag}\`. Use the current count from history, not the snapshot's count. Restore preserves the id and re-syncs only the current memory's vector; snapshots are not embedded. Delete is permanent and removes history.`,
     "",
     "### One-sweep workflow (use this every task)",
     "",
     "1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.",
     `2. Verify uncertain context before acting. Use \`machine-memory verify <id> "<inferred fact>" ${backendFlag}\` or \`machine-memory diff <id> "<proposed updated wording>" ${backendFlag}\` when an inference may conflict with existing memory.`,
-    `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended.`,
-    "4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.",
-    "5. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.",
-    "6. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.",
-    "7. Keep status hygiene. Status memories are for transient progress, should include `--expires-after-days`, and should be updated rather than duplicated. Review `doctor` suggestions semantically before applying deprecations or updates.",
-    "8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.",
-    `9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need. Use \`machine-memory add ... ${backendFlag}\` or update the canonical record with \`machine-memory update ... ${backendFlag}\`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.`,
+    `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.`,
+    `4. ${AGENTS_MD_RECONCILE_STEP} Use \`machine-memory deprecate <id> --superseded-by <id> ${backendFlag}\` when a record is replaced.`,
+    "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.",
+    "6. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.",
+    "7. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.",
+    `8. ${AGENTS_MD_CERTAINTY_STEP} Use \`--certainty\` and \`--context\`.`,
+    `9. Separate durable knowledge from delivery status. ${AGENTS_MD_STATUS_STEP} Set \`--expires-after-days\` on status records and review \`doctor\` suggestions semantically before applying deprecations or updates.`,
+    "10. Run the end-of-task checkpoint below before the final response.",
+    "",
+    ...agentsMdDelegationSection("`suggest` or `query`"),
+    "",
+    ...agentsMdCheckpointSection(
+      `\`machine-memory add ... ${backendFlag}\``,
+      `\`machine-memory update ... ${backendFlag}\``,
+      `\`machine-memory deprecate ... ${backendFlag}\``,
+    ),
     "",
     "### Checklist (verify before proceeding)",
     "",
-    `- [ ] I ran \`machine-memory suggest\`, \`query\`, or \`list\` with ${backendFlag} for the files or feature I will touch`,
-    "- [ ] I reviewed the returned memory IDs and fetched full records when relevant",
+    `- [ ] I ran \`machine-memory suggest\`, \`query\`, or \`list\` with ${backendFlag} for the files or feature I will touch (or reused the parent agent's scan)`,
+    "- [ ] I reviewed the returned memory IDs and fetched full records when relevant, without treating top results as exhaustive",
     "- [ ] I considered whether existing memories constrain the planned approach",
-    "- [ ] I will document significant findings and decisions after completing the task",
+    "- [ ] I will run the end-of-task checkpoint, including child findings, before the final response",
   ];
 }
 
@@ -85,24 +141,37 @@ const AGENTS_MD_MCP_WORKFLOW = [
   "",
   "If results look relevant, fetch full records before editing: `memory_get` with `{ repository, id }` (one id per call).",
   "",
+  agentsMdRetrievalCaveat(
+    "known IDs (`memory_get`), file-scoped `memory_suggest`, and `tags` filters",
+  ),
+  "",
   "### One-sweep workflow (use this every task)",
   "",
   "1. Scan relevant context fast. Run exactly one focused `memory_suggest`, `memory_query`, or `memory_list` before code changes; repeat only if the touched paths or scope materially changes.",
   "2. Verify uncertain context before acting. Use `memory_verify` with `{ repository, id, fact }` or `memory_diff` with `{ repository, id, content }` when an inference may conflict with existing memory.",
-  "3. Maintain memory while implementing. Prefer `memory_update` with `match` (or the exact `id`; only changed fields are needed); if no reliable match exists, use `memory_add` with `upsert_match`. Weak upsert matches refuse to silently create: inspect with `memory_get`, then pass `force: true` if a new record is intended. Call `memory_size` first when content may be long.",
-  "4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
-  "5. Use path-driven tags. There is no tag-map tool — tags are free-form comma-separated text, so use scoped tags such as `area:cli,topic:backend,kind:decision`. Filter them with the `tags` parameter on query/list/suggest.",
-  '6. Capture third-party quirks. Always add a `memory_type: "gotcha"` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.',
-  "7. Keep status hygiene. Use `memory_doctor` during maintenance and `memory_gc` to preview expired status memories. Status memories should set `expires_after_days` and be updated rather than duplicated. Prefer `memory_deprecate` (with `superseded_by` when replaced) over permanent deletion.",
-  "8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.",
-  "9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need via `memory_add` / `memory_update`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.",
+  "3. Maintain memory while implementing. Prefer `memory_update` with `match` (or the exact `id`; only changed fields are needed); if no reliable match exists, use `memory_add` with `upsert_match`. Weak upsert matches refuse to silently create: inspect with `memory_get`, then pass `force: true` if a new record is intended. Call `memory_size` first when content may be long. A new `content` replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.",
+  `4. ${AGENTS_MD_RECONCILE_STEP} Use \`memory_deprecate\` with \`superseded_by\` when a record is replaced.`,
+  "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
+  "6. Use path-driven tags. There is no tag-map tool — tags are free-form comma-separated text, so use scoped tags such as `area:cli,topic:backend,kind:decision`. Filter them with the `tags` parameter on query/list/suggest.",
+  '7. Capture third-party quirks. Always add a `memory_type: "gotcha"` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.',
+  `8. ${AGENTS_MD_CERTAINTY_STEP} Use the \`certainty\` and \`context\` fields.`,
+  `9. Separate durable knowledge from delivery status. ${AGENTS_MD_STATUS_STEP} Set \`expires_after_days\` on status records. Use \`memory_doctor\` during maintenance and \`memory_gc\` to preview expired status memories. Prefer \`memory_deprecate\` over permanent deletion.`,
+  "10. Run the end-of-task checkpoint below before the final response.",
+  "",
+  ...agentsMdDelegationSection("`memory_suggest` or `memory_query`"),
+  "",
+  ...agentsMdCheckpointSection(
+    "`memory_add`",
+    "`memory_update`",
+    "`memory_deprecate`",
+  ),
   "",
   "### Checklist (verify before proceeding)",
   "",
-  "- [ ] I ran `memory_suggest`, `memory_query`, or `memory_list` (and `list_repositories` if the slug was uncertain) for the files or feature I will touch",
-  "- [ ] I reviewed the returned memory IDs and fetched full records with `memory_get` when relevant",
+  "- [ ] I ran `memory_suggest`, `memory_query`, or `memory_list` (and `list_repositories` if the slug was uncertain) for the files or feature I will touch (or reused the parent agent's scan)",
+  "- [ ] I reviewed the returned memory IDs and fetched full records with `memory_get` when relevant, without treating top results as exhaustive",
   "- [ ] I considered whether existing memories constrain the planned approach",
-  "- [ ] I will document significant findings and decisions after completing the task",
+  "- [ ] I will run the end-of-task checkpoint, including child findings, before the final response",
 ];
 
 export function agentsMdContent(backend: AgentsMemoryBackend): string {

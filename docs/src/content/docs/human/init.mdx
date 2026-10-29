@@ -22,6 +22,15 @@ This command creates `AGENTS.md` when it does not exist, or replaces the content
 
 The generated block tells future agents how to scan memory, which backend to use, and how to maintain durable project context. The selected backend is written into the block so its examples stay consistent with the command you ran.
 
+Every backend's block also covers memory hygiene:
+
+- Search results are ranked candidates, not an exhaustive list. Agents prefer known IDs, file-scoped suggestions, and tag filters, and read full records before relying on them.
+- Certainty follows evidence: an explicit user requirement, observed implementation, a verified mechanism, or tested end-user behavior. Remaining validation gaps are recorded.
+- Durable decisions and mechanisms stay separate from delivery status. An expiring `status` record says whether work is local, committed, pushed, or deployed.
+- Updates carry over unrelated valid details, and records that depend on a changed decision are reconciled.
+- In delegated work, the parent agent owns memory writes. Child agents return persistence candidates with evidence.
+- Before the final response, agents run an end-of-task checkpoint that classifies each finding as already covered, new durable knowledge, superseded or conflicting, transient status, or intentionally omitted.
+
 ## Backend selection
 
 Exactly one flag is required:

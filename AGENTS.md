@@ -21,24 +21,47 @@ Before touching code, complete this scan from the repository root. Every databas
 
 If results look relevant, fetch full records before editing: `machine-memory get <id> --remote` or `machine-memory get <id,id,...> --remote`.
 
+Search results are ranked candidates, not an exhaustive or authoritative list. Scores blend relevance with recency, certainty, and update count, and hybrid scores are normalized within the returned batch, so a high score does not prove a strong match and directly relevant records can rank below loosely related ones. Prefer known IDs (`get`), file-scoped `suggest --files`, and `--tags` filters over broad queries, read full records before relying on them, and treat "nothing directly relevant" as a valid outcome instead of adopting the nearest hit.
+
+Recover accidental overwrites with `machine-memory history <id> --remote`, then `machine-memory restore <id> --revision <revision_id> --expected-update-count <current_update_count> --remote`. Use the current count from history, not the snapshot's count. Restore preserves the id and re-syncs only the current memory's vector; snapshots are not embedded. Delete is permanent and removes history.
+
 ### One-sweep workflow (use this every task)
 
 1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.
 2. Verify uncertain context before acting. Use `machine-memory verify <id> "<inferred fact>" --remote` or `machine-memory diff <id> "<proposed updated wording>" --remote` when an inference may conflict with existing memory.
-3. Maintain memory while implementing. Prefer `machine-memory update --match "topic query" "new canonical content" --remote`; if no reliable match exists, use `machine-memory add "..." --upsert-match "topic query" --remote`. Weak matches refuse to silently create: inspect with `--dry-run`, then pass `--force` if a new record is intended.
-4. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.
-5. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.
-6. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, behavior, and fix.
-7. Keep status hygiene. Status memories are for transient progress, should include `--expires-after-days`, and should be updated rather than duplicated. Review `doctor` suggestions semantically before applying deprecations or updates.
-8. Separate durable and transient facts. Use `decision`, `reference`, or `gotcha` for reusable knowledge; use `status` only for short-lived snapshots.
-9. At task end, persist every durable decision, constraint, preference, non-obvious gotcha, and verified status future sessions need. Use `machine-memory add ... --remote` or update the canonical record with `machine-memory update ... --remote`. Do not store obvious code facts, routine test results, temporary progress, or duplicates.
+3. Maintain memory while implementing. Prefer `machine-memory update --match "topic query" "new canonical content" --remote`; if no reliable match exists, use `machine-memory add "..." --upsert-match "topic query" --remote`. Weak matches refuse to silently create: inspect with `--dry-run`, then pass `--force` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.
+4. Reconcile dependents. When a decision changes or is reversed, search for other active records that rely on the old premise and update or deprecate them. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it. Use `machine-memory deprecate <id> --superseded-by <id> --remote` when a record is replaced.
+5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.
+6. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.
+7. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.
+8. Set certainty from evidence, not from how accurately a record describes the code. Kinds of evidence: explicit user requirement or preference, observed implementation behavior, verified technical mechanism, tested end-user behavior. Observing that the code does X establishes only that the implementation does X, not that X is intended or works on every platform. Use `verified` only for the dimension the evidence establishes, name that dimension, and record remaining gaps (unconfirmed intent, untested platforms) in the content or context. Use `--certainty` and `--context`.
+9. Separate durable knowledge from delivery status. Durable mechanisms and decisions go in `decision`, `reference`, `gotcha`, `constraint`, or `preference` records. Implementation, delivery, and verification state goes in one `status` record that expires and is updated rather than duplicated. State exactly where work stands (local only, uncommitted, committed, pushed, deployed or active) and which verification remains; never describe local work as deployed. When a caveat leaves a durable record, keep it in a status record. Set `--expires-after-days` on status records and review `doctor` suggestions semantically before applying deprecations or updates.
+10. Run the end-of-task checkpoint below before the final response.
+
+### Delegated work (parent and child agents)
+
+- The parent agent owns memory. It runs the scan once and passes relevant memory IDs and constraints to child agents; children skip the mandatory scan unless their scope differs, and then use focused `suggest` or `query` calls.
+- Children do not write memory unless the parent explicitly delegates writes to exactly one child. Otherwise they return persistence candidates: the finding, its evidence (file paths, commands, versions, test output), the evidence kind, and related memory IDs.
+- The parent reconciles its own findings and every child candidate in the end-of-task checkpoint.
+
+### End-of-task checkpoint (before the final response)
+
+Collect every validated finding from the task, including child results and mechanisms discovered while investigating approaches that were later abandoned. A rejected remedy does not make the verified mechanism behind its failure disposable. Classify each finding:
+
+1. Already covered: cite the memory ID; change it with `machine-memory update ... --remote` only when evidence, scope, or wording is wrong.
+2. New durable knowledge: create a `decision`, `constraint`, `preference`, `reference`, or `gotcha` record with `machine-memory add ... --remote`.
+3. Superseded or conflicting: fix the affected records with `machine-memory update ... --remote` or `machine-memory deprecate ... --remote`, including records that depend on the old premise.
+4. Transient delivery or verification status: add or update one expiring `status` record.
+5. Intentionally omitted: have a reason, such as obvious from code, routine test result, duplicate, or not reusable.
+
+Saved records keep their source and version evidence and their verification boundaries.
 
 ### Checklist (verify before proceeding)
 
-- [ ] I ran `machine-memory suggest`, `query`, or `list` with --remote for the files or feature I will touch
-- [ ] I reviewed the returned memory IDs and fetched full records when relevant
+- [ ] I ran `machine-memory suggest`, `query`, or `list` with --remote for the files or feature I will touch (or reused the parent agent's scan)
+- [ ] I reviewed the returned memory IDs and fetched full records when relevant, without treating top results as exhaustive
 - [ ] I considered whether existing memories constrain the planned approach
-- [ ] I will document significant findings and decisions after completing the task
+- [ ] I will run the end-of-task checkpoint, including child findings, before the final response
 
 Project preference: replace obsolete systems when practical; preserve backwards compatibility only when it is explicitly required.
 <!-- machine-memory:end -->
