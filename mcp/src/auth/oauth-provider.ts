@@ -4,7 +4,8 @@ import type {
 } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
 
-import { createMemoryServer, type McpBindings } from "../mcp";
+import { createMemoryServer } from "../mcp/tools";
+import type { McpBindings } from "../mcp/types";
 import { githubHandler } from "./github-handler";
 import { isAllowedGithubUserId } from "./oauth-utils";
 

@@ -242,7 +242,7 @@ export function composeEmbeddingText(
 
 /**
  * Conservative fallback mirroring the Worker's byte estimate
- * (api/src/embedding.ts): UTF-8 bytes plus one [CLS]/[SEP]
+ * (estimateEmbeddingTokens in contract/src/embedding.ts): UTF-8 bytes plus one [CLS]/[SEP]
  * reserve. Used when the real tokenizer cannot be fetched so offline writes
  * stay safe without blocking on the network.
  */

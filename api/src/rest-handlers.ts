@@ -1,6 +1,7 @@
 import {
   databaseFailureGuidance,
   normalizeProductRoute,
+  type JsonValue,
   type ProductRoute,
 } from "@machine-memory/contract";
 import type { RuntimeContext } from "alchemy";
@@ -9,8 +10,6 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-
-import type { JsonValue } from "./json";
 
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";

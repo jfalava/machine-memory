@@ -24,8 +24,6 @@ import {
   type MemoryDoctorResult,
   type ScoredMemoryRow,
   type MemoryStatsResult,
-  UPSERT_DEFAULT_MIN_SCORE,
-  UPSERT_MIN_SIMILARITY,
   isJsonArray,
   jsonNumber,
   jsonString,
@@ -890,28 +888,3 @@ export function embeddingTextForMemory(input: {
     certainty: input.certainty,
   });
 }
-
-export type UpsertStrength = {
-  readonly strong: boolean;
-  readonly similarity: number;
-  readonly score: number;
-};
-
-export function upsertStrength(
-  stored: { content: string; tags: string; context: string },
-  candidate: { content: string; tags: string; context: string },
-  score: number,
-  threshold: number = UPSERT_DEFAULT_MIN_SCORE,
-): UpsertStrength {
-  const similarity = compareMemoryFact(
-    [stored.content, stored.tags, stored.context].join(" "),
-    [candidate.content, candidate.tags, candidate.context].join(" "),
-  ).similarity;
-  return {
-    strong: similarity >= UPSERT_MIN_SIMILARITY && score >= threshold,
-    similarity,
-    score,
-  };
-}
-
-export { UPSERT_DEFAULT_MIN_SCORE, UPSERT_MIN_SIMILARITY };

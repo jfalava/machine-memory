@@ -44,6 +44,7 @@ import {
   QueryRequestSchema,
   QuerySuccessSchema,
   StoredMemoryRowSchema,
+  UPSERT_MIN_SIMILARITY,
   validateEmbeddingText,
   VectorizeSearchRequestInputSchema,
   VectorizeSearchSuccessSchema,
@@ -102,7 +103,6 @@ import {
   toHistoryRow,
   toRankedRow,
   uniqueLowerPreserveOrder,
-  UPSERT_MIN_SIMILARITY,
   type MatchQuery,
 } from "./product-logic";
 import {

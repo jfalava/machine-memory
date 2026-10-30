@@ -10,8 +10,8 @@ import * as Schema from "effect/Schema";
 import { describe, expect, test } from "vitest";
 
 import { toProductRow } from "../../api/src/product-logic";
-import { createMemoryServer } from "../src/mcp";
 import { type ApiFetcher, postProduct } from "../src/mcp/product-client";
+import { createMemoryServer } from "../src/mcp/tools";
 
 type SeenCall = {
   url: string;

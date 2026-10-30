@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
 import {
   estimateEmbeddingTokens,
   MAX_EMBEDDING_TOKENS,
   validateEmbeddingText,
-} from "../../api/src/embedding";
+} from "@machine-memory/contract";
+import { describe, expect, it } from "vitest";
 
 describe("embedding input bounds", () => {
   it("includes special tokens in the exact conservative boundary", () => {

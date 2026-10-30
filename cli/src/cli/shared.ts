@@ -949,29 +949,6 @@ export function assertWritableRepository(
     );
 }
 
-export function findExactDuplicate(
-  database: MemoryDatabaseApi,
-  payload: { content: string; tags?: string; context?: string },
-): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
-  return database
-    .get(
-      `SELECT * FROM memories
-       WHERE repository = ?
-         AND status = 'active'
-         AND content = ?
-         AND tags = ?
-         AND context = ?
-       LIMIT 1`,
-      [
-        repositoryForCurrentDirectory(),
-        payload.content,
-        payload.tags ?? "",
-        payload.context ?? "",
-      ],
-    )
-    .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
-}
-
 export function collectDirectoriesEffect(
   rootPath: string,
   fileSystem: FileSystem,
@@ -1276,47 +1253,6 @@ export function findStatusCascadeCandidates(
     );
 }
 
-type SqliteErrorDetails = {
-  kind: "fts_parse" | "sqlite" | "unknown";
-  message: string;
-  hint?: string;
-};
-
-export function parseSqliteErrorDetails(
-  err: Error | JsonValue,
-): SqliteErrorDetails {
-  if (!(err instanceof Error)) {
-    return {
-      kind: "unknown",
-      message: "Unexpected failure while running command.",
-    };
-  }
-  const lower = err.message.toLowerCase();
-  if (
-    lower.includes("no such column") ||
-    lower.includes("no such table") ||
-    lower.includes("fts5: syntax error") ||
-    lower.includes("malformed match expression")
-  ) {
-    return {
-      kind: "fts_parse",
-      message: "Search query could not be parsed by SQLite FTS.",
-      hint: "Try simpler terms without punctuation, or wrap file paths in --files-json for shell-safe input.",
-    };
-  }
-  if (lower.includes("sqlite")) {
-    return {
-      kind: "sqlite",
-      message: "SQLite command failed.",
-      hint: "Retry once; if this persists, run `machine-memory migrate` and verify DB permissions/path.",
-    };
-  }
-  return {
-    kind: "unknown",
-    message: err.message,
-  };
-}
-
 export function parseSinceDate(args: string[]): string | undefined {
   const value = getFlagValue(args, "--since");
   if (value === undefined) {
@@ -1337,12 +1273,3 @@ export function sqliteDateForComparison(isoLike: string): string {
     d.getUTCHours(),
   )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
-
-export {
-  ADD_FLAGS_WITH_VALUES,
-  ADD_USAGE,
-  DEPRECATE_FLAGS_WITH_VALUES,
-  DEPRECATE_USAGE,
-  UPDATE_FLAGS_WITH_VALUES,
-  UPDATE_USAGE,
-} from "./features/memory/usage";

@@ -9,11 +9,6 @@ import {
   SimpleErrorBodySchema,
   type JsonValue,
 } from "@machine-memory/contract";
-export {
-  PRODUCT_ROUTES,
-  productRoutePath,
-  type ProductRoute,
-} from "@machine-memory/contract";
 
 /** Minimal fetch surface over the API worker (service binding at runtime). */
 export type ApiFetcher = {

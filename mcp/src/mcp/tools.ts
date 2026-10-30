@@ -52,7 +52,7 @@ import {
 import type { ErrorToolResult, McpBindings, TextToolResult } from "./types";
 
 /** Same version as the monorepo CLI / package.json (not a separate MCP protocol number). */
-export const MCP_SERVER_VERSION: string = pkg.version;
+const MCP_SERVER_VERSION: string = pkg.version;
 
 /** Exhaustive classification: new product operations must choose a scope. */
 const REQUIRED_SCOPES = {
