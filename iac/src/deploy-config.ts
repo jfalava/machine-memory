@@ -1,14 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
-import { Schema } from "effect";
-
 import {
   jsonObject,
   jsonString,
   type JsonObject,
   type JsonValue,
-} from "./json";
+} from "@machine-memory/contract";
+import { Schema } from "effect";
 
 // Only the members this module reads. Intersecting with `typeof globalThis`
 // resolves to `any` under type-aware lint, which hid unsafe access.

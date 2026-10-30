@@ -122,6 +122,7 @@
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
         "@effect/sql-d1": "catalog:effect",
+        "@machine-memory/contract": "workspace:*",
         "alchemy": "catalog:iac",
         "effect": "catalog:effect",
       },
