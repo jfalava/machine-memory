@@ -2,12 +2,9 @@ import { Schema } from "effect";
 
 import { composeEmbeddingText, validateEmbeddingText } from "../embedding";
 import {
-  MemoryDocumentInputSchema,
-  normalizeMemoryDocument,
   normalizeSearchLimit,
   RepositorySchema,
   SearchLimitInputSchema,
-  type MemoryDocument,
 } from "../entities";
 import { EvidenceSchema, ValidationGapsSchema } from "../evidence";
 import {
@@ -208,18 +205,6 @@ export const MigrationLinksRequestSchema = Schema.Struct({
 });
 export type MigrationLinksRequest = typeof MigrationLinksRequestSchema.Type;
 
-/** POST /vectorize/upsert */
-export const VectorizeUpsertRequestInputSchema = MemoryDocumentInputSchema;
-export type VectorizeUpsertRequestInput =
-  typeof VectorizeUpsertRequestInputSchema.Type;
-export type VectorizeUpsertRequest = MemoryDocument;
-
-export function normalizeVectorizeUpsertRequest(
-  input: VectorizeUpsertRequestInput,
-): VectorizeUpsertRequest {
-  return normalizeMemoryDocument(input);
-}
-
 /**
  * POST /vectorize/search
  * Optional filter fields: omit means no filter (matches prior API).
@@ -256,15 +241,3 @@ export function normalizeVectorizeSearchRequest(
     certainty: input.certainty,
   };
 }
-
-/** POST /vectorize/delete */
-export const VectorizeDeleteRequestSchema = Schema.Struct({
-  id: Schema.Union([Schema.NonEmptyString, Schema.Number]),
-});
-export type VectorizeDeleteRequest = typeof VectorizeDeleteRequestSchema.Type;
-
-/** @deprecated alias kept for barrel clarity during migration */
-export const MigrationRequestSchema = MigrationRequestInputSchema;
-export const MigrationRowSchema = MigrationRowInputSchema;
-export const VectorizeUpsertRequestSchema = VectorizeUpsertRequestInputSchema;
-export const VectorizeSearchRequestSchema = VectorizeSearchRequestInputSchema;

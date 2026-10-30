@@ -7,17 +7,11 @@ import {
 } from "./evidence";
 import {
   CERTAINTY_LEVELS,
-  DEFAULT_CERTAINTY,
-  DEFAULT_MEMORY_STATUS,
-  DEFAULT_MEMORY_TYPE,
   MAX_NAMESPACE_BYTES,
   MEMORY_STATUSES,
   MEMORY_TYPES,
   SEARCH_LIMIT_DEFAULT,
   SEARCH_LIMIT_MAX,
-  type Certainty,
-  type MemoryStatus,
-  type MemoryType,
 } from "./literals";
 
 export const MemoryTypeSchema = Schema.Literals(MEMORY_TYPES);
@@ -35,55 +29,6 @@ const maxNamespaceBytes = Schema.makeFilter(
 /** Non-empty repository slug with the Worker namespace byte ceiling. */
 export const RepositorySchema = Schema.NonEmptyString.check(maxNamespaceBytes);
 export type Repository = typeof RepositorySchema.Type;
-
-/**
- * Memory document fields used by vectorize upsert and shared product writes.
- * Wire keys are snake_case. Optional fields default when normalized.
- */
-export const MemoryDocumentInputSchema = Schema.Struct({
-  id: Schema.Union([Schema.NonEmptyString, Schema.Number]),
-  repository: RepositorySchema,
-  content: Schema.NonEmptyString,
-  tags: Schema.optionalKey(Schema.String),
-  context: Schema.optionalKey(Schema.String),
-  memory_type: Schema.optionalKey(MemoryTypeSchema),
-  status: Schema.optionalKey(MemoryStatusSchema),
-  certainty: Schema.optionalKey(CertaintySchema),
-});
-export type MemoryDocumentInput = typeof MemoryDocumentInputSchema.Type;
-
-export type MemoryDocument = {
-  readonly id: string | number;
-  readonly repository: string;
-  readonly content: string;
-  readonly tags: string;
-  readonly context: string;
-  readonly memory_type: MemoryType;
-  readonly status: MemoryStatus;
-  readonly certainty: Certainty;
-};
-
-export function normalizeMemoryDocument(
-  input: MemoryDocumentInput,
-): MemoryDocument {
-  return {
-    id: input.id,
-    repository: input.repository,
-    content: input.content,
-    tags: input.tags ?? "",
-    context: input.context ?? "",
-    memory_type: input.memory_type ?? DEFAULT_MEMORY_TYPE,
-    status: input.status ?? DEFAULT_MEMORY_STATUS,
-    certainty: input.certainty ?? DEFAULT_CERTAINTY,
-  };
-}
-
-/** Normalize the union id to a trimmed string after decode. */
-export function memoryDocumentId(document: {
-  readonly id: string | number;
-}): string {
-  return String(document.id).trim();
-}
 
 export const SearchLimitSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: SEARCH_LIMIT_MAX }),

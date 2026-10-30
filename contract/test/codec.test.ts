@@ -11,10 +11,8 @@ import {
   MigrationSuccessSchema,
   normalizeMigrationRequest,
   normalizeVectorizeSearchRequest,
-  normalizeVectorizeUpsertRequest,
   QueryRequestSchema,
   VectorizeSearchRequestInputSchema,
-  VectorizeUpsertRequestInputSchema,
 } from "../src/index";
 
 describe("codec", () => {
@@ -151,25 +149,6 @@ describe("api request schemas", () => {
       const normalized = normalizeVectorizeSearchRequest(result.value);
       expect(normalized.top_k).toBe(8);
       expect(normalized.status).toBeUndefined();
-    }
-  });
-
-  it("decodes vectorize upsert documents with defaults", () => {
-    const result = decodeRequest(VectorizeUpsertRequestInputSchema, {
-      id: 42,
-      repository: "owner/name",
-      content: "body",
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(normalizeVectorizeUpsertRequest(result.value)).toMatchObject({
-        id: 42,
-        memory_type: "convention",
-        status: "active",
-        certainty: "inferred",
-        tags: "",
-        context: "",
-      });
     }
   });
 

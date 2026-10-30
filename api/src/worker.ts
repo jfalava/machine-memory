@@ -1,5 +1,4 @@
 import {
-  composeEmbeddingText,
   PRODUCT_OPERATIONS,
   SEARCH_LIMIT_MAX,
   VectorizeSearchResultSchema,
@@ -32,7 +31,6 @@ import {
   MigrationLinksSuccessSchema,
   MigrationRequestInputSchema,
   MigrationSuccessSchema,
-  memoryDocumentId,
   normalizeListRepositoriesArgs,
   normalizeMemoryAddArgs,
   normalizeMemoryHistoryArgs,
@@ -43,23 +41,17 @@ import {
   normalizeMigrationRequest,
   normalizeStoredMemoryRow,
   normalizeVectorizeSearchRequest,
-  normalizeVectorizeUpsertRequest,
   QueryRequestSchema,
   QuerySuccessSchema,
   StoredMemoryRowSchema,
   validateEmbeddingText,
-  VectorizeDeleteRequestSchema,
-  VectorizeDeleteSuccessSchema,
   VectorizeSearchRequestInputSchema,
   VectorizeSearchSuccessSchema,
-  VectorizeUpsertRequestInputSchema,
-  VectorizeUpsertSuccessSchema,
   type JsonObject,
   type JsonValue,
   type MigrationItem,
   type QueryRequest,
   type VectorizeSearchRequest,
-  type VectorizeUpsertRequest,
 } from "@machine-memory/contract";
 import type { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
@@ -128,34 +120,6 @@ function badRequest(error: string) {
     encodeResponse(ErrorBodySchema, { ok: false, error }),
     { status: 400 },
   );
-}
-
-function embeddingTextForDocument(document: VectorizeUpsertRequest): string {
-  return composeEmbeddingText({
-    content: document.content,
-    tags: document.tags,
-    context: document.context,
-    memory_type: document.memory_type,
-    status: document.status,
-    certainty: document.certainty,
-  });
-}
-
-function parseUpsertDocument(body: JsonValue) {
-  const parsed = decodeRequest(VectorizeUpsertRequestInputSchema, body);
-  if (!parsed.ok) {
-    return parsed;
-  }
-  const document = normalizeVectorizeUpsertRequest(parsed.value);
-  try {
-    validateEmbeddingText(embeddingTextForDocument(document), "Document text");
-  } catch (cause) {
-    return {
-      ok: false as const,
-      error: cause instanceof Error ? cause.message : "Invalid document.",
-    };
-  }
-  return { ok: true as const, value: document };
 }
 
 function queryTextError(query: string): string | undefined {
@@ -406,34 +370,6 @@ export const createApiHandlers = ({
         );
       });
 
-    const handleVectorizeUpsert = (body: JsonValue) =>
-      Effect.gen(function* () {
-        const input = parseUpsertDocument(body);
-        if (!input.ok) {
-          return yield* badRequest(input.error);
-        }
-        const document = input.value;
-        const id = memoryDocumentId(document);
-        const queued = yield* d1
-          .prepare(`UPDATE memory_vector_sync SET generation = generation + 1,
-          next_attempt_at = 0, attempts = 0 WHERE memory_id = ? AND repository = ?`)
-          .bind(Number(id), document.repository)
-          .run();
-        if (queued.meta.changes === 0) {
-          return yield* badRequest("Memory does not exist in this repository.");
-        }
-        return yield* HttpServerResponse.json(
-          encodeResponse(VectorizeUpsertSuccessSchema, {
-            ok: true,
-            result: {
-              id,
-              namespace: document.repository,
-              indexing: "queued",
-            },
-          }),
-        );
-      });
-
     const handleVectorizeSearch = (body: JsonValue) =>
       Effect.gen(function* () {
         const input = parseSearchRequest(body);
@@ -468,33 +404,6 @@ export const createApiHandlers = ({
           encodeResponse(VectorizeSearchSuccessSchema, {
             ok: true,
             result,
-          }),
-        );
-      });
-
-    const handleVectorizeDelete = (body: JsonValue) =>
-      Effect.gen(function* () {
-        const input = decodeRequest(VectorizeDeleteRequestSchema, body);
-        if (!input.ok) {
-          return yield* badRequest(input.error);
-        }
-        const id = String(input.value.id).trim();
-        if (id.length === 0) {
-          return yield* badRequest("id must be a non-empty string or number.");
-        }
-        // Reconcile canonical state; a client cannot delete an active row's vector.
-        const queued = yield* d1
-          .prepare(`UPDATE memory_vector_sync SET generation = generation + 1,
-          next_attempt_at = 0, attempts = 0 WHERE memory_id = ?`)
-          .bind(Number(id))
-          .run();
-        if (queued.meta.changes === 0) {
-          return yield* badRequest("Unknown memory id.");
-        }
-        return yield* HttpServerResponse.json(
-          encodeResponse(VectorizeDeleteSuccessSchema, {
-            ok: true,
-            result: { id, indexing: "queued" },
           }),
         );
       });
@@ -2310,11 +2219,7 @@ export const createApiHandlers = ({
         handleMigration(body).pipe(Effect.tap(() => wakeSafely)),
       handleMigrationLinks: (body) =>
         handleMigrationLinks(body).pipe(Effect.tap(() => wakeSafely)),
-      handleVectorizeUpsert: (body) =>
-        handleVectorizeUpsert(body).pipe(Effect.tap(() => wakeSafely)),
       handleVectorizeSearch,
-      handleVectorizeDelete: (body) =>
-        handleVectorizeDelete(body).pipe(Effect.tap(() => wakeSafely)),
       handleProduct,
     } satisfies RestHandlers;
 

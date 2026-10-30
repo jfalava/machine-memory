@@ -44,9 +44,7 @@ function setup(failingProduct?: RestHandlers<never>["handleProduct"]) {
     handleQuery: ok,
     handleMigration: ok,
     handleMigrationLinks: ok,
-    handleVectorizeUpsert: vectorize,
     handleVectorizeSearch: vectorize,
-    handleVectorizeDelete: vectorize,
     handleProduct: product,
   };
   const call = (path: string, token = "token") =>

@@ -47,9 +47,7 @@ export type RestHandlers<R = RuntimeContext> = {
   readonly handleQuery: RestHandlerFn<R>;
   readonly handleMigration: RestHandlerFn<R>;
   readonly handleMigrationLinks: RestHandlerFn<R>;
-  readonly handleVectorizeUpsert: RestHandlerFn<R>;
   readonly handleVectorizeSearch: RestHandlerFn<R>;
-  readonly handleVectorizeDelete: RestHandlerFn<R>;
   readonly handleProduct: (
     route: ProductRoute,
     body: JsonValue,
@@ -78,9 +76,7 @@ const KNOWN_ROUTES = new Set([
   "/query",
   "/migrate",
   "/migrate/links",
-  "/vectorize/upsert",
   "/vectorize/search",
-  "/vectorize/delete",
 ]);
 
 export function handleRestRequest<R>(
@@ -96,12 +92,6 @@ export function handleRestRequest<R>(
     }
     if (request.url === "/migrate/links") {
       return handlers.handleMigrationLinks(body);
-    }
-    if (request.url === "/vectorize/upsert") {
-      return handlers.handleVectorizeUpsert(body);
-    }
-    if (request.url === "/vectorize/delete") {
-      return handlers.handleVectorizeDelete(body);
     }
     if (request.url === "/vectorize/search") {
       return handlers.handleVectorizeSearch(body);

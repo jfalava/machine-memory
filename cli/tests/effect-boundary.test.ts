@@ -102,7 +102,7 @@ describe("Effect application boundaries", () => {
 
   it("fails if server-side reindex queueing fails, including quiet mode", async () => {
     const failure = new MemoryDatabaseError({
-      operation: "vectorize/upsert",
+      operation: "reindex",
       message: "Vectorize unavailable",
       cause: undefined,
     });
@@ -118,8 +118,6 @@ describe("Effect application boundaries", () => {
           },
         ]),
       vectorize: {
-        upsert: () => Effect.fail(failure),
-        delete: () => Effect.succeed({ id: "1", indexing: "queued" }),
         search: () => Effect.succeed({ count: 0, matches: [] }),
       },
     };
@@ -168,12 +166,6 @@ describe("Effect application boundaries", () => {
   });
 
   it("queues reindex atomically on the server without indexing client snapshots", async () => {
-    let upsertCalls = 0;
-    const rateLimit = new MemoryDatabaseError({
-      operation: "vectorize/upsert",
-      message: "Too Many Requests",
-      cause: undefined,
-    });
     const run = vi.fn((_sql: string, _params?: unknown[]) =>
       Effect.succeed({ changes: 1 }),
     );
@@ -189,21 +181,13 @@ describe("Effect application boundaries", () => {
           },
         ]),
       vectorize: {
-        upsert: () => {
-          upsertCalls += 1;
-          return upsertCalls === 1
-            ? Effect.fail(rateLimit)
-            : Effect.succeed({ id: "1", indexing: "queued" });
-        },
-        delete: () => Effect.succeed({ id: "1", indexing: "queued" }),
         search: () => Effect.succeed({ count: 0, matches: [] }),
       },
     };
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    vi.useFakeTimers();
 
     try {
-      const exitPromise = Effect.runPromiseExit(
+      const exit = await Effect.runPromiseExit(
         handleReindexCommand({
           args: ["--remote", "--json-min"],
           outputMode: {
@@ -219,17 +203,13 @@ describe("Effect application boundaries", () => {
           fileSystem: {} as CommandContext["fileSystem"],
         }),
       );
-      await vi.runAllTimersAsync();
-      const exit = await exitPromise;
 
       expect(exit._tag).toBe("Success");
-      expect(upsertCalls).toBe(0);
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).toContain("UPDATE memory_vector_sync");
       expect(run.mock.calls[0]?.[0]).toContain("WHERE repository = ?");
       expect(info).toHaveBeenCalledWith(expect.stringContaining('"queued":1'));
     } finally {
-      vi.useRealTimers();
       info.mockRestore();
     }
   });

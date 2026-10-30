@@ -125,29 +125,6 @@ export const MigrationLinksSuccessSchema = okResponseSchema(
 );
 export type MigrationLinksSuccess = typeof MigrationLinksSuccessSchema.Type;
 
-export const VectorizeUpsertResultSchema = Schema.Struct({
-  id: Schema.String,
-  namespace: Schema.String,
-  indexing: Schema.Literal("queued"),
-});
-export type VectorizeUpsertResult = typeof VectorizeUpsertResultSchema.Type;
-
-export const VectorizeUpsertSuccessSchema = okResponseSchema(
-  VectorizeUpsertResultSchema,
-);
-export type VectorizeUpsertSuccess = typeof VectorizeUpsertSuccessSchema.Type;
-
-export const VectorizeDeleteResultSchema = Schema.Struct({
-  id: Schema.String,
-  indexing: Schema.Literal("queued"),
-});
-export type VectorizeDeleteResult = typeof VectorizeDeleteResultSchema.Type;
-
-export const VectorizeDeleteSuccessSchema = okResponseSchema(
-  VectorizeDeleteResultSchema,
-);
-export type VectorizeDeleteSuccess = typeof VectorizeDeleteSuccessSchema.Type;
-
 /** Vectorize matches requested without vector values. Metadata may be absent. */
 export const VectorizeMatchSchema = Schema.Struct({
   id: Schema.NonEmptyString,

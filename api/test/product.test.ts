@@ -7,7 +7,6 @@ import {
   PRODUCT_OPERATIONS,
   productRoutePath,
   QuerySuccessSchema,
-  VectorizeUpsertSuccessSchema,
   type JsonObject,
   type JsonValue,
   type ProductRoute,
@@ -990,21 +989,6 @@ test("mutation during index submission stays pending and tombstones periodically
   expect(deleteByIds).toHaveBeenCalledTimes(1);
   await drain(now + 3_600_001);
   expect(deleteByIds).toHaveBeenCalledTimes(2);
-});
-
-test("queued indexing ignores stale client documents", async () => {
-  const id = await insert("canonical newest");
-  const result = await call("/vectorize/upsert", VectorizeUpsertSuccessSchema, {
-    id,
-    repository: "o/r",
-    content: "stale",
-  });
-  expect(result.status).toBe(200);
-  expect(result.result.indexing).toBe("queued");
-  expect(embed).not.toHaveBeenCalled();
-  await drain();
-  expect(embed.mock.calls[0][0]).toContain("canonical newest");
-  expect(embed.mock.calls[0][0]).not.toContain("stale");
 });
 
 test("embedding parser rejects invalid dimensions and nonfinite values", () => {
