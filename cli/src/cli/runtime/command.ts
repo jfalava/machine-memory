@@ -1,8 +1,9 @@
 import { Effect, FileSystem, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
-import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
+
 import type { DatabaseBackendFlags } from "../../database-config";
 import type { DbAccessMode } from "../../db";
+import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
 import { jsonString, type JsonObject } from "../../json";
 import type { CommandContext } from "./context";
 import { parseOutputMode, prettyOutput } from "./output";
@@ -135,6 +136,7 @@ export function effectCommand<
     });
     // SAFETY: databaseLayer(mode) supplies MemoryDatabase, leaving FileSystem.FileSystem
     // as the only remaining requirement; the error channel is deliberately unknown.
+    // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
     return (
       mode
         ? resources.pipe(Effect.provide(databaseLayer(mode, backendFlags)))

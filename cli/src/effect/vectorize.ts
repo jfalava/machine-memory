@@ -285,6 +285,8 @@ function request<T>(
       if (options.token) {
         headers.authorization = `Bearer ${options.token}`;
       }
+      // HTTP boundary; errors are typed by tryPromise's catch.
+      // @effect-diagnostics-next-line globalFetchInEffect:off
       const response = await fetch(vectorUrl(options.queryUrl, options.path), {
         method: "POST",
         headers,

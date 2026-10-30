@@ -624,16 +624,19 @@ function replaceBinary(
           if (yield* fileSystem.exists(tempPath)) {
             yield* fileSystem.remove(tempPath);
           }
-          return yield* Effect.fail(
-            new UpgradeError({
-              error: `Upgrade failed: ${errorMessage(cause)}`,
-            }),
-          );
         }).pipe(
-          Effect.catch((cleanupCause) =>
-            Effect.fail(
+          // Only rollback failures report "cleanup failed"; a clean rollback
+          // still fails with the original upgrade error.
+          Effect.mapError(
+            (cleanupCause) =>
               new UpgradeError({
                 error: `Upgrade failed: ${errorMessage(cause)}; cleanup failed: ${errorMessage(cleanupCause)}`,
+              }),
+          ),
+          Effect.andThen(
+            Effect.fail(
+              new UpgradeError({
+                error: `Upgrade failed: ${errorMessage(cause)}`,
               }),
             ),
           ),

@@ -158,6 +158,15 @@ function parseUpsertDocument(body: JsonValue) {
   return { ok: true as const, value: document };
 }
 
+function queryTextError(query: string): string | undefined {
+  try {
+    validateEmbeddingText(query, "Query");
+  } catch (cause) {
+    return cause instanceof Error ? cause.message : "Invalid query.";
+  }
+  return undefined;
+}
+
 function parseSearchRequest(body: JsonValue) {
   const parsed = decodeRequest(VectorizeSearchRequestInputSchema, body);
   if (!parsed.ok) {
@@ -451,9 +460,10 @@ export const createApiHandlers = ({
           Object.assign(queryOptions, { filter });
         }
         const matches = yield* vectorize.query(values, queryOptions);
-        const result = Schema.decodeUnknownSync(VectorizeSearchResultSchema)(
+        // A malformed Vectorize response stays a defect, as the sync decode was.
+        const result = yield* Schema.decodeEffect(VectorizeSearchResultSchema)(
           matches,
-        );
+        ).pipe(Effect.orDie);
         return yield* HttpServerResponse.json(
           encodeResponse(VectorizeSearchSuccessSchema, {
             ok: true,
@@ -1144,9 +1154,9 @@ export const createApiHandlers = ({
           Object.assign(options, { filter });
         }
         const matches = yield* vectorize.query(values, options);
-        const list = Schema.decodeUnknownSync(VectorizeSearchResultSchema)(
-          matches,
-        ).matches;
+        const { matches: list } = yield* Schema.decodeEffect(
+          VectorizeSearchResultSchema,
+        )(matches).pipe(Effect.orDie);
         return yield* resolveSemanticRows(repository, list, filters, match);
       });
 
@@ -1225,12 +1235,9 @@ export const createApiHandlers = ({
         if (args.mode === "keyword") {
           return yield* keywordProductResponse(args);
         }
-        try {
-          validateEmbeddingText(args.query, "Query");
-        } catch (error) {
-          return yield* badRequest(
-            error instanceof Error ? error.message : "Invalid query.",
-          );
+        const queryError = queryTextError(args.query);
+        if (queryError !== undefined) {
+          return yield* badRequest(queryError);
         }
         if (args.mode === "semantic") {
           return yield* semanticProductResponse(args);

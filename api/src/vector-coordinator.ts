@@ -16,6 +16,8 @@ export class VectorCoordinator extends Cloudflare.DurableObject<VectorCoordinato
     const indexResource = yield* VectorIndex;
     const index = yield* Cloudflare.Vectorize.SearchIndex(indexResource);
     const ai = yield* Cloudflare.Workers.AI();
+    // alchemy runs this outer effect at init and the returned one per instance.
+    // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.sync(() => {
       const wake = () =>
         Effect.gen(function* () {

@@ -120,6 +120,8 @@ function request(
       if (token) {
         headers.authorization = `Bearer ${token}`;
       }
+      // HTTP boundary; errors are typed by tryPromise's catch.
+      // @effect-diagnostics-next-line globalFetchInEffect:off
       const response = await fetch(migrationUrl(queryUrl, path), {
         method: "POST",
         headers,
