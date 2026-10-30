@@ -2,7 +2,7 @@ import type {
   AuthRequest,
   OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, type Mock, test, vi } from "vitest";
 
 import { githubHandler } from "../src/auth/github-handler";
 import type { OAuthEnv } from "../src/auth/oauth-provider";
@@ -11,21 +11,35 @@ import {
   createOAuthState,
   isAllowedGithubUserId,
 } from "../src/auth/oauth-utils";
-import type { ApiFetcher } from "../src/mcp/product-client";
 
 type StoredValues = Map<string, string>;
 
+function unexpected(name: string): () => never {
+  return () => {
+    throw new Error(`Unexpected ${name} access`);
+  };
+}
+
 function testKv(values: StoredValues): KVNamespace {
+  // SAFETY: the OAuth state helpers only call get, put, and delete.
   return {
     delete: async (key: string) => {
       values.delete(key);
-      return true;
     },
-    get: async (key: string) => values.get(key) ?? null,
+    get: async (
+      key: string | string[],
+    ): Promise<string | null | Map<string, string | null>> => {
+      if (Array.isArray(key)) {
+        return new Map(key.map((name) => [name, values.get(name) ?? null]));
+      }
+      return values.get(key) ?? null;
+    },
     put: async (key: string, value: string) => {
       values.set(key, value);
     },
-  } as unknown as KVNamespace;
+    list: unexpected("KV list"),
+    getWithMetadata: unexpected("KV getWithMetadata"),
+  } as KVNamespace;
 }
 
 function testEnv(
@@ -34,22 +48,24 @@ function testEnv(
   allowedUserId = "42",
 ): OAuthEnv {
   return {
-    api: { fetch: vi.fn() } as unknown as ApiFetcher,
+    api: { fetch: vi.fn<typeof fetch>() },
     apiToken: "api-token",
     // Ordinary browser OAuth must never touch the device database.
+    // SAFETY: every device database member throws, so none is reached.
     OAUTH_DEVICES: {
-      prepare: () => {
-        throw new Error("Unexpected device database access");
-      },
-    } as unknown as D1Database,
+      prepare: unexpected("device database"),
+      batch: unexpected("device database"),
+      exec: unexpected("device database"),
+      withSession: unexpected("device database"),
+      dump: unexpected("device database"),
+    } as D1Database,
     MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: "cookie-secret",
     MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: allowedUserId,
     MACHINE_MEMORY_GITHUB_CLIENT_ID: "client-id",
     MACHINE_MEMORY_GITHUB_CLIENT_SECRET: "client-secret",
     OAUTH_KV: kv,
-    OAUTH_PROVIDER: {
-      completeAuthorization,
-    } as unknown as OAuthHelpers,
+    // SAFETY: the GitHub callback only calls completeAuthorization.
+    OAUTH_PROVIDER: { completeAuthorization } as OAuthHelpers,
   };
 }
 
@@ -75,31 +91,30 @@ async function callbackResponse(
   } = { format: "form", accessToken: "github-access-token" },
 ): Promise<{
   response: Response;
-  completeAuthorization: ReturnType<typeof vi.fn>;
-  fetchMock: ReturnType<typeof vi.fn>;
+  completeAuthorization: Mock<OAuthHelpers["completeAuthorization"]>;
+  fetchMock: Mock<typeof fetch>;
 }> {
   const values = new Map<string, string>();
   const kv = testKv(values);
   const { stateToken } = await createOAuthState(AUTH_REQUEST, kv);
   const { setCookie } = await bindStateToSession(stateToken);
-  const completeAuthorization = vi.fn(async () => ({
-    redirectTo: "https://client.test/callback?code=machine-memory-token",
-  }));
+  const completeAuthorization = vi.fn<OAuthHelpers["completeAuthorization"]>(
+    async () => ({
+      redirectTo: "https://client.test/callback?code=machine-memory-token",
+    }),
+  );
   const tokenResponseBody =
     tokenResponse.format === "json"
-      ? Response.json({
-          ...(tokenResponse.accessToken === undefined
-            ? {}
-            : { access_token: tokenResponse.accessToken }),
-          ...(tokenResponse.error === undefined
-            ? {}
-            : { error: tokenResponse.error }),
+      ? // JSON serialization omits whichever fields are undefined.
+        Response.json({
+          access_token: tokenResponse.accessToken,
+          error: tokenResponse.error,
         })
       : new Response("access_token=github-access-token", {
           headers: { "content-type": "application/x-www-form-urlencoded" },
         });
   const fetchMock = vi
-    .fn()
+    .fn<typeof fetch>()
     .mockResolvedValueOnce(tokenResponseBody)
     .mockResolvedValueOnce(
       Response.json({
@@ -117,6 +132,7 @@ async function callbackResponse(
   }
   // SAFETY: the callback handler does not inspect the execution context.
   const executionContext = {} as ExecutionContext;
+  // SAFETY: the callback handler does not read Cloudflare request properties.
   const request = new Request(
     `https://mcp.test/callback?code=oauth-code&state=${stateToken}`,
     {
@@ -152,11 +168,9 @@ describe("MCP GitHub user allowlist", () => {
   test("completes OAuth only for the configured numeric GitHub ID", async () => {
     const allowed = await callbackResponse(42);
     expect(allowed.response.status).toBe(302);
-    expect(allowed.completeAuthorization).toHaveBeenCalledWith(
-      expect.objectContaining({
-        props: expect.objectContaining({ githubUserId: 42 }),
-      }),
-    );
+    expect(allowed.completeAuthorization.mock.calls[0]?.[0]).toMatchObject({
+      props: { githubUserId: 42 },
+    });
 
     const denied = await callbackResponse(43);
     expect(denied.response.status).toBe(403);
@@ -172,13 +186,9 @@ describe("MCP GitHub user allowlist", () => {
 
     expect(result.response.status).toBe(302);
     expect(result.completeAuthorization).toHaveBeenCalled();
-    expect(result.fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "https://github.com/login/oauth/access_token",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Accept: "application/json" }),
-      }),
-    );
+    const [tokenUrl, tokenInit] = result.fetchMock.mock.calls[0] ?? [];
+    expect(tokenUrl).toBe("https://github.com/login/oauth/access_token");
+    expect(tokenInit?.headers).toMatchObject({ Accept: "application/json" });
   });
 
   test("reports a GitHub token exchange error without exposing a token", async () => {

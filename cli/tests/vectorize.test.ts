@@ -1,11 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { JsonValue } from "@machine-memory/contract";
 import { Effect } from "effect";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { MemoryDatabaseError } from "@/effect/errors";
 import {
   memoryVectorEmbeddingText,
   remoteVectorApi,
   vectorizeRateLimitInfo,
 } from "@/effect/vectorize";
-import { MemoryDatabaseError } from "@/effect/errors";
 
 const searchRequest = {
   repository: "jfalava/machine-memory",
@@ -103,7 +105,7 @@ const tokenizerConfig = {
   pad_token: "[PAD]",
 };
 
-function stubSearchResponse(result: unknown): void {
+function stubSearchResponse(result: JsonValue): void {
   vi.stubGlobal(
     "fetch",
     vi.fn().mockResolvedValue(
@@ -150,16 +152,15 @@ describe("remote Vectorize response parsing", () => {
   ] as const)("rejects a match with an invalid %s", async (_field, match) => {
     stubSearchResponse({ count: 1, matches: [match] });
 
-    await expect(
-      Effect.runPromise(
+    const error = await Effect.runPromise(
+      Effect.flip(
         remoteVectorApi("https://memory.example/query", undefined).search(
           searchRequest,
         ),
       ),
-    ).rejects.toMatchObject({
-      operation: "vectorize/search",
-      message: expect.stringContaining("invalid search result"),
-    });
+    );
+    expect(error).toMatchObject({ operation: "vectorize/search" });
+    expect(error.message).toContain("invalid search result");
   });
 
   it("rejects an oversized memory before contacting the remote API", async () => {
@@ -168,7 +169,7 @@ describe("remote Vectorize response parsing", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = input instanceof Request ? input.url : input.toString();
         calls.push(url);
         if (url.endsWith("/tokenizer.json")) {
           return new Response(JSON.stringify(tokenizerJson), {
@@ -192,16 +193,15 @@ describe("remote Vectorize response parsing", () => {
     expect(memoryVectorEmbeddingText(document)).toContain(
       "Memory type: convention",
     );
-    await expect(
-      Effect.runPromise(
+    const error = await Effect.runPromise(
+      Effect.flip(
         remoteVectorApi("https://memory.example/query", undefined).upsert(
           document,
         ),
       ),
-    ).rejects.toMatchObject({
-      operation: "vectorize/upsert",
-      message: expect.stringContaining("below 512 tokens"),
-    });
+    );
+    expect(error).toMatchObject({ operation: "vectorize/upsert" });
+    expect(error.message).toContain("below 512 tokens");
     expect(calls).toHaveLength(2);
     expect(calls.some((url) => url.includes("/vectorize/upsert"))).toBe(false);
   });
@@ -210,7 +210,7 @@ describe("remote Vectorize response parsing", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-        const url = String(input);
+        const url = input instanceof Request ? input.url : input.toString();
         if (url.endsWith("/tokenizer.json")) {
           return new Response(JSON.stringify(tokenizerJson), {
             headers: { "content-type": "application/json" },
@@ -234,19 +234,16 @@ describe("remote Vectorize response parsing", () => {
       }),
     );
 
-    let error: unknown;
-    try {
-      await Effect.runPromise(
+    const error = await Effect.runPromise(
+      Effect.flip(
         remoteVectorApi("https://memory.example/query", undefined).upsert(
           upsertRequest,
         ),
-      );
-    } catch (caught) {
-      error = caught;
-    }
+      ),
+    );
 
     expect(error).toBeInstanceOf(MemoryDatabaseError);
-    expect(vectorizeRateLimitInfo(error as MemoryDatabaseError)).toEqual({
+    expect(vectorizeRateLimitInfo(error)).toEqual({
       retryAfterMs: 2000,
     });
   });

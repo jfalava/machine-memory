@@ -26,8 +26,8 @@ const ENV_KEYS = [
 function withCleanEnv(run: () => void): void {
   const saved = new Map<string, string | undefined>();
   for (const key of ENV_KEYS) {
-    saved.set(key, process.env[key]);
-    delete process.env[key];
+    saved.set(key, Bun.env[key]);
+    delete Bun.env[key];
   }
   try {
     run();
@@ -35,9 +35,9 @@ function withCleanEnv(run: () => void): void {
     for (const key of ENV_KEYS) {
       const value = saved.get(key);
       if (value === undefined) {
-        delete process.env[key];
+        delete Bun.env[key];
       } else {
-        process.env[key] = value;
+        Bun.env[key] = value;
       }
     }
   }
@@ -100,8 +100,8 @@ test("env beats file", () => {
       path,
       JSON.stringify({ stackName: "from-file", docs: false }),
     );
-    process.env.MACHINE_MEMORY_STACK_NAME = "from-env";
-    process.env.MACHINE_MEMORY_DEPLOY_DOCS = "1";
+    Bun.env.MACHINE_MEMORY_STACK_NAME = "from-env";
+    Bun.env.MACHINE_MEMORY_DEPLOY_DOCS = "1";
     const config = loadDeployConfig({ configPath: path });
     expect(config.stackName).toBe("from-env");
     expect(config.docs).toBe(true);
@@ -116,7 +116,7 @@ test("overrides beat file and env", () => {
       path,
       JSON.stringify({ domain: "from-file.example", docs: true }),
     );
-    process.env.MACHINE_MEMORY_DOMAIN = "from-env.example";
+    Bun.env.MACHINE_MEMORY_DOMAIN = "from-env.example";
     const config = loadDeployConfig({
       configPath: path,
       overrides: { domain: "from-flag.example", docs: false },

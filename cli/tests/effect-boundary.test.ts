@@ -1,4 +1,4 @@
-import { Cause, Effect } from "effect";
+import { Cause, Effect, Schema } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import { handleReindexCommand } from "@/cli/commands/reindex";
@@ -17,6 +17,7 @@ import {
   normalizeRemoteUrl,
   validateDatabaseBackendFlags,
 } from "@/database-config";
+import type { SqlQueryBinding } from "@/db";
 import { MemoryDatabase, type MemoryDatabaseApi } from "@/effect/database";
 import { MemoryDatabaseError } from "@/effect/errors";
 import { remoteLayer } from "@/effect/remote-database";
@@ -36,9 +37,9 @@ describe("Effect application boundaries", () => {
   });
 
   it("queries long suggest paths as literal substrings without wildcards", async () => {
-    const calls: Array<[string, Array<string | number>]> = [];
+    const calls: Array<[string, SqlQueryBinding[]]> = [];
     const all: MemoryDatabaseApi["all"] = (sql, params = []) => {
-      calls.push([sql, [...params] as Array<string | number>]);
+      calls.push([sql, [...params]]);
       return Effect.succeed([]);
     };
     const database: MemoryDatabaseApi = {
@@ -65,7 +66,11 @@ describe("Effect application boundaries", () => {
     expect(sql).toContain("INSTR(LOWER(m.content), ?) > 0");
     expect(sql).not.toContain("LIKE");
     expect(params).toContain("web/portal/src/components/references/gallery/");
-    expect(params?.some((param) => String(param).includes("%"))).toBe(false);
+    expect(
+      params?.some(
+        (param) => Schema.is(Schema.String)(param) && param.includes("%"),
+      ),
+    ).toBe(false);
   });
 
   it("preserves actionable remote query errors through the CLI database layer", async () => {
@@ -132,6 +137,7 @@ describe("Effect application boundaries", () => {
         quiet: outputMode.quiet,
       },
       database,
+      // SAFETY: handleReindexCommand never reads context.fileSystem.
       fileSystem: {} as CommandContext["fileSystem"],
     });
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -209,6 +215,7 @@ describe("Effect application boundaries", () => {
           },
           command: "reindex",
           database,
+          // SAFETY: handleReindexCommand never reads context.fileSystem.
           fileSystem: {} as CommandContext["fileSystem"],
         }),
       );

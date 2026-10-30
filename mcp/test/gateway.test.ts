@@ -1,22 +1,27 @@
 import {
   decodeRequest,
   encodeResponse,
+  type JsonValue,
   PRODUCT_OPERATIONS,
 } from "@machine-memory/contract";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport } from "@modelcontextprotocol/server";
+import * as Schema from "effect/Schema";
 import { describe, expect, test } from "vitest";
 
 import { toProductRow } from "../../api/src/product-logic";
 import { createMemoryServer } from "../src/mcp";
-import type { ApiFetcher } from "../src/mcp/product-client";
-import { postProduct } from "../src/mcp/product-client";
+import { type ApiFetcher, postProduct } from "../src/mcp/product-client";
 
 type SeenCall = {
   url: string;
   authorization: string | undefined;
-  body: Record<string, unknown>;
+  body: JsonValue;
 };
+
+const decodeJsonBody = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Json),
+);
 
 type StubRoute = {
   status: number;
@@ -30,12 +35,10 @@ function stubApi(
 ): ApiFetcher {
   return {
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = input instanceof Request ? input.url : input.toString();
       const headers = new Headers(init?.headers);
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<
-        string,
-        unknown
-      >;
+      const text = await new Response(init?.body).text();
+      const body = decodeJsonBody(text === "" ? "{}" : text);
       seen.push({
         url,
         authorization: headers.get("authorization") ?? undefined,

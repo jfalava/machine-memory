@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
+import { describe, expect, it, vi } from "vitest";
+
 import {
   parseChecksums,
   sha256Hex,
@@ -60,30 +61,42 @@ describe("verifyArchiveChecksum", () => {
 
   it("accepts a matching GitHub asset digest", async () => {
     await Effect.runPromise(
-      verifyArchiveChecksum(archive, { tag_name: "v1", assets: [] }, {
-        ...asset,
-        digest: `sha256:${archiveSha}`,
-      }),
+      verifyArchiveChecksum(
+        archive,
+        { tag_name: "v1", assets: [] },
+        {
+          ...asset,
+          digest: `sha256:${archiveSha}`,
+        },
+      ),
     );
   });
   it("rejects a mismatching asset digest", async () => {
     const message = await expectUpgradeError(
-      verifyArchiveChecksum(archive, { tag_name: "v1", assets: [] }, {
-        ...asset,
-        digest: `sha256:${"0".repeat(64)}`,
-      }),
+      verifyArchiveChecksum(
+        archive,
+        { tag_name: "v1", assets: [] },
+        {
+          ...asset,
+          digest: `sha256:${"0".repeat(64)}`,
+        },
+      ),
     );
     expect(message).toContain("Checksum mismatch");
     expect(message).toContain(archiveSha);
   });
 
   it("falls back to the checksums.txt asset when no digest is present", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () =>
-      new Response(
-        `${archiveSha}  machine-memory-linux-x64.zip\n${"1".repeat(64)}  other.zip\n`,
-        { status: 200 },
-      )) as unknown as typeof fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            `${archiveSha}  machine-memory-linux-x64.zip\n${"1".repeat(64)}  other.zip\n`,
+            { status: 200 },
+          ),
+      ),
+    );
     try {
       await Effect.runPromise(
         verifyArchiveChecksum(
@@ -101,7 +114,7 @@ describe("verifyArchiveChecksum", () => {
         ),
       );
     } finally {
-      globalThis.fetch = originalFetch;
+      vi.unstubAllGlobals();
     }
   });
 

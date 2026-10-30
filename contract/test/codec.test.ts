@@ -5,6 +5,7 @@ import {
   decodeRequest,
   decodeResponse,
   encodeResponse,
+  type ErrorBody,
   ErrorBodySchema,
   MigrationRequestInputSchema,
   MigrationSuccessSchema,
@@ -23,35 +24,30 @@ describe("codec", () => {
         new Error("SQLITE_ERROR: fts5: syntax error near '*'"),
       ),
     ).toMatchObject({ category: "fts-query", correctableInput: true });
-    expect(
-      databaseFailureGuidance(
-        new Error("SQLITE_ERROR: LIKE or GLOB pattern too complex"),
-      ),
-    ).toMatchObject({
+    const patternComplexity = databaseFailureGuidance(
+      new Error("SQLITE_ERROR: LIKE or GLOB pattern too complex"),
+    );
+    expect(patternComplexity).toMatchObject({
       category: "pattern-complexity",
       correctableInput: false,
-      error: expect.stringContaining("report this as a bug"),
     });
+    expect(patternComplexity?.error).toContain("report this as a bug");
     expect(
       databaseFailureGuidance(new Error("secret=request-body-content")),
     ).toBeUndefined();
-    expect(
-      databaseFailureGuidance(
-        new Error('SQLITE_ERROR: near "ORDER": syntax error'),
-      ),
-    ).toMatchObject({
+    const sqlQuery = databaseFailureGuidance(
+      new Error('SQLITE_ERROR: near "ORDER": syntax error'),
+    );
+    expect(sqlQuery).toMatchObject({
       category: "sql-query",
       correctableInput: false,
-      error: expect.stringContaining("machine-memory generated the SQL"),
     });
-    expect(
-      databaseFailureGuidance(
-        new Error("SQLITE_ERROR: no such table: memories"),
-      ),
-    ).toMatchObject({
-      category: "database-schema",
-      error: expect.stringContaining("machine-memory migrate"),
-    });
+    expect(sqlQuery?.error).toContain("machine-memory generated the SQL");
+    const databaseSchema = databaseFailureGuidance(
+      new Error("SQLITE_ERROR: no such table: memories"),
+    );
+    expect(databaseSchema).toMatchObject({ category: "database-schema" });
+    expect(databaseSchema?.error).toContain("machine-memory migrate");
   });
 
   it("encodeResponse fails closed on invalid domain values", () => {
@@ -61,19 +57,14 @@ describe("codec", () => {
         error: "boom",
       }),
     ).not.toThrow();
-    expect(() =>
-      encodeResponse(ErrorBodySchema, {
-        ok: true,
-        error: "boom",
-      } as unknown as {
-        readonly ok: false;
-        readonly error: string;
-      }),
-    ).toThrow();
+    const invalid = { ok: true, error: "boom" };
+    // SAFETY: deliberately invalid domain value to prove encoding fails closed.
+    const invalidBody = invalid as ErrorBody;
+    expect(() => encodeResponse(ErrorBodySchema, invalidBody)).toThrow();
   });
 
   it("decodeResponse fails open and logs", () => {
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(
       decodeResponse(ErrorBodySchema, { ok: true }, "err"),
     ).toBeUndefined();

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import type { AuthRequest } from "@cloudflare/workers-oauth-provider";
+import * as Schema from "effect/Schema";
 import { build } from "esbuild";
 import { Miniflare, Response as MiniflareResponse } from "miniflare";
 import {
@@ -21,6 +22,33 @@ import {
   rejectDeviceLogin,
   storeDeviceLogin,
 } from "../src/auth/device-store";
+import { AuthRequestSchema } from "../src/auth/oauth-utils";
+
+const decodeRegistration = Schema.decodeUnknownSync(
+  Schema.Struct({ client_id: Schema.String }),
+);
+const decodeSession = Schema.decodeUnknownSync(
+  Schema.Struct({ user_code: Schema.String, device_code: Schema.String }),
+);
+const decodeEncodedState = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ oauthReqInfo: AuthRequestSchema })),
+);
+const decodeAuthorizationCode = Schema.decodeUnknownSync(
+  Schema.Struct({ code: Schema.String }),
+);
+const decodeTokens = Schema.decodeUnknownSync(
+  Schema.Struct({
+    access_token: Schema.String,
+    refresh_token: Schema.String,
+    scope: Schema.String,
+  }),
+);
+const decodeTokenPair = Schema.decodeUnknownSync(
+  Schema.Struct({ access_token: Schema.String, refresh_token: Schema.String }),
+);
+const decodeRefreshedToken = Schema.decodeUnknownSync(
+  Schema.Struct({ access_token: Schema.String, scope: Schema.String }),
+);
 
 const ORIGIN = "https://memory.test";
 const REDIRECT = "http://127.0.0.1:43123/callback";
@@ -48,9 +76,9 @@ async function bundle(entry: string) {
 }
 
 beforeAll(async () => {
-  challenge = Buffer.from(
+  challenge = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(VERIFIER)),
-  ).toString("base64url");
+  ).toBase64({ alphabet: "base64url", omitPadding: true });
   const [router, oauth] = await Promise.all([
     bundle("../router/src/index.ts"),
     bundle("test/fixtures/oauth-worker.ts"),
@@ -170,10 +198,9 @@ beforeAll(async () => {
       },
     ],
   });
-  db = (await mf.getD1Database(
-    "OAUTH_DEVICES",
-    "mcp",
-  )) as unknown as D1Database;
+  // SAFETY: Miniflare's D1 binding is the runtime D1Database; only its bundled
+  // type declarations differ from @cloudflare/workers-types.
+  db = (await mf.getD1Database("OAUTH_DEVICES", "mcp")) as D1Database;
   const migration = await readFile(
     "../iac/oauth-migrations/0001_device_sessions.sql",
     "utf8",
@@ -204,8 +231,12 @@ async function request(
   cookie?: string,
 ) {
   const headers = new Headers();
-  if (cookie) headers.set("Cookie", cookie);
-  if (body) headers.set("content-type", "application/x-www-form-urlencoded");
+  if (cookie) {
+    headers.set("Cookie", cookie);
+  }
+  if (body) {
+    headers.set("content-type", "application/x-www-form-urlencoded");
+  }
   return mf.dispatchFetch(`${ORIGIN}${path}`, {
     method: body ? "POST" : "GET",
     headers,
@@ -227,7 +258,7 @@ async function register() {
     }),
   });
   expect(response.status).toBe(201);
-  return ((await response.json()) as { client_id: string }).client_id;
+  return decodeRegistration(await response.json()).client_id;
 }
 
 async function start(overrides: Record<string, string> = {}) {
@@ -248,7 +279,7 @@ async function session(scope?: string): Promise<Session> {
   const { clientId, response } = await start(scope ? { scope } : {});
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
-  const body = (await response.json()) as Session;
+  const body = decodeSession(await response.json());
   return { ...body, clientId };
 }
 
@@ -271,14 +302,14 @@ async function consent(login: Session, mutate?: (auth: AuthRequest) => void) {
   );
   expect(activation.status).toBe(200);
   const html = await activation.text();
-  const state = JSON.parse(atob(hidden(html, "state"))) as {
-    oauthReqInfo: AuthRequest;
-  };
-  mutate?.(state.oauthReqInfo);
+  const oauthReqInfo: AuthRequest = decodeEncodedState(
+    atob(hidden(html, "state")),
+  ).oauthReqInfo;
+  mutate?.(oauthReqInfo);
   const approval = await request(
     "/authorize",
     {
-      state: btoa(JSON.stringify(state)),
+      state: btoa(JSON.stringify({ oauthReqInfo })),
       csrf_token: hidden(html, "csrf_token"),
     },
     activation.headers.get("set-cookie")!,
@@ -315,7 +346,7 @@ async function issueToken(scope: string) {
   const login = await session(scope);
   expect((await callback(await consent(login))).status).toBe(200);
   await db.prepare("UPDATE device_sessions SET next_poll_at = 0").run();
-  const { code } = (await (await poll(login)).json()) as { code: string };
+  const { code } = decodeAuthorizationCode(await (await poll(login)).json());
   const response = await request("/token", {
     grant_type: "authorization_code",
     client_id: login.clientId,
@@ -325,11 +356,7 @@ async function issueToken(scope: string) {
     resource: `${ORIGIN}/mcp`,
   });
   expect(response.status).toBe(200);
-  const tokens = (await response.json()) as {
-    access_token: string;
-    refresh_token: string;
-    scope: string;
-  };
+  const tokens = decodeTokens(await response.json());
   return { ...tokens, clientId: login.clientId };
 }
 
@@ -424,10 +451,7 @@ describe("headless login through the public router and real OAuth provider", () 
       resource: `${ORIGIN}/mcp`,
     });
     expect(refreshed.status).toBe(200);
-    const readOnly = (await refreshed.json()) as {
-      access_token: string;
-      scope: string;
-    };
+    const readOnly = decodeRefreshedToken(await refreshed.json());
     expect(readOnly.scope).toBe("mcp:read");
     productCalls.length = 0;
     const denied = await callTool(readOnly.access_token, "memory_delete");
@@ -462,7 +486,7 @@ describe("headless login through the public router and real OAuth provider", () 
     await db.prepare("UPDATE device_sessions SET next_poll_at = 0").run();
     const response = await poll(login);
     expect(response.status).toBe(200);
-    const { code } = (await response.json()) as { code: string };
+    const { code } = decodeAuthorizationCode(await response.json());
     expect(code).toBeTruthy();
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await (await poll(login)).json()).toEqual({
@@ -483,10 +507,7 @@ describe("headless login through the public router and real OAuth provider", () 
     expect(wrong.status).toBe(400);
     const tokenResponse = await request("/token", tokenBody);
     expect(tokenResponse.status).toBe(200);
-    const tokens = (await tokenResponse.json()) as {
-      access_token: string;
-      refresh_token: string;
-    };
+    const tokens = decodeTokenPair(await tokenResponse.json());
     expect(tokens.access_token).toBeTruthy();
     expect(tokens.refresh_token).toBeTruthy();
     const initialized = await mf.dispatchFetch(`${ORIGIN}/mcp`, {
@@ -564,7 +585,9 @@ describe("headless login through the public router and real OAuth provider", () 
     async (reason) => {
       const login = await session();
       const approval = await consent(login);
-      if (reason === "allowlist") githubUserId = 43;
+      if (reason === "allowlist") {
+        githubUserId = 43;
+      }
       expect((await callback(approval, reason === "github")).status).toBe(403);
       expect(await (await poll(login)).json()).toEqual({
         error: "access_denied",
@@ -577,16 +600,24 @@ describe("headless login through the public router and real OAuth provider", () 
     async (reason) => {
       const login = await session();
       const approval = await consent(login, (auth) => {
-        if (reason === "scope") auth.scope = ["mcp:read"];
-        if (reason === "pkce") auth.codeChallenge = "x".repeat(43);
-        if (reason === "resource") auth.resource = "https://other.example/mcp";
+        if (reason === "scope") {
+          auth.scope = ["mcp:read"];
+        }
+        if (reason === "pkce") {
+          auth.codeChallenge = "x".repeat(43);
+        }
+        if (reason === "resource") {
+          auth.resource = "https://other.example/mcp";
+        }
       });
-      if (reason === "expired")
+      if (reason === "expired") {
         await db.prepare("UPDATE device_sessions SET expires_at = 0").run();
-      if (reason === "used")
+      }
+      if (reason === "used") {
         await db
           .prepare("UPDATE device_sessions SET status = 'approving'")
           .run();
+      }
       const response = await callback(approval);
       expect(response.status).toBe(400);
       expect(response.headers.get("location")).toBeNull();
@@ -618,7 +649,7 @@ describe("atomic D1 device state", () => {
           claimDeviceApproval(db, auth),
           claimDeviceApproval(db, auth),
         ])
-      ).sort(),
+      ).sort((left, right) => Number(left) - Number(right)),
     ).toEqual([false, true]);
     expect(await readDevicePoll(db, "wrong-secret", auth.clientId)).toEqual({
       error: "expired_token",

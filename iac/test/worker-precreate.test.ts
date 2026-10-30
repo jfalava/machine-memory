@@ -15,9 +15,15 @@ test("existing Worker precreate does not wait for newly declared DO classes", as
   const client = HttpClient.make((request) => {
     requests.push(request.url);
     expect(request.method).toBe("GET");
-    let result: unknown;
+    const respond = <Result>(result: Result) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ success: true, result, errors: [], messages: [] }),
+        ),
+      );
     if (request.url.endsWith("/settings")) {
-      result = {
+      return respond({
         bindings: [
           {
             type: "durable_object_namespace",
@@ -28,18 +34,12 @@ test("existing Worker precreate does not wait for newly declared DO classes", as
         ],
         tags: [],
         logpush: false,
-      };
-    } else if (request.url.endsWith("/scripts")) {
-      result = [{ id: "existing-api", tag: "existing-worker-id" }];
-    } else {
-      return Effect.die(`Unexpected request: ${request.url}`);
+      });
     }
-    return Effect.succeed(
-      HttpClientResponse.fromWeb(
-        request,
-        Response.json({ success: true, result, errors: [], messages: [] }),
-      ),
-    );
+    if (request.url.endsWith("/scripts")) {
+      return respond([{ id: "existing-api", tag: "existing-worker-id" }]);
+    }
+    return Effect.die(`Unexpected request: ${request.url}`);
   });
   const providers = Cloudflare.providers();
   const state = Layer.succeed(State.State, State.InMemoryService({}));
@@ -49,7 +49,9 @@ test("existing Worker precreate does not wait for newly declared DO classes", as
         Cloudflare.Worker.Type,
         "live",
       );
-      if (!provider.precreate) throw new Error("Worker must support precreate");
+      if (!provider.precreate) {
+        throw new Error("Worker must support precreate");
+      }
       return yield* provider
         .precreate({
           id: "api",

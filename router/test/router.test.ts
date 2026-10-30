@@ -8,13 +8,21 @@ interface RecordedRequest {
   method: string;
 }
 
-type BindingName = "API" | "MCP" | "DOCS_WORKER";
+interface RecordedCalls {
+  readonly API: RecordedRequest[];
+  readonly MCP: RecordedRequest[];
+  readonly DOCS_WORKER: RecordedRequest[];
+}
 
-function makeEnv(withDocs = true): {
-  calls: Record<BindingName, RecordedRequest[]>;
-  env: Env;
-} {
-  const calls: Record<BindingName, RecordedRequest[]> = {
+type BindingName = keyof RecordedCalls;
+
+interface TestEnv {
+  readonly calls: RecordedCalls;
+  readonly env: Env;
+}
+
+function makeEnv(withDocs = true): TestEnv {
+  const calls: RecordedCalls = {
     API: [],
     MCP: [],
     DOCS_WORKER: [],
@@ -23,7 +31,7 @@ function makeEnv(withDocs = true): {
   const stub = (binding: BindingName): ServiceFetcher => ({
     fetch: async (input: Request | string, init?: RequestInit) => {
       const request =
-        typeof input === "string" ? new Request(input, init) : input;
+        input instanceof Request ? input : new Request(input, init);
       const url = new URL(request.url);
       calls[binding].push({
         pathname: url.pathname,
@@ -34,14 +42,12 @@ function makeEnv(withDocs = true): {
     },
   });
 
-  return {
-    calls,
-    env: {
-      API: stub("API"),
-      MCP: stub("MCP"),
-      ...(withDocs ? { DOCS_WORKER: stub("DOCS_WORKER") } : {}),
-    },
-  };
+  const api = stub("API");
+  const mcp = stub("MCP");
+  const env: Env = withDocs
+    ? { API: api, MCP: mcp, DOCS_WORKER: stub("DOCS_WORKER") }
+    : { API: api, MCP: mcp };
+  return { calls, env };
 }
 
 const request = (path: string, withDocs = true) => {

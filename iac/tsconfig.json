@@ -10,6 +10,5 @@
     "noEmit": true,
     "types": ["@cloudflare/workers-types", "bun-types"]
   },
-  "include": ["alchemy.run.ts", "src/**/*.ts"],
-  "exclude": ["test/**"]
+  "include": ["alchemy.run.ts", "src/**/*.ts", "test/**/*.ts"]
 }

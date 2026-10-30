@@ -169,6 +169,7 @@ const base = defineConfig({
       files: ["*.test.ts"],
       rules: {
         "no-shadow": "off",
+        "max-statements": "off",
       },
     },
   ],

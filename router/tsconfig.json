@@ -10,6 +10,5 @@
     "noEmit": true,
     "types": ["@cloudflare/workers-types", "bun-types"]
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["test/**"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

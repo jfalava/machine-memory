@@ -37,6 +37,8 @@ function ranked(fields: {
     updated_at: daysAgo(fields.ageDays),
     update_count: fields.updateCount ?? 0,
     refs: fields.refs ?? [],
+    evidence: [],
+    validation_gaps: [],
     fts_rank: fields.ftsRank,
   };
 }
