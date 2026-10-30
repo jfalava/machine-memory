@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "bun run --filter @machine-memory/iac typecheck && bun run --filter @machine-memory/docs build",
-    "check": "oxlint --fix && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
+    "check": "oxlint --fix && bun run typecheck",
     "ci:build": "bun run build",
     "ci:deploy": "alchemy deploy --yes --adopt",
     "deploy": "alchemy deploy",
@@ -14,7 +14,7 @@
     "lint": "oxlint",
     "plan": "alchemy deploy --dry-run",
     "test": "bun test test/",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@cloudflare/workers-types": "catalog:types",

@@ -2,6 +2,7 @@ import type { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 
 import type { SecretsStoreConfig } from "./deploy-config";
 
@@ -53,12 +54,22 @@ export function bindApplicationSecrets(
   });
 }
 
+/** A Secrets Store binding is missing or its value could not be read. */
+export class SecretUnavailableError extends Schema.TaggedError<SecretUnavailableError>()(
+  "SecretUnavailableError",
+  {
+    message: Schema.String,
+    binding: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {}
+
 /** Run only inside a request, never in the Worker's planning/init effect. */
 export function readStoredSecret(
   name: string,
 ): Effect.Effect<
   Redacted.Redacted<string>,
-  Error,
+  SecretUnavailableError,
   Cloudflare.WorkerEnvironment | RuntimeContext
 > {
   return Effect.gen(function* () {
@@ -67,7 +78,12 @@ export function readStoredSecret(
     const secret = env[name] as SecretsStoreSecret;
     return yield* Effect.tryPromise({
       try: () => secret.get(),
-      catch: () => new Error(`Secrets Store binding ${name} is unavailable.`),
+      catch: (cause) =>
+        new SecretUnavailableError({
+          message: `Secrets Store binding ${name} is unavailable.`,
+          binding: name,
+          cause,
+        }),
     }).pipe(Effect.map(Redacted.make));
   });
 }

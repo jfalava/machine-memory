@@ -27,6 +27,7 @@
       "build": {
         "oxlint": "1.90.0",
         "oxlint-tsgolint": "7.0.2005",
+        "tsrs": "0.20.1-ts7.1.0-beta",
         "typescript": "7.0.2",
         "wrangler": "4.156.0"
       },
@@ -51,6 +52,7 @@
     "@oxlint/plugins": "1.90.0",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:build",
+    "tsrs": "catalog:build",
     "typescript": "catalog:build",
     "vite-tsconfig-paths": "6.1.1"
   },

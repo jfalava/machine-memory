@@ -4,7 +4,15 @@
     "plugins": [
       {
         "name": "@effect/language-service",
+        // `effect-tsgo tsrs --noEmit` reports these diagnostics in the same pass as
+        // type errors. Errors and warnings fail the typecheck; suggestions do not.
+        "ignoreEffectErrorsInTscExitCode": false,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "ignoreEffectSuggestionsInTscExitCode": true,
         "diagnosticSeverity": {
+          // effect/cli, effect/http, FileSystem, and the Bun runtime are unstable
+          // Effect v4 modules this project depends on by design.
+          "unstableApiUsage": "suggestion",
           "abortControllerInEffect": "error",
           "allOfMapToForEach": "error",
           "cryptoRandomUUID": "off",

@@ -50,7 +50,7 @@ export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
     const optionalSecret = (name: string) =>
       Effect.suspend(() =>
         env[name] === undefined
-          ? Effect.succeed(undefined)
+          ? Effect.undefined
           : readStoredSecret(name).pipe(Effect.map(Redacted.value)),
       );
     const oauthResources = Effect.gen(function* () {

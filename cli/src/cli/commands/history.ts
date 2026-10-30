@@ -135,11 +135,9 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
       id,
     });
     if (!decoded.ok) {
-      return yield* Effect.fail(
-        commandError(
-          "restore",
-          `The historical memory is not valid under the current schema: ${decoded.error}`,
-        ),
+      return yield* commandError(
+        "restore",
+        `The historical memory is not valid under the current schema: ${decoded.error}`,
       );
     }
     const snapshot = normalizeStoredMemoryRow(decoded.value);

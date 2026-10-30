@@ -138,12 +138,24 @@ const builtinRules: DummyRuleMap = {
 // Strict application base: type-aware linting over the built-in plugins plus
 // the vendored anti-slop rules. Workspace configs spread this and add their
 // own jsPlugins registration and ignorePatterns.
+//
+// Type checking is not oxlint's job here: each workspace's `typecheck` script
+// runs `effect-tsgo tsrs --noEmit` once, reporting TypeScript and Effect
+// diagnostics together. `typeCheck` stays off so lint never re-reports them.
 const base = defineConfig({
   options: {
     typeAware: true,
-    typeCheck: true,
+    typeCheck: false,
   },
-  plugins: ["eslint", "react", "typescript", "unicorn", "oxc", "import", "promise"],
+  plugins: [
+    "eslint",
+    "react",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "import",
+    "promise",
+  ],
   env: {
     node: true,
     browser: false,
