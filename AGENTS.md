@@ -6,6 +6,7 @@ Every database-backed command requires exactly one backend flag: use `--remote` 
 Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.
 Search policy: use `machine-memory query "<term>" --remote` for exact names, paths, commands, and identifiers; use `--semantic --remote` when the same concept may use different wording; use `--hybrid --remote` for broad investigation or when recall matters more than exact matching.
 When unsure, start with `--hybrid`; add `--explain-score` when ranking needs inspection. D1 records are canonical and Vectorize is only a retrieval index.
+To read or write another repository's memories, pass `--repo owner/name` instead of changing directory; `add` and `import` refuse a repository with no memories unless `--allow-new-repo` is given. `machine-memory <command> --help` prints help for that command only.
 After adding or updating a memory, its Vectorize embedding is synchronized automatically. Run `machine-memory reindex --remote` only after provisioning, changing the embedding index or model, or repairing missing vectors.
 Memory size: the composed embedding text must stay below 512 BGE tokens AND within the embedding service's conservative byte+2 estimate (512 bytes). Preflight without writing: `machine-memory size "<text>"` or add/update `--dry-run` (both exit 1 when over budget); failures name the exact byte or token deficit. `--token-report` appends the per-part breakdown to real writes.
 
@@ -29,8 +30,8 @@ Recover accidental overwrites with `machine-memory history <id> --remote`, then 
 
 1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.
 2. Verify uncertain context before acting. Use `machine-memory verify <id> "<inferred fact>" --remote` or `machine-memory diff <id> "<proposed updated wording>" --remote` when an inference may conflict with existing memory.
-3. Maintain memory while implementing. Prefer `machine-memory update --match "topic query" "new canonical content" --remote`; if no reliable match exists, use `machine-memory add "..." --upsert-match "topic query" --remote`. Weak matches refuse to silently create: inspect with `--dry-run`, then pass `--force` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.
-4. Reconcile dependents. When a decision changes or is reversed, search for other active records that rely on the old premise and update or deprecate them. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it. Use `machine-memory deprecate <id> --superseded-by <id> --remote` when a record is replaced.
+3. Maintain memory while implementing. Prefer `machine-memory update --match "topic query" "new canonical content" --remote`; if no reliable match exists, use `machine-memory add "..." --upsert-match "topic query" --remote`. Weak matches refuse to silently create: inspect with `--dry-run`, then pass `--force` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats. `update --dry-run` and `diff` report `dropped` identifiers and sentences the new text would lose; keep each one or confirm it is obsolete.
+4. Reconcile dependents. When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return `review_candidates` (records sharing the old premise; strong ones name the same path or identifier): resolve each one, or confirm it still holds. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it. Use `machine-memory deprecate <id> --superseded-by <id> --remote` when a record is replaced.
 5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.
 6. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.
 7. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.
@@ -45,6 +46,8 @@ Recover accidental overwrites with `machine-memory history <id> --remote`, then 
 - The parent reconciles its own findings and every child candidate in the end-of-task checkpoint.
 
 ### End-of-task checkpoint (before the final response)
+
+Start with `machine-memory checkpoint --remote --json-min`: it lists memories written since `--since` (default 12 hours), memories related to the touched files (default: the Git working-tree changes, else the last commit; override with `--files`), review flags such as `verified_without_evidence` and `status_without_expiry`, and the commands for each group below.
 
 Collect every validated finding from the task, including child results and mechanisms discovered while investigating approaches that were later abandoned. A rejected remedy does not make the verified mechanism behind its failure disposable. Classify each finding:
 

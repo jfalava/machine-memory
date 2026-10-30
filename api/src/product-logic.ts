@@ -4,6 +4,7 @@ import {
   composeEmbeddingText,
   exactMatchPoints,
   ftsRankPoints,
+  gotchaOverlaps,
   matchStrengthRank,
   matchText,
   recencyPoints,
@@ -572,6 +573,18 @@ export function analyzeMemoryDoctor(
     ...statusFindings(rows),
     ...canonicalThreadFindings(rows),
     ...hygieneFindings(rows),
+    ...gotchaOverlaps(
+      rows.map((row) => ({
+        id: row.id,
+        content: row.content,
+        memory_type: row.memoryType,
+      })),
+    ).map((overlap) =>
+      doctorFinding("gotcha_overlap", [...overlap.ids], {
+        shared_identifiers: overlap.shared_identifiers,
+        hint: "Consolidate the shared workaround into one gotcha; keep version-specific limits in their own record and reference it.",
+      }),
+    ),
   ];
   const countsByKind: Record<string, number> = {};
   for (const finding of findings) {

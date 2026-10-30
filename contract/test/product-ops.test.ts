@@ -224,6 +224,7 @@ describe("product ops schemas", () => {
         similarity: 0.8,
         added_terms: ["x"],
         removed_terms: [],
+        dropped: { identifiers: ["src/a.ts"], sentences: [] },
       },
     };
     expect(

@@ -35,6 +35,22 @@ lists them for review. The content update increments `update_count` and refreshe
 `--match` must resolve to an active memory and cannot be combined with more
 than one positional content argument.
 
+## Reconciliation
+
+When the content changes, the response reports:
+
+- `dropped`: identifiers and sentences the new content no longer carries, as
+  in [`diff`](/machine/diff). `--dry-run` reports them per target before
+  anything is written.
+- `review_candidates`: up to five other active memories that may rely on the
+  old premise, with `match_strength`. A strong candidate names the same path
+  or identifier. Update or deprecate each one, or confirm it still holds.
+  Status memories do not trigger this check.
+
+`--json-min` and `--quiet` keep `dropped` and list `review_candidate_ids`
+instead of summaries; batch updates group both per ID under `reconciliation`.
+`add --upsert-match` reports the same fields when it updates a strong match.
+
 Updates save the previous row automatically. Use [history and restore](/machine/history)
 to review or recover an accidental overwrite without a prior read.
 

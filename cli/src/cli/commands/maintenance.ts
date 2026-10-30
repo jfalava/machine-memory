@@ -41,6 +41,7 @@ import { measureEmbeddingFit } from "../features/memory/size-report";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 import {
+  assertWritableRepository,
   canonicalizeCertainty,
   detectPotentialConflicts,
   getMemoryById,
@@ -589,6 +590,7 @@ export function handleImportCommand(commandCtx: CommandContext) {
       status: "unprocessed",
     }));
     const database = requireDatabase(commandCtx);
+    yield* assertWritableRepository(database, "import");
     let error: string | undefined;
     const preflight = yield* preflightImport(database, parsed, results).pipe(
       Effect.match({

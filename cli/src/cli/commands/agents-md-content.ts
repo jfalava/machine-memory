@@ -15,6 +15,7 @@ const AGENTS_MD_BACKEND_CONTENT = {
     "Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.",
     'Search policy: use `machine-memory query "<term>" --remote` for exact names, paths, commands, and identifiers; use `--semantic --remote` when the same concept may use different wording; use `--hybrid --remote` for broad investigation or when recall matters more than exact matching.',
     "When unsure, start with `--hybrid`; add `--explain-score` when ranking needs inspection. D1 records are canonical and Vectorize is only a retrieval index.",
+    "To read or write another repository's memories, pass `--repo owner/name` instead of changing directory; `add` and `import` refuse a repository with no memories unless `--allow-new-repo` is given. `machine-memory <command> --help` prints help for that command only.",
     "After adding or updating a memory, its Vectorize embedding is synchronized automatically. Run `machine-memory reindex --remote` only after provisioning, changing the embedding index or model, or repairing missing vectors.",
   ],
   mcp: [
@@ -60,9 +61,12 @@ function agentsMdCheckpointSection(
   add: string,
   update: string,
   deprecate: string,
+  gather: string,
 ): string[] {
   return [
     "### End-of-task checkpoint (before the final response)",
+    "",
+    gather,
     "",
     "Collect every validated finding from the task, including child results and mechanisms discovered while investigating approaches that were later abandoned. A rejected remedy does not make the verified mechanism behind its failure disposable. Classify each finding:",
     "",
@@ -83,7 +87,7 @@ const AGENTS_MD_STATUS_STEP =
   "Durable mechanisms and decisions go in `decision`, `reference`, `gotcha`, `constraint`, or `preference` records. Implementation, delivery, and verification state goes in one `status` record that expires and is updated rather than duplicated. State exactly where work stands (local only, uncommitted, committed, pushed, deployed or active) and which verification remains; never describe local work as deployed. When a caveat leaves a durable record, keep it in a status record.";
 
 const AGENTS_MD_RECONCILE_STEP =
-  "Reconcile dependents. When a decision changes or is reversed, search for other active records that rely on the old premise and update or deprecate them. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it.";
+  "Reconcile dependents. When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return `review_candidates` (records sharing the old premise; strong ones name the same path or identifier): resolve each one, or confirm it still holds. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it.";
 
 function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
   return [
@@ -105,7 +109,7 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
     "",
     "1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.",
     `2. Verify uncertain context before acting. Use \`machine-memory verify <id> "<inferred fact>" ${backendFlag}\` or \`machine-memory diff <id> "<proposed updated wording>" ${backendFlag}\` when an inference may conflict with existing memory.`,
-    `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.`,
+    `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats. \`update --dry-run\` and \`diff\` report \`dropped\` identifiers and sentences the new text would lose; keep each one or confirm it is obsolete.`,
     `4. ${AGENTS_MD_RECONCILE_STEP} Use \`machine-memory deprecate <id> --superseded-by <id> ${backendFlag}\` when a record is replaced.`,
     "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.",
     "6. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.",
@@ -120,6 +124,7 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
       `\`machine-memory add ... ${backendFlag}\``,
       `\`machine-memory update ... ${backendFlag}\``,
       `\`machine-memory deprecate ... ${backendFlag}\``,
+      `Start with \`machine-memory checkpoint ${backendFlag} --json-min\`: it lists memories written since \`--since\` (default 12 hours), memories related to the touched files (default: the Git working-tree changes, else the last commit; override with \`--files\`), review flags such as \`verified_without_evidence\` and \`status_without_expiry\`, and the commands for each group below.`,
     ),
     "",
     "### Checklist (verify before proceeding)",
@@ -149,7 +154,7 @@ const AGENTS_MD_MCP_WORKFLOW = [
   "",
   "1. Scan relevant context fast. Run exactly one focused `memory_suggest`, `memory_query`, or `memory_list` before code changes; repeat only if the touched paths or scope materially changes.",
   "2. Verify uncertain context before acting. Use `memory_verify` with `{ repository, id, fact }` or `memory_diff` with `{ repository, id, content }` when an inference may conflict with existing memory.",
-  "3. Maintain memory while implementing. Prefer `memory_update` with `match` (or the exact `id`; only changed fields are needed); if no reliable match exists, use `memory_add` with `upsert_match`. Weak upsert matches refuse to silently create: inspect with `memory_get`, then pass `force: true` if a new record is intended. Call `memory_size` first when content may be long. A new `content` replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.",
+  "3. Maintain memory while implementing. Prefer `memory_update` with `match` (or the exact `id`; only changed fields are needed); if no reliable match exists, use `memory_add` with `upsert_match`. Weak upsert matches refuse to silently create: inspect with `memory_get`, then pass `force: true` if a new record is intended. Call `memory_size` first when content may be long. A new `content` replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats. `memory_diff` and `memory_update` report `dropped` identifiers and sentences; keep each one or confirm it is obsolete.",
   `4. ${AGENTS_MD_RECONCILE_STEP} Use \`memory_deprecate\` with \`superseded_by\` when a record is replaced.`,
   "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
   "6. Use path-driven tags. There is no tag-map tool — tags are free-form comma-separated text, so use scoped tags such as `area:cli,topic:backend,kind:decision`. Filter them with the `tags` parameter on query/list/suggest.",
@@ -164,6 +169,7 @@ const AGENTS_MD_MCP_WORKFLOW = [
     "`memory_add`",
     "`memory_update`",
     "`memory_deprecate`",
+    "Start by listing this task's writes with `memory_list` (newest first) and the memories related to the touched files with `memory_suggest`; check each write for missing evidence or status expiry.",
   ),
   "",
   "### Checklist (verify before proceeding)",

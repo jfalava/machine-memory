@@ -9,7 +9,7 @@ import {
   type UpgradeProgress,
   type UpgradeOptions,
 } from "../../upgrade";
-import { helpPayload } from "../help";
+import { commandHelpPayload } from "../help";
 import {
   booleanFlag,
   booleanSpec,
@@ -25,6 +25,7 @@ import {
   prettyOutput,
   printCommandOutput,
 } from "../runtime/output";
+import { handleCheckpointCommand } from "./checkpoint";
 import { handleCoverageCommand } from "./coverage";
 import { handleDeleteCommand } from "./delete";
 import { handleDiffCommand } from "./diff";
@@ -301,6 +302,29 @@ const sweepCommand = effectCommand(
   handleSweepCommand,
 );
 
+const checkpointCommand = effectCommand(
+  "checkpoint",
+  {
+    args: positionalArgs(),
+    files: stringFlag("files"),
+    "files-json": stringFlag("files-json"),
+    query: stringFlag("query"),
+    since: stringFlag("since"),
+    limit: stringFlag("limit"),
+    ...outputConfig(),
+  },
+  [
+    stringSpec("files"),
+    stringSpec("files-json"),
+    stringSpec("query"),
+    stringSpec("since"),
+    stringSpec("limit"),
+    ...outputSpecs,
+  ],
+  "read",
+  handleCheckpointCommand,
+);
+
 const doctorCommand = effectCommand(
   "doctor",
   outputConfig(),
@@ -445,6 +469,7 @@ export const featureCommands = [
   deleteCommand,
   suggestCommand,
   sweepCommand,
+  checkpointCommand,
   doctorCommand,
   verifyCommand,
   diffCommand,
@@ -514,16 +539,19 @@ function startUpgradeOutput(): UpgradeOptions {
 }
 
 export function builtinCommands() {
-  const helpCommand = Command.make("help", {}, () =>
-    Effect.gen(function* () {
-      const pretty = yield* prettyOutput;
-      yield* Effect.sync(() =>
-        printCommandOutput(
-          { command: "help", outputMode: outputModeForPretty(pretty) },
-          helpPayload(),
-        ),
-      );
-    }),
+  const helpCommand = Command.make(
+    "help",
+    { args: positionalArgs() },
+    ({ args }) =>
+      Effect.gen(function* () {
+        const pretty = yield* prettyOutput;
+        yield* Effect.sync(() =>
+          printCommandOutput(
+            { command: "help", outputMode: outputModeForPretty(pretty) },
+            commandHelpPayload(args[0]),
+          ),
+        );
+      }),
   );
   const versionCommand = Command.make("version", {}, () =>
     Effect.gen(function* () {

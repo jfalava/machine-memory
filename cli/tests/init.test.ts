@@ -109,6 +109,8 @@ describe("init templates", () => {
         "`verified` is rejected without at least one evidence kind",
       );
       expect(content).toContain("verified_without_evidence");
+      expect(content).toContain("review_candidates");
+      expect(content).toContain("dropped");
       expect(content).toContain("never describe local work as deployed");
       expect(content).toContain("Reconcile dependents.");
       expect(content).toContain("carry over unrelated valid details");

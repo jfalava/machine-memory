@@ -120,6 +120,7 @@ const databaseCommands = new Set([
   "delete",
   "suggest",
   "sweep",
+  "checkpoint",
   "doctor",
   "verify",
   "diff",
@@ -773,6 +774,231 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       (doctor.json.findings as Record<string, unknown>)
         .verified_without_evidence,
     ).toEqual([expect.objectContaining({ id: 1 })]);
+  });
+
+  it("reports dropped details and records that rely on a changed or retired premise", async () => {
+    const { cwd, dbPath } = await createProject();
+    const premise = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Keep nixpkgs-security pinned in flake.nix. Home Manager reimports nixpkgs.",
+      "--type",
+      "decision",
+      "--quiet",
+    );
+    const dependent = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Security updates wait for nixpkgs-security bumps before switching.",
+      "--type",
+      "convention",
+      "--quiet",
+    );
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Docs sidebar lists install first",
+      "--quiet",
+    );
+    const premiseId = String(premise.json.id);
+    const dependentId = Number(dependent.json.id);
+
+    const diff = await runCli(
+      cwd,
+      dbPath,
+      "diff",
+      premiseId,
+      "Home Manager reimports nixpkgs.",
+    );
+    expect(diff.json.dropped).toEqual({
+      identifiers: ["nixpkgs-security", "flake.nix"],
+      sentences: ["Keep nixpkgs-security pinned in flake.nix."],
+    });
+    const dryRun = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      premiseId,
+      "Home Manager reimports nixpkgs.",
+      "--dry-run",
+    );
+    expect(
+      (dryRun.json.targets as Record<string, unknown>[])[0]?.dropped,
+    ).toMatchObject({ identifiers: ["nixpkgs-security", "flake.nix"] });
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      premiseId,
+      "nixpkgs-security was removed from flake.nix; Home Manager reimports nixpkgs.",
+      "--json-min",
+    );
+    // The rewrite keeps the identifiers and most terms, so nothing is dropped.
+    expect(updated.json).toEqual({
+      id: Number(premiseId),
+      review_candidate_ids: [dependentId],
+    });
+
+    const deprecated = await runCli(cwd, dbPath, "deprecate", premiseId);
+    expect(deprecated.json.review_candidates).toEqual([
+      expect.objectContaining({ id: dependentId, match_strength: "strong" }),
+    ]);
+  });
+
+  it("flags overlapping gotchas in doctor", async () => {
+    const { cwd, dbPath } = await createProject();
+    for (const content of [
+      "alchemy@2.0.0-beta.83 polls Durable Objects; patch lib/cloudflare/worker.js.",
+      "alchemy@2.0.0-beta.83 precreate needs the lib/cloudflare/worker.js patch.",
+    ]) {
+      await runCli(cwd, dbPath, "add", content, "--type", "gotcha", "--quiet");
+    }
+    const doctor = await runCli(cwd, dbPath, "doctor");
+    expect(doctor.json.summary).toMatchObject({ gotcha_overlaps: 1 });
+    expect(
+      (doctor.json.findings as Record<string, unknown>).gotcha_overlaps,
+    ).toEqual([
+      expect.objectContaining({
+        ids: [1, 2],
+        shared_identifiers: [
+          "alchemy@2.0.0-beta.83",
+          "lib/cloudflare/worker.js",
+        ],
+      }),
+    ]);
+  });
+
+  it("prints focused help for one command and the full catalog for help", async () => {
+    const { cwd, dbPath } = await createProject();
+    const focused = await runCliText(cwd, dbPath, "update", "--help");
+    const payload = JSON.parse(focused.stdout) as Record<string, unknown>;
+    expect(Object.keys(payload.commands as object)).toEqual(["update"]);
+    expect(Object.keys(payload.output_fields as object)).toContain("dropped");
+    expect(payload.full_help).toBe("machine-memory help");
+    const viaHelp = await runCli(cwd, dbPath, "help", "checkpoint");
+    expect(Object.keys(viaHelp.json.commands as object)).toEqual([
+      "checkpoint",
+    ]);
+    const full = await runCli(cwd, dbPath, "help");
+    expect(Object.keys(full.json.commands as object).length).toBeGreaterThan(
+      20,
+    );
+  });
+
+  it("targets another repository with --repo and refuses unknown ones on add", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(cwd, dbPath, "add", "Local repository memory", "--quiet");
+    const refused = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Other repository memory",
+      "--repo",
+      "jfalava/outfit",
+    );
+    expect(refused.code).not.toBe(0);
+    expect(String(refused.json.error)).toContain("--allow-new-repo");
+    const created = await runCli(
+      cwd,
+      dbPath,
+      "--repo",
+      "jfalava/outfit",
+      "add",
+      "Other repository memory",
+      "--allow-new-repo",
+      "--local",
+      "--quiet",
+    );
+    expect(created.code).toBe(0);
+    const other = await runCli(
+      cwd,
+      dbPath,
+      "list",
+      "--repo=jfalava/outfit",
+      "--local",
+    );
+    expect(
+      (other.json as unknown as Record<string, unknown>[]).map(
+        (row) => row.content,
+      ),
+    ).toEqual(["Other repository memory"]);
+    const own = await runCli(cwd, dbPath, "list");
+    expect(
+      (own.json as unknown as Record<string, unknown>[]).map(
+        (row) => row.content,
+      ),
+    ).toEqual(["Local repository memory"]);
+    const invalid = await runCli(cwd, dbPath, "list", "--repo", "outfit");
+    expect(invalid.code).not.toBe(0);
+    expect(String(invalid.json.error)).toContain("owner/name");
+  });
+
+  it("summarizes recent writes, related memories, and the classification in checkpoint", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "cli/src/db.ts applies evidence triggers on every migrate",
+      "--type",
+      "reference",
+      "--certainty",
+      "verified",
+      "--evidence",
+      "tested_behavior",
+      "--validation-gaps",
+      "D1 untested",
+      "--quiet",
+    );
+    const id = Number(added.json.id);
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Release in progress",
+      "--type",
+      "status",
+      "--quiet",
+    );
+    const checkpoint = await runCli(
+      cwd,
+      dbPath,
+      "checkpoint",
+      "--files",
+      "cli/src/db.ts",
+      "--json-min",
+    );
+    expect(checkpoint.json.files).toEqual(["cli/src/db.ts"]);
+    expect(
+      (checkpoint.json.recent as Record<string, unknown>[]).map(
+        (row) => row.id,
+      ),
+    ).toEqual([2, id]);
+    expect(checkpoint.json.related).toEqual([
+      expect.objectContaining({ id, match_strength: "strong" }),
+    ]);
+    expect(checkpoint.json.review).toMatchObject({
+      status_without_expiry: [2],
+      verified_with_gaps: [id],
+      strong_related: [id],
+    });
+    expect(
+      (checkpoint.json.classification as Record<string, unknown>[]).map(
+        (entry) => entry.group,
+      ),
+    ).toEqual([
+      "already_covered",
+      "new_durable_knowledge",
+      "superseded_or_conflicting",
+      "transient_status",
+      "intentionally_omitted",
+    ]);
+    const quiet = await runCli(cwd, dbPath, "checkpoint", "--quiet");
+    expect(quiet.json.recent_ids).toEqual([2, id]);
   });
 
   it("upgrades a v3 database without backfill and can rerun migration without losing history", async () => {

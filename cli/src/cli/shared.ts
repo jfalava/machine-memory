@@ -9,7 +9,10 @@ import {
   matchStrengthRank,
   matchText,
   orderByMatchStrength,
+  premiseQuery,
   recencyPoints,
+  REVIEW_CANDIDATES_LIMIT,
+  reviewsDependents,
   SEARCH_SCORE_WEIGHTS,
   tagMatchPoints,
   termCoveragePoints,
@@ -32,7 +35,11 @@ import {
   type MemoryType,
 } from "../constants";
 import type { MemoryDatabaseApi } from "../effect/database";
-import { CommandError, MemoryDatabaseError } from "../effect/errors";
+import {
+  CommandError,
+  commandError,
+  MemoryDatabaseError,
+} from "../effect/errors";
 import {
   jsonNumber,
   jsonObject,
@@ -42,7 +49,10 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../json";
-import { repositoryForCurrentDirectory } from "../repository";
+import {
+  activeRepositoryOverride,
+  repositoryForCurrentDirectory,
+} from "../repository";
 import {
   parseStoredEvidence,
   parseStoredValidationGaps,
@@ -844,6 +854,99 @@ export function detectPotentialConflicts(
       params,
     )
     .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, terms)));
+}
+
+/**
+ * Active records that may rely on a changed or retired premise. A shared
+ * literal identifier makes a candidate strong; broad term overlap is weak.
+ */
+export function findReviewCandidates(
+  database: MemoryDatabaseApi,
+  premises: JsonObject[],
+  alsoExclude: number[] = [],
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
+  const excluded = new Set([
+    ...premises.map((premise) => Number(premise.id)),
+    ...alsoExclude,
+  ]);
+  const durable = premises.filter((premise) => {
+    const memoryType = stringValue(premise.memory_type, "convention");
+    return isMemoryType(memoryType) && reviewsDependents(memoryType);
+  });
+  return Effect.forEach(durable, (premise) => {
+    const query = premiseQuery(stringValue(premise.content));
+    const terms = extractTerms(query.leadingText);
+    const ftsQuery = buildFtsQueryFromTerms(terms);
+    if (!ftsQuery) {
+      return Effect.succeed<JsonObject[]>([]);
+    }
+    return database
+      .all(
+        `SELECT m.*, bm25(memories_fts) AS fts_rank
+         FROM memories m
+         JOIN memories_fts ON m.id = memories_fts.rowid
+         WHERE memories_fts MATCH ? AND m.repository = ? AND m.status = 'active'
+         ORDER BY bm25(memories_fts)
+         LIMIT 20`,
+        [ftsQuery, repositoryForCurrentDirectory()],
+      )
+      .pipe(
+        Effect.map((rows) =>
+          scoreRowsWithDetails(rows, terms, {
+            identifiers: query.identifiers,
+            scope: "files",
+          }),
+        ),
+      );
+  }).pipe(
+    Effect.map((groups) => {
+      const byId = new Map<number, JsonObject>();
+      for (const row of groups.flat()) {
+        const id = Number(row.id);
+        if (
+          !excluded.has(id) &&
+          !byId.has(id) &&
+          row.match_strength !== "none"
+        ) {
+          byId.set(id, row);
+        }
+      }
+      return orderRowsByMatchStrength([...byId.values()]).slice(
+        0,
+        REVIEW_CANDIDATES_LIMIT,
+      );
+    }),
+  );
+}
+
+/**
+ * A mistyped --repo would silently start a new namespace, so creating records
+ * there requires --allow-new-repo until the repository has memories.
+ */
+export function assertWritableRepository(
+  database: MemoryDatabaseApi,
+  command: string,
+): Effect.Effect<void, MemoryDatabaseError | CommandError> {
+  const override = activeRepositoryOverride();
+  if (override === undefined || override.allowNew) {
+    return Effect.void;
+  }
+  return database
+    .get("SELECT 1 AS found FROM memories WHERE repository = ? LIMIT 1", [
+      override.slug,
+    ])
+    .pipe(
+      Effect.flatMap((row) =>
+        row
+          ? Effect.void
+          : Effect.fail(
+              commandError(
+                command,
+                `Repository '${override.slug}' has no memories. Check the --repo slug, or pass --allow-new-repo to start it.`,
+              ),
+            ),
+      ),
+    );
 }
 
 export function findExactDuplicate(

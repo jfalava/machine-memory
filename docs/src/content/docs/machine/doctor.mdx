@@ -14,8 +14,14 @@ machine-memory doctor (--local|--remote) --json-min
 
 `doctor` scans active memories for exact and near duplicates, stale status
 overlaps, canonical-thread overlaps, missing status expiry, type-boundary
-problems, tag hygiene issues, malformed references, and verified memories
-without evidence. It does not modify the database.
+problems, tag hygiene issues, malformed references, verified memories without
+evidence, and overlapping gotchas. It does not modify the database.
+
+`gotcha_overlap` pairs active gotchas that name at least two of the same
+identifiers, such as a package version and a patched path. They usually repeat
+one workaround: consolidate it into one record, keep any version-specific
+limit in its own record that references the workaround, and deprecate the
+redundant one with `--superseded-by`.
 
 `verified_without_evidence` findings are mostly memories saved before evidence
 existed. Only a reviewer knows which kind applies, so they carry a hint instead

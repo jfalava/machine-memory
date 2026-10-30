@@ -8,9 +8,11 @@ import {
   type MemoryStatus,
   type Certainty,
   type EvidenceKind,
+  type MemoryDeprecateResult,
   type MemoryWriteResult,
   type UpsertMatchInfo,
   decodeRequest,
+  droppedDetails,
   EMBEDDING_MODEL,
   embeddingSizeReport,
   evidenceWriteError,
@@ -18,8 +20,12 @@ import {
   ErrorBodySchema,
   extractQueryIdentifiers,
   fileIdentifiers,
+  hasDroppedDetails,
   hasStrongMatch,
   orderByMatchStrength,
+  premiseQuery,
+  REVIEW_CANDIDATES_LIMIT,
+  reviewsDependents,
   jsonNumber,
   jsonString,
   MigrationLinksRequestSchema,
@@ -862,6 +868,7 @@ export const createApiHandlers = ({
               similarity: result.similarity,
               added_terms: result.added_terms,
               removed_terms: result.removed_terms,
+              dropped: droppedDetails(row.content, input.value.content),
             },
           }),
         );
@@ -976,20 +983,117 @@ export const createApiHandlers = ({
           status,
           supersededBy,
         );
+        const reviewCandidates = yield* fetchReviewCandidates(
+          input.value.repository,
+          deprecated,
+          supersededBy === null ? [] : [supersededBy],
+        );
+        const result: MemoryDeprecateResult = {
+          written_to: input.value.repository,
+          status,
+          superseded_by: supersededBy,
+          requested_ids: requestedIds,
+          deprecated,
+          not_found: notFound,
+          count: deprecated.length,
+        };
+        if (reviewCandidates.length > 0) {
+          Object.assign(result, { review_candidates: reviewCandidates });
+        }
         return yield* HttpServerResponse.json(
           encodeResponse(PRODUCT_OPERATIONS.deprecate.response, {
             ok: true,
-            result: {
-              written_to: input.value.repository,
-              status,
-              superseded_by: supersededBy,
-              requested_ids: requestedIds,
-              deprecated,
-              not_found: notFound,
-              count: deprecated.length,
-            },
+            result,
           }),
         );
+      });
+
+    /**
+     * Active records that may rely on a changed or retired premise. Literal
+     * identifier overlap is decisive; broad term overlap is reported as weak.
+     */
+    const fetchReviewCandidates = (
+      repository: string,
+      premises: ReadonlyArray<{
+        readonly id: number;
+        readonly content: string;
+        readonly memory_type: MemoryType;
+      }>,
+      alsoExclude: readonly number[],
+    ) =>
+      Effect.gen(function* () {
+        const excluded = new Set([
+          ...premises.map((premise) => premise.id),
+          ...alsoExclude,
+        ]);
+        const byId = new Map<number, ReturnType<typeof scoredResultRow>>();
+        for (const premise of premises) {
+          if (!reviewsDependents(premise.memory_type)) {
+            continue;
+          }
+          const query = premiseQuery(premise.content);
+          const terms = extractTerms(query.leadingText);
+          const ftsQuery = buildFtsQuery(terms);
+          if (ftsQuery === undefined) {
+            continue;
+          }
+          const rows = yield* fetchRankedProductRows(
+            ftsQuery,
+            repository,
+            { status: "active" },
+            20,
+          );
+          const scored = scoreMemoryRows(rows, {
+            terms,
+            identifiers: query.identifiers,
+            scope: "files",
+          });
+          for (const row of scored) {
+            if (
+              !excluded.has(row.id) &&
+              !byId.has(row.id) &&
+              row.match_strength !== "none"
+            ) {
+              byId.set(row.id, scoredResultRow(row));
+            }
+          }
+        }
+        return orderByMatchStrength([...byId.values()]).slice(
+          0,
+          REVIEW_CANDIDATES_LIMIT,
+        );
+      });
+
+    /** Dropped details and dependent records for a content or status change. */
+    const reconcileUpdate = (
+      repository: string,
+      existing: ReturnType<typeof toProductRow>,
+      fields: { content?: string; status?: MemoryStatus },
+    ) =>
+      Effect.gen(function* () {
+        const extra: Pick<MemoryWriteResult, "dropped" | "review_candidates"> =
+          {};
+        const contentChanged =
+          fields.content !== undefined && fields.content !== existing.content;
+        const retired =
+          fields.status !== undefined && fields.status !== "active";
+        if (contentChanged && fields.content !== undefined) {
+          const dropped = droppedDetails(existing.content, fields.content);
+          if (hasDroppedDetails(dropped)) {
+            Object.assign(extra, { dropped });
+          }
+        }
+        if (contentChanged || retired) {
+          const candidates = yield* fetchReviewCandidates(
+            repository,
+            [existing],
+            [],
+          );
+          if (candidates.length > 0) {
+            Object.assign(extra, { review_candidates: candidates });
+          }
+        }
+        return extra;
       });
 
     const fetchKeywordScored = (
@@ -2150,6 +2254,7 @@ export const createApiHandlers = ({
           id: targetId,
           memory: row,
           size: outcome.size,
+          ...(yield* reconcileUpdate(repository, existing, fields)),
         };
         if (outcome.matched !== undefined) {
           Object.assign(result, { matched: outcome.matched });

@@ -21,3 +21,8 @@ the changed rows, missing IDs for batch requests, and the count of updated
 memories. Output flags: `--brief` prints `{id, status}`, `--json-min`/`--quiet`
 print `{id}` for single targets and compact `{deprecated_ids, not_found,
 count}` payloads for batches.
+
+Retiring a premise can leave other memories relying on it. The response adds
+`review_candidates` (minimal output: `review_candidate_ids`) for active
+memories that share the deprecated content's paths, identifiers, or terms,
+excluding the `--superseded-by` replacement. Resolve each one.

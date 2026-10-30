@@ -70,7 +70,7 @@ Every tool that takes `repository` expects `owner/name`. Rows live in D1; embedd
 
 `memory_add` accepts `upsert_match` (with `force` and `upsert_threshold`, default score 32 alongside similarity ≥ 0.62): a strong match updates in place, otherwise a new record is created, and a weak match refuses unless forced. New records echo `potential_conflicts` so near-duplicates stay visible.
 
-`memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
+`memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change. A content or status change also returns `dropped` (identifiers and sentences the new content lost) and `review_candidates` (other active memories that may rely on the old premise). `memory_deprecate` returns `review_candidates` too, and `memory_diff` returns `dropped` before anything is written. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
 
 ### History and recovery
 

@@ -187,7 +187,7 @@ function suggestMatchQuery(snapshot: SuggestSnapshot): SearchMatchQuery {
   };
 }
 
-function fetchQueryResults(
+export function fetchQueryResults(
   commandCtx: CommandContext,
   term: string,
   options: FetchResultsOptions,
@@ -465,7 +465,7 @@ export function handleListCommand(commandCtx: CommandContext) {
   });
 }
 
-function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
+export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
   const files = parseSuggestFiles(args);
   const normalizedPathTerms = extractPathTermsFromFiles(files);
   const neighborhood = deriveNeighborhoodFromFiles(files);
@@ -518,7 +518,7 @@ function fetchFtsSuggestResults(
     );
 }
 
-function collectSuggestResults(
+export function collectSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   options: FetchResultsOptions,

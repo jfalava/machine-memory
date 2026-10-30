@@ -1,3 +1,4 @@
+import { gotchaOverlaps } from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { printJson } from "../../cli-utils";
@@ -103,6 +104,13 @@ type UnevidencedVerifiedFinding = {
   hint: string;
 };
 
+type GotchaOverlapFinding = {
+  kind: "gotcha_overlap";
+  ids: number[];
+  shared_identifiers: string[];
+  hint: string;
+};
+
 type DoctorFindings = {
   exact_duplicates: ExactDuplicateFinding[];
   near_duplicates: NearDuplicateFinding[];
@@ -113,6 +121,7 @@ type DoctorFindings = {
   tag_hygiene: TagFinding[];
   malformed_refs: RefsFinding[];
   verified_without_evidence: UnevidencedVerifiedFinding[];
+  gotcha_overlaps: GotchaOverlapFinding[];
 };
 
 type ExactDuplicateResult = {
@@ -810,6 +819,21 @@ function detectUnevidencedVerified(
     }));
 }
 
+function detectGotchaOverlaps(rows: MemorySnapshot[]): GotchaOverlapFinding[] {
+  return gotchaOverlaps(
+    rows.map((row) => ({
+      id: row.id,
+      content: row.content,
+      memory_type: row.memoryType,
+    })),
+  ).map((overlap) => ({
+    kind: "gotcha_overlap",
+    ids: [...overlap.ids],
+    shared_identifiers: overlap.shared_identifiers,
+    hint: `Review together (machine-memory get ${overlap.ids.join(",")}); consolidate the shared workaround and deprecate the redundant record with --superseded-by.`,
+  }));
+}
+
 function summarizeFindings(rows: MemorySnapshot[], findings: DoctorFindings) {
   const commandCount = collectSuggestedCommands(findings).length;
   return {
@@ -823,6 +847,7 @@ function summarizeFindings(rows: MemorySnapshot[], findings: DoctorFindings) {
     tag_hygiene: findings.tag_hygiene.length,
     malformed_refs: findings.malformed_refs.length,
     verified_without_evidence: findings.verified_without_evidence.length,
+    gotcha_overlaps: findings.gotcha_overlaps.length,
     suggested_commands: commandCount,
   };
 }
@@ -857,6 +882,7 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
     const tags = detectTagHygiene(rows);
     const refs = detectMalformedRefs(rows);
     const unevidenced = detectUnevidencedVerified(rows);
+    const gotchas = detectGotchaOverlaps(rows);
     const findings: DoctorFindings = {
       exact_duplicates: exact.findings,
       near_duplicates: near,
@@ -867,6 +893,7 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
       tag_hygiene: tags,
       malformed_refs: refs,
       verified_without_evidence: unevidenced,
+      gotcha_overlaps: gotchas,
     };
     const suggestedCommands = collectSuggestedCommands(findings);
     const summary = summarizeFindings(rows, findings);
@@ -898,6 +925,9 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
       verified_without_evidence: findings.verified_without_evidence.map(
         (item) => ({ ...item }) satisfies JsonObject,
       ),
+      gotcha_overlaps: findings.gotcha_overlaps.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
     } satisfies JsonObject;
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
@@ -911,7 +941,8 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
             summary.type_boundary +
             summary.tag_hygiene +
             summary.malformed_refs +
-            summary.verified_without_evidence,
+            summary.verified_without_evidence +
+            summary.gotcha_overlaps,
           suggested_commands_count: suggestedCommands.length,
         });
         return;

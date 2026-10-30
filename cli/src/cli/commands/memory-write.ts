@@ -1,6 +1,10 @@
 import { createInterface } from "node:readline/promises";
 
-import type { EvidenceKind } from "@machine-memory/contract";
+import {
+  droppedDetails,
+  hasDroppedDetails,
+  type EvidenceKind,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
@@ -46,11 +50,13 @@ import {
   UPDATE_USAGE,
 } from "../features/memory/usage";
 import { requireDatabase, type CommandContext } from "../runtime/context";
-import { printCommandOutput } from "../runtime/output";
+import { minimalResultSummary, printCommandOutput } from "../runtime/output";
 import {
   collectPositionalArgs,
   detectPotentialConflicts,
+  assertWritableRepository,
   findMemoryByMatch,
+  findReviewCandidates,
   findStatusCascadeCandidates,
   getMemoryById,
   hasMinimalOutput,
@@ -146,8 +152,72 @@ type UpdateSpec = {
 type ProspectiveUpdate = {
   id: number;
   updateCount: number;
+  previous: JsonObject;
   document: MemoryVectorDocument;
 };
+
+/** What a write loses from the old content and which records may depend on it. */
+type Reconciliation = {
+  id: number;
+  dropped?: JsonObject;
+  reviewCandidates: JsonObject[];
+};
+
+function droppedFor(
+  previous: JsonObject,
+  content: string,
+): JsonObject | undefined {
+  const dropped = droppedDetails(stringValue(previous.content), content);
+  return hasDroppedDetails(dropped)
+    ? {
+        identifiers: [...dropped.identifiers],
+        sentences: [...dropped.sentences],
+      }
+    : undefined;
+}
+
+function reconcileWrite(
+  database: MemoryDatabaseApi,
+  previous: JsonObject,
+  content: string,
+): Effect.Effect<Reconciliation, MemoryDatabaseError> {
+  const id = Number(previous.id);
+  if (stringValue(previous.content) === content) {
+    return Effect.succeed({ id, reviewCandidates: [] });
+  }
+  return findReviewCandidates(database, [previous]).pipe(
+    Effect.map((reviewCandidates) => ({
+      id,
+      dropped: droppedFor(previous, content),
+      reviewCandidates,
+    })),
+  );
+}
+
+/** Full output carries summaries; minimal output carries only ids. */
+function reconciliationFields(
+  reconciliation: Reconciliation | undefined,
+  minimal: boolean,
+): JsonObject {
+  const fields: JsonObject = {};
+  if (!reconciliation) {
+    return fields;
+  }
+  if (reconciliation.dropped) {
+    fields.dropped = reconciliation.dropped;
+  }
+  if (reconciliation.reviewCandidates.length > 0) {
+    if (minimal) {
+      fields.review_candidate_ids = reconciliation.reviewCandidates.map((row) =>
+        Number(row.id),
+      );
+    } else {
+      fields.review_candidates =
+        reconciliation.reviewCandidates.map(minimalResultSummary);
+    }
+  }
+  return fields;
+}
 
 /**
  * Pure token-budget analysis for the embedding text a write would produce.
@@ -252,6 +322,7 @@ function prospectiveUpdateDocuments(
         return {
           id,
           updateCount: jsonNumber(row.update_count) ?? 0,
+          previous: row,
           document: {
             id: String(id),
             repository:
@@ -522,12 +593,16 @@ function printUpsertResult(
   outputMode: CommandContext["outputMode"],
   mode: "created" | "updated",
   id: number,
-  tokenReport?: BgeTokenBreakdown,
-  matchInfo?: JsonObject,
+  extras: {
+    tokenReport?: BgeTokenBreakdown;
+    matchInfo?: JsonObject;
+    reconciliation?: JsonObject;
+  } = {},
 ) {
+  const { tokenReport, matchInfo, reconciliation = {} } = extras;
   const payload: JsonObject = matchInfo
-    ? { mode, id, upsert_match: matchInfo }
-    : { mode, id };
+    ? { mode, id, upsert_match: matchInfo, ...reconciliation }
+    : { mode, id, ...reconciliation };
   if (tokenReport) {
     Object.assign(payload, { tokens: tokenReport });
   }
@@ -666,13 +741,15 @@ function runStrongUpsertUpdate(params: {
         `Memory ${matchedId} changed concurrently; retry the match.`,
       );
     }
+    const reconciliation = yield* reconcileWrite(database, canonical, content);
     yield* Effect.sync(() =>
-      printUpsertResult(
-        outputMode,
-        "updated",
-        matchedId,
-        params.tokenReportEnabled ? breakdown : undefined,
-      ),
+      printUpsertResult(outputMode, "updated", matchedId, {
+        tokenReport: params.tokenReportEnabled ? breakdown : undefined,
+        reconciliation: reconciliationFields(
+          reconciliation,
+          hasMinimalOutput(outputMode),
+        ),
+      }),
     );
     return true;
   });
@@ -697,13 +774,10 @@ function runUpsertCreate(params: {
     const createdId =
       jsonNumber(jsonObject(createdResult)?.lastInsertRowid) ?? 0;
     yield* Effect.sync(() =>
-      printUpsertResult(
-        outputMode,
-        "created",
-        createdId,
-        params.tokenReportEnabled ? breakdown : undefined,
-        params.info ?? undefined,
-      ),
+      printUpsertResult(outputMode, "created", createdId, {
+        tokenReport: params.tokenReportEnabled ? breakdown : undefined,
+        matchInfo: params.info ?? undefined,
+      }),
     );
     return true;
   });
@@ -1037,6 +1111,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args, outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
+    yield* assertWritableRepository(database, "add");
     const content = yield* resolveAddContent(args, commandCtx.fileSystem);
     const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
     const tokenReportEnabled = hasFlag(args, "--token-report");
@@ -1271,15 +1346,34 @@ function runBatchMemoryUpdate(
   });
 }
 
+function printMinimalUpdateResult(
+  outputMode: CommandContext["outputMode"],
+  id: number | undefined,
+  breakdown: BgeTokenBreakdown | undefined,
+  reconciliation: JsonObject,
+): void {
+  if (!outputMode.brief) {
+    printJson({ id, ...reconciliation });
+    return;
+  }
+  const compact: JsonObject = { id, status: "updated", ...reconciliation };
+  if (breakdown) {
+    Object.assign(compact, { tokens: breakdown });
+  }
+  printJson(compact);
+}
+
 function printSingleUpdateResult(params: {
   commandCtx: CommandContext;
   firstId: number | undefined;
   row: JsonObject | undefined;
   tokenReportEnabled: boolean;
   tokenBreakdowns: Map<number, BgeTokenBreakdown>;
+  reconciliation?: Reconciliation;
 }): void {
   const { commandCtx, firstId, row, tokenReportEnabled, tokenBreakdowns } =
     params;
+  const minimalFields = reconciliationFields(params.reconciliation, true);
   const { outputMode } = commandCtx;
   if (!row) {
     printCommandOutput(commandCtx, {
@@ -1291,17 +1385,12 @@ function printSingleUpdateResult(params: {
     return;
   }
   if (hasMinimalOutput(outputMode)) {
-    const breakdown =
-      firstId !== undefined ? tokenBreakdowns.get(firstId) : undefined;
-    if (outputMode.brief) {
-      const compact: JsonObject = { id: firstId, status: "updated" };
-      if (breakdown) {
-        Object.assign(compact, { tokens: breakdown });
-      }
-      printJson(compact);
-      return;
-    }
-    printJson({ id: firstId });
+    printMinimalUpdateResult(
+      outputMode,
+      firstId,
+      firstId !== undefined ? tokenBreakdowns.get(firstId) : undefined,
+      minimalFields,
+    );
     return;
   }
   if (tokenReportEnabled && firstId !== undefined) {
@@ -1310,6 +1399,7 @@ function printSingleUpdateResult(params: {
       Object.assign(row, { tokens: breakdown });
     }
   }
+  Object.assign(row, reconciliationFields(params.reconciliation, false));
   printCommandOutput(commandCtx, row);
 }
 
@@ -1320,6 +1410,7 @@ function printUpdateResults(params: {
   missingIds: number[];
   tokenReportEnabled: boolean;
   tokenBreakdowns: Map<number, BgeTokenBreakdown>;
+  reconciliations: Reconciliation[];
 }): void {
   const {
     commandCtx,
@@ -1337,15 +1428,24 @@ function printUpdateResults(params: {
       row: rows[0],
       tokenReportEnabled,
       tokenBreakdowns,
+      reconciliation: params.reconciliations[0],
     });
     return;
   }
-  if (hasMinimalOutput(outputMode)) {
-    printJson({
+  const minimal = hasMinimalOutput(outputMode);
+  const reconciliation = params.reconciliations
+    .map((entry) => ({ id: entry.id, ...reconciliationFields(entry, minimal) }))
+    .filter((entry) => Object.keys(entry).length > 1);
+  if (minimal) {
+    const compact: JsonObject = {
       updated_ids: rows.map((row) => Number(row.id)),
       not_found: missingIds,
       count: rows.length,
-    });
+    };
+    if (reconciliation.length > 0) {
+      compact.reconciliation = reconciliation;
+    }
+    printJson(compact);
     return;
   }
   const payload: JsonObject = {
@@ -1353,6 +1453,9 @@ function printUpdateResults(params: {
     not_found: missingIds,
     count: rows.length,
   };
+  if (reconciliation.length > 0) {
+    payload.reconciliation = reconciliation;
+  }
   if (tokenReportEnabled && tokenBreakdowns.size > 0) {
     Object.assign(payload, {
       tokens: [...tokenBreakdowns.entries()].map(([id, breakdown]) => ({
@@ -1366,7 +1469,7 @@ function printUpdateResults(params: {
 
 function runUpdateDryRun(
   commandCtx: CommandContext,
-  prospective: Array<{ id: number; document: MemoryVectorDocument }>,
+  prospective: ProspectiveUpdate[],
 ): Effect.Effect<void, CommandError> {
   return Effect.gen(function* () {
     const targets: JsonObject[] = [];
@@ -1376,7 +1479,15 @@ function runUpdateDryRun(
         memoryVectorEmbeddingParts(entry.document),
       );
       anyOverBudget = anyOverBudget || !size.within_limit;
-      targets.push({ id: entry.id, size: embeddingSizeReport(size) });
+      const target: JsonObject = {
+        id: entry.id,
+        size: embeddingSizeReport(size),
+      };
+      const dropped = droppedFor(entry.previous, entry.document.content);
+      if (dropped) {
+        target.dropped = dropped;
+      }
+      targets.push(target);
     }
     yield* Effect.sync(() => {
       printCommandOutput(commandCtx, {
@@ -1452,6 +1563,11 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       hasFlag(args, "--match"),
     );
     const { rows, missingIds } = result;
+    const updatedIds = new Set(rows.map((row) => Number(row.id)));
+    const reconciliations = yield* Effect.forEach(
+      prospective.filter((entry) => updatedIds.has(entry.id)),
+      (entry) => reconcileWrite(database, entry.previous, content),
+    );
     yield* Effect.sync(() => {
       if (missingIds.length || result.conflictIds.length || result.error) {
         process.exitCode = 1;
@@ -1474,6 +1590,7 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
         missingIds,
         tokenReportEnabled,
         tokenBreakdowns,
+        reconciliations,
       });
     });
   });
@@ -1540,9 +1657,14 @@ function printDeprecateResults(params: {
   targetIds: number[];
   rows: JsonObject[];
   missingIds: number[];
+  reviewCandidates: JsonObject[];
 }): void {
   const { commandCtx, supersededByRequested, targetIds, rows, missingIds } =
     params;
+  const review = reconciliationFields(
+    { id: 0, reviewCandidates: params.reviewCandidates },
+    hasMinimalOutput(commandCtx.outputMode),
+  );
   const { outputMode } = commandCtx;
   if (targetIds.length === 1 && !rows.length) {
     printCommandOutput(commandCtx, {
@@ -1560,27 +1682,33 @@ function printDeprecateResults(params: {
         printJson({
           id: firstId,
           status: supersededByRequested ? "superseded_by" : "deprecated",
+          ...review,
         });
       } else {
-        printJson({ id: firstId });
+        printJson({ id: firstId, ...review });
       }
     } else {
       printJson({
         deprecated_ids: rows.map((row) => Number(row.id)),
         not_found: missingIds,
         count: rows.length,
+        ...review,
       });
     }
     return;
   }
   if (targetIds.length === 1) {
-    printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
+    printCommandOutput(
+      commandCtx,
+      rows[0] ? { ...rows[0], ...review } : { error: "Not found" },
+    );
     return;
   }
   printCommandOutput(commandCtx, {
     deprecated: rows,
     not_found: missingIds,
     count: rows.length,
+    ...review,
   });
 }
 
@@ -1617,6 +1745,11 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
       hasFlag(args, "--match"),
     );
     const { rows, missingIds } = result;
+    const reviewCandidates = yield* findReviewCandidates(
+      database,
+      rows,
+      supersededBy === undefined || supersededBy === null ? [] : [supersededBy],
+    );
     yield* Effect.sync(() => {
       if (missingIds.length || result.conflictIds.length || result.error) {
         process.exitCode = 1;
@@ -1638,6 +1771,7 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
         targetIds,
         rows,
         missingIds,
+        reviewCandidates,
       });
     });
   });

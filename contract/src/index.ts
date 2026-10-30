@@ -77,6 +77,18 @@ export {
   type SearchMode,
 } from "./literals";
 export {
+  DroppedDetailsSchema,
+  REVIEW_CANDIDATES_LIMIT,
+  droppedDetails,
+  gotchaOverlaps,
+  hasDroppedDetails,
+  premiseQuery,
+  reviewsDependents,
+  type DroppedDetails,
+  type GotchaOverlap,
+  type PremiseQuery,
+} from "./reconcile";
+export {
   EVIDENCE_REQUIRED_MESSAGE,
   EvidenceKindSchema,
   EvidenceSchema,
