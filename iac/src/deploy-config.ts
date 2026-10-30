@@ -10,14 +10,16 @@ import {
   type JsonValue,
 } from "./json";
 
-type RuntimeGlobals = typeof globalThis & {
-  process?: {
-    env?: Record<string, string | undefined>;
-    cwd?: () => string;
+// Only the members this module reads. Intersecting with `typeof globalThis`
+// resolves to `any` under type-aware lint, which hid unsafe access.
+type RuntimeGlobals = {
+  readonly process?: {
+    readonly env?: Record<string, string | undefined>;
+    readonly cwd?: () => string;
   };
 };
 
-// SAFETY: RuntimeGlobals only adds optional members; assertion cannot misstate existing globals.
+// SAFETY: Worker and Bun globals both satisfy this optional-only view.
 const hostProcess = (globalThis as RuntimeGlobals).process;
 
 function envMap(): Record<string, string | undefined> {

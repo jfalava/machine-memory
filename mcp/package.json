@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --fix && bun run typecheck",
+    "check": "oxlint --type-aware --fix && bun run typecheck",
     "format": "oxfmt",
-    "lint": "oxlint",
+    "lint": "oxlint --type-aware",
     "test": "vitest run",
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },

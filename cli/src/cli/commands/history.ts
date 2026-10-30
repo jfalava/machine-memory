@@ -8,7 +8,12 @@ import { Effect } from "effect";
 import { usageError } from "../../cli-utils";
 import { commandError } from "../../effect/errors";
 import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
-import { jsonNumber, jsonObject, type JsonObject } from "../../json";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  type JsonObject,
+} from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import {
   assertEmbeddingFit,
@@ -36,8 +41,8 @@ function historyRow(value: JsonObject): JsonObject {
   const memoryId = jsonNumber(row.memory_id) ?? 0;
   row.id = memoryId;
   row.revision_id = Number(row.revision_id ?? 0);
-  row.operation = String(row.operation ?? "update");
-  row.snapshot_at = String(row.snapshot_at ?? "");
+  row.operation = jsonString(row.operation) ?? "update";
+  row.snapshot_at = jsonString(row.snapshot_at) ?? "";
   return row;
 }
 
