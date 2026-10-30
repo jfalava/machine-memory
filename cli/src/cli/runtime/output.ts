@@ -3,6 +3,10 @@ import { Flag, GlobalFlag } from "effect/cli";
 import { printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import type { JsonObject, JsonValue } from "../../json";
+import {
+  parseStoredEvidence,
+  parseStoredValidationGaps,
+} from "../features/memory/evidence";
 import { normalizeCertaintyValue, parseTags, stringValue } from "../shared";
 import { renderPretty } from "./pretty";
 
@@ -67,8 +71,11 @@ function formatBriefMemoryLine(row: JsonObject): string {
   const type = stringValue(row.memory_type, "convention");
   const strength = stringValue(row.match_strength);
   const match = strength ? ` <match:${strength}>` : "";
+  const evidence = parseStoredEvidence(row.evidence);
+  const gaps = parseStoredValidationGaps(row.validation_gaps).length;
+  const support = `${evidence.length > 0 ? ` <evidence:${evidence.join("+")}>` : ""}${gaps > 0 ? ` <gaps:${gaps}>` : ""}`;
   const content = stringValue(row.content).replace(/\s+/g, " ").trim();
-  return `[${id}] <${certainty}> <${type}>${match}: ${content} ${briefTagText(row.tags)}`;
+  return `[${id}] <${certainty}>${support} <${type}>${match}: ${content} ${briefTagText(row.tags)}`;
 }
 
 const SNIPPET_MAX_CHARS = 140;
@@ -85,6 +92,20 @@ export function printBriefLines(rows: JsonObject[]) {
   console.info(rows.map(formatBriefMemoryLine).join("\n"));
 }
 
+/** Compact evidence fields: kinds when known, and how many gaps are recorded. */
+export function evidenceSummary(row: JsonObject): JsonObject {
+  const summary: JsonObject = {};
+  const evidence = parseStoredEvidence(row.evidence);
+  const gaps = parseStoredValidationGaps(row.validation_gaps).length;
+  if (evidence.length > 0) {
+    summary.evidence = evidence;
+  }
+  if (gaps > 0) {
+    summary.validation_gap_count = gaps;
+  }
+  return summary;
+}
+
 export function minimalResultSummary(row: JsonObject): JsonObject {
   const summary: JsonObject = {
     id: Number(row.id ?? 0),
@@ -93,6 +114,7 @@ export function minimalResultSummary(row: JsonObject): JsonObject {
     certainty: normalizeCertaintyValue(row.certainty),
     tags: parseTags(stringValue(row.tags)),
   };
+  Object.assign(summary, evidenceSummary(row));
   const strength = stringValue(row.match_strength);
   if (strength) {
     summary.match_strength = strength;

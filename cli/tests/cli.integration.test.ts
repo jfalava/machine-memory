@@ -341,6 +341,8 @@ describe("CLI rewrite integration", () => {
       "decision",
       "--certainty",
       "verified",
+      "--evidence",
+      "observed_implementation",
       "--tags",
       "architecture,cli",
       "--quiet",
@@ -615,6 +617,164 @@ describe("CLI rewrite integration", () => {
     expect((await runCli(cwd, dbPath, "history", id)).json.total_count).toBe(0);
   });
 
+  it("requires evidence for verified claims and keeps evidence through updates and restore", async () => {
+    const { cwd, dbPath } = await createProject();
+    const bare = await runCliText(
+      cwd,
+      dbPath,
+      "add",
+      "Shortcuts only fire in focused forms",
+      "--certainty",
+      "verified",
+      "--local",
+    );
+    expect(bare.code).not.toBe(0);
+    expect(`${bare.stdout}${bare.stderr}`).toContain(
+      "requires at least one evidence kind",
+    );
+
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Shortcuts only fire in focused forms",
+      "--certainty",
+      "verified",
+      "--evidence",
+      "observed_implementation",
+      "--validation-gaps",
+      '["User intent unconfirmed","Safari and Windows not tested"]',
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const id = String(added.json.id);
+    expect((await runCli(cwd, dbPath, "get", id)).json).toMatchObject({
+      certainty: "verified",
+      evidence: ["observed_implementation"],
+      validation_gaps: [
+        "User intent unconfirmed",
+        "Safari and Windows not tested",
+      ],
+    });
+
+    const unknownKind = await runCliText(
+      cwd,
+      dbPath,
+      "update",
+      id,
+      "Shortcuts only fire in focused forms",
+      "--evidence",
+      "looks_right",
+      "--local",
+    );
+    expect(unknownKind.code).not.toBe(0);
+    const cleared = await runCliText(
+      cwd,
+      dbPath,
+      "update",
+      id,
+      "Shortcuts only fire in focused forms",
+      "--evidence",
+      "none",
+      "--local",
+    );
+    expect(cleared.code).not.toBe(0);
+
+    // Content-only edits keep evidence; omitted flags change nothing.
+    expect(
+      (
+        await runCli(
+          cwd,
+          dbPath,
+          "update",
+          id,
+          "Shortcuts fire in focused forms",
+        )
+      ).code,
+    ).toBe(0);
+    const tested = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      id,
+      "Shortcuts fire in focused forms on macOS",
+      "--evidence",
+      "observed_implementation,tested_behavior",
+      "--validation-gaps",
+      "Windows not tested",
+    );
+    expect(tested.json).toMatchObject({
+      evidence: ["observed_implementation", "tested_behavior"],
+      validation_gaps: ["Windows not tested"],
+    });
+
+    const history = await runCli(cwd, dbPath, "history", id, "--limit", "1");
+    const latest = (history.json.results as Record<string, unknown>[])[0];
+    expect(latest).toMatchObject({ evidence: ["observed_implementation"] });
+    const restored = await runCli(
+      cwd,
+      dbPath,
+      "restore",
+      id,
+      "--revision",
+      String(latest?.revision_id),
+      "--expected-update-count",
+      String(history.json.current_update_count),
+    );
+    expect(restored.json.memory).toMatchObject({
+      content: "Shortcuts fire in focused forms",
+      evidence: ["observed_implementation"],
+      validation_gaps: [
+        "User intent unconfirmed",
+        "Safari and Windows not tested",
+      ],
+    });
+
+    const brief = await runCliText(
+      cwd,
+      dbPath,
+      "get",
+      id,
+      "--brief",
+      "--local",
+    );
+    expect(brief.stdout).toContain(
+      "<verified> <evidence:observed_implementation> <gaps:2>",
+    );
+  });
+
+  it("flags legacy verified records without evidence in doctor", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(cwd, dbPath, "add", "Legacy verified claim", "--quiet");
+    const legacy = await execBun(
+      [
+        "-e",
+        `import { Database } from "bun:sqlite";
+const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE memories SET certainty = 'verified'"); db.close();`,
+      ],
+      { env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath } },
+    );
+    expect(legacy.code).toBe(0);
+    // Editing content does not re-assert certainty, so legacy rows stay writable.
+    expect(
+      (
+        await runCli(
+          cwd,
+          dbPath,
+          "update",
+          "1",
+          "Legacy verified claim, edited",
+        )
+      ).code,
+    ).toBe(0);
+    const doctor = await runCli(cwd, dbPath, "doctor");
+    expect(doctor.json.summary).toMatchObject({ verified_without_evidence: 1 });
+    expect(
+      (doctor.json.findings as Record<string, unknown>)
+        .verified_without_evidence,
+    ).toEqual([expect.objectContaining({ id: 1 })]);
+  });
+
   it("upgrades a v3 database without backfill and can rerun migration without losing history", async () => {
     const { cwd, dbPath } = await createProject();
     await runCli(cwd, dbPath, "add", "Retained v3 memory", "--quiet");
@@ -668,6 +828,8 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "decision",
       "--certainty",
       "verified",
+      "--evidence",
+      "observed_implementation",
       "--local",
       "--quiet",
     );
@@ -831,6 +993,8 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "decision",
       "--certainty",
       "verified",
+      "--evidence",
+      "observed_implementation",
       "--quiet",
     );
     expect(added.code).toBe(0);
@@ -1158,6 +1322,8 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "reference",
       "--certainty",
       "verified",
+      "--evidence",
+      "observed_implementation",
       "--quiet",
       "--local",
     );
@@ -1180,6 +1346,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
         certainty: "verified",
         status: "active",
         tags: ["area:cli", "kind:test"],
+        evidence: ["observed_implementation"],
       },
     ]);
 
@@ -1202,7 +1369,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "--local",
     );
     expect(brief.stdout).toContain(`[${id}]`);
-    expect(brief.stdout).toContain("<verified>");
+    expect(brief.stdout).toContain(
+      "<verified> <evidence:observed_implementation>",
+    );
     expect(brief.stdout).toContain("#area:cli");
   });
 

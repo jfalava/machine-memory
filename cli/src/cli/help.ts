@@ -1,3 +1,5 @@
+import { EVIDENCE_KINDS } from "@machine-memory/contract";
+
 import {
   CERTAINTY_LEVELS,
   MEMORY_STATUSES,
@@ -44,6 +46,10 @@ export function helpPayload() {
         "Query identifiers (paths, flags, snake/kebab/camel case, dotted or tag-like tokens) or suggested file paths found literally in the memory.",
       term_coverage:
         "Fraction of distinct query terms found in the memory's content, tags, context, or refs.",
+      evidence:
+        "Kinds of evidence behind a claim (see enums.evidence); [] means unspecified. add/update reject --certainty verified without at least one kind. Legacy verified rows keep their certainty until re-asserted; doctor lists them as verified_without_evidence. Not embedded.",
+      validation_gaps:
+        "Known limits of a claim's validation, e.g. unconfirmed intent or untested platforms. --validation-gaps takes one plain-text gap or a JSON array; none clears. Not embedded. --json-min reports validation_gap_count.",
       snippet:
         "First 140 characters of content in --json-min summaries, for triage before a full get.",
     },
@@ -148,6 +154,7 @@ export function helpPayload() {
     enums: {
       memory_type: MEMORY_TYPES,
       certainty: CERTAINTY_LEVELS,
+      evidence: EVIDENCE_KINDS,
       status: MEMORY_STATUSES,
     },
     what_to_store: [

@@ -25,7 +25,7 @@ The generated block tells future agents how to scan memory, which backend to use
 Every backend's block also covers memory hygiene:
 
 - Search results are ranked candidates, not an exhaustive list. Agents judge relevance by each result's `match_strength` and the response's `no_strong_match` rather than by scores, prefer known IDs, file-scoped suggestions, and tag filters, and read full records before relying on them.
-- Certainty follows evidence: an explicit user requirement, observed implementation, a verified mechanism, or tested end-user behavior. Remaining validation gaps are recorded.
+- Certainty follows evidence: agents record which kinds support a claim (`user_requirement`, `observed_implementation`, `verified_mechanism`, `tested_behavior`) and the remaining validation gaps. `verified` without evidence is rejected, and `doctor` lists legacy verified memories for review.
 - Durable decisions and mechanisms stay separate from delivery status. An expiring `status` record says whether work is local, committed, pushed, or deployed.
 - Updates carry over unrelated valid details, and records that depend on a changed decision are reconciled.
 - In delegated work, the parent agent owns memory writes. Child agents return persistence candidates with evidence.

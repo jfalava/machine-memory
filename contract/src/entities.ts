@@ -1,6 +1,11 @@
 import { Schema } from "effect";
 
 import {
+  EvidenceSchema,
+  StoredEvidenceFieldsSchema,
+  ValidationGapsSchema,
+} from "./evidence";
+import {
   CERTAINTY_LEVELS,
   DEFAULT_CERTAINTY,
   DEFAULT_MEMORY_STATUS,
@@ -107,6 +112,10 @@ export const MemorySummarySchema = Schema.Struct({
   memory_type: MemoryTypeSchema,
   status: MemoryStatusSchema,
   certainty: CertaintySchema,
+  /** Kinds of evidence behind the claim; [] means unspecified. Not embedded. */
+  evidence: EvidenceSchema,
+  /** Known limits of the claim's validation. Not embedded. */
+  validation_gaps: ValidationGapsSchema,
 });
 export type MemorySummary = typeof MemorySummarySchema.Type;
 
@@ -132,6 +141,7 @@ export const StoredMemoryRowSchema = Schema.Struct({
   source_agent: Schema.NullOr(Schema.String),
   last_updated_by: Schema.NullOr(Schema.String),
   refs: Schema.fromJsonString(Schema.Array(Schema.String)),
+  ...StoredEvidenceFieldsSchema.fields,
 });
 export type StoredMemoryRow = typeof StoredMemoryRowSchema.Type;
 
@@ -142,5 +152,7 @@ export function normalizeStoredMemoryRow(row: StoredMemoryRow): MemoryRow {
     context: row.context ?? "",
     source_agent: row.source_agent ?? "",
     last_updated_by: row.last_updated_by ?? "",
+    evidence: row.evidence ?? [],
+    validation_gaps: row.validation_gaps ?? [],
   };
 }

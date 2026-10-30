@@ -12,6 +12,7 @@ import {
   SearchLimitInputSchema,
   normalizeSearchLimit,
 } from "../entities";
+import { EvidenceSchema, ValidationGapsSchema } from "../evidence";
 import {
   DEFAULT_CERTAINTY,
   DEFAULT_MEMORY_STATUS,
@@ -22,7 +23,9 @@ import {
   SEARCH_LIMIT_DEFAULT,
   UPSERT_MIN_SIMILARITY,
   UPSERT_DEFAULT_MIN_SCORE,
+  EVIDENCE_KINDS,
   type Certainty,
+  type EvidenceKind,
   type MemoryStatus,
   type MemoryType,
   type SearchMode,
@@ -48,6 +51,16 @@ const offset = Schema.optionalKey(
 const memoryIds = Schema.Array(memoryId)
   .check(Schema.isMinLength(1), Schema.isMaxLength(100))
   .annotateKey({ description: "One to 100 explicit numeric memory ids." });
+
+const evidenceField = Schema.optionalKey(EvidenceSchema).annotateKey({
+  description: `Kinds of evidence behind the claim: ${EVIDENCE_KINDS.join(", ")}. certainty verified requires at least one. Put sources and versions in refs or context. Not embedded.`,
+});
+const validationGapsField = Schema.optionalKey(
+  ValidationGapsSchema,
+).annotateKey({
+  description:
+    "Known limits of the validation, e.g. unconfirmed user intent or untested platforms. Not embedded.",
+});
 
 const filterFields = {
   status: Schema.optionalKey(MemoryStatusSchema),
@@ -242,6 +255,8 @@ export const MemoryAddArgsInputSchema = Schema.Struct({
   }),
   memory_type: Schema.optionalKey(MemoryTypeSchema),
   certainty: Schema.optionalKey(CertaintySchema),
+  evidence: evidenceField,
+  validation_gaps: validationGapsField,
   status: Schema.optionalKey(MemoryStatusSchema),
   expires_after_days: Schema.optionalKey(positiveInt).annotateKey({
     description: "Expire after N days. Only valid for status memories.",
@@ -267,6 +282,8 @@ export type MemoryAddArgs = {
   readonly context?: string;
   readonly memory_type: MemoryType;
   readonly certainty: Certainty;
+  readonly evidence?: readonly EvidenceKind[];
+  readonly validation_gaps?: readonly string[];
   readonly status: MemoryStatus;
   readonly expires_after_days?: number;
   readonly upsert_match?: string;
@@ -283,6 +300,8 @@ export function normalizeMemoryAddArgs(
     context: input.context,
     memory_type: input.memory_type ?? DEFAULT_MEMORY_TYPE,
     certainty: input.certainty ?? DEFAULT_CERTAINTY,
+    evidence: input.evidence,
+    validation_gaps: input.validation_gaps,
     status: input.status ?? DEFAULT_MEMORY_STATUS,
     expires_after_days: input.expires_after_days,
     upsert_match: input.upsert_match,
@@ -307,6 +326,8 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
   }),
   memory_type: Schema.optionalKey(MemoryTypeSchema),
   certainty: Schema.optionalKey(CertaintySchema),
+  evidence: evidenceField,
+  validation_gaps: validationGapsField,
   status: Schema.optionalKey(MemoryStatusSchema),
   expires_after_days: Schema.optionalKey(positiveInt).annotateKey({
     description: "Expire after N days. Only valid for status memories.",

@@ -1,5 +1,10 @@
 import { resolve } from "node:path";
 
+import {
+  EvidenceSchema,
+  ValidationGapsSchema,
+  type EvidenceKind,
+} from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
 
 import { printJson, usageError } from "../../cli-utils";
@@ -28,6 +33,10 @@ import {
   type JsonValue,
 } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
+import {
+  parseStoredEvidence,
+  parseStoredValidationGaps,
+} from "../features/memory/evidence";
 import { measureEmbeddingFit } from "../features/memory/size-report";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
@@ -58,6 +67,8 @@ type ImportNormalized = {
   lastUpdatedBy: string;
   updateCount: number;
   refs: string[];
+  evidence: EvidenceKind[];
+  validationGaps: string[];
   expiresAfterDays: number | null;
   createdAt?: string;
   updatedAt?: string;
@@ -168,6 +179,8 @@ function parseImportMetadata(entry: JsonObject) {
     lastUpdatedBy,
     updateCount,
     refs: parseImportRefs(entry),
+    evidence: parseStoredEvidence(entry.evidence),
+    validationGaps: parseStoredValidationGaps(entry.validation_gaps),
     expiresAfterDays:
       parsedExpiresAfterDays !== undefined &&
       Number.isInteger(parsedExpiresAfterDays)
@@ -198,6 +211,15 @@ const ImportMetadataSchema = Schema.Struct({
     Schema.Union([
       Schema.Array(Schema.String),
       Schema.fromJsonString(Schema.Array(Schema.String)),
+    ]),
+  ),
+  evidence: Schema.optionalKey(
+    Schema.Union([EvidenceSchema, Schema.fromJsonString(EvidenceSchema)]),
+  ),
+  validation_gaps: Schema.optionalKey(
+    Schema.Union([
+      ValidationGapsSchema,
+      Schema.fromJsonString(ValidationGapsSchema),
     ]),
   ),
 });
@@ -283,6 +305,15 @@ function runImportInsert(
     JSON.stringify(value.refs),
     value.expiresAfterDays,
   ];
+  // Omitted columns keep their '[]' default on pre-migration remote schemas.
+  if (value.evidence.length > 0) {
+    columns.push("evidence");
+    params.push(JSON.stringify(value.evidence));
+  }
+  if (value.validationGaps.length > 0) {
+    columns.push("validation_gaps");
+    params.push(JSON.stringify(value.validationGaps));
+  }
   if (value.createdAt) {
     columns.push("created_at");
     params.push(value.createdAt);

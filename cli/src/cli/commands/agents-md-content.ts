@@ -23,7 +23,7 @@ const AGENTS_MD_BACKEND_CONTENT = {
     "Repository scope: every tool that reads or writes a specific repo requires an exact `owner/name` slug. There is no default. Reads are loose — a wrong slug returns empty/not-found and nothing is lost. Writes are strict: confirm the slug with `list_repositories` before every write; derive it from `git remote get-url origin` when it matches a known entry. Deletion is permanent.",
     'Search policy: `memory_suggest` with `{ repository, files }` for file-scoped lookup; `memory_query` with `mode: "keyword"` for exact names, paths, commands, and identifiers, `mode: "semantic"` when the same concept may use different wording, `mode: "hybrid"` (default) for broad investigation. Filter with `tags` (substring) / `status` / `memory_type` / `certainty` and cap with `limit` (default 8, max 50). For `memory_list` and `list_repositories`, follow `offset` pages while `has_more` is true. D1 records are canonical and Vectorize is only a retrieval index.',
     "Mutations (`memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many`) require an explicit repository and echo `written_to` or `deleted_from`. `memory_add` also echoes `potential_conflicts`. Use `memory_history` before `memory_restore`; pass its revision_id and current_update_count so a newer write cannot be overwritten. Deletion is permanent; prefer `memory_deprecate` when audit history should remain. Embeddings re-sync to Vectorize automatically on add/update/restore/deprecate; history snapshots are not embedded.",
-    "`memory_add` defaults to `memory_type: convention`, `certainty: inferred`, `status: active` — set them explicitly (`decision` / `reference` / `gotcha`; `verified` / `inferred`). `expires_after_days` is only valid for `status` memories. Prefer `memory_add` with `upsert_match` (strong matches update in place; weak matches refuse unless `force: true`) and `memory_update` with `match` over raw creates.",
+    "`memory_add` defaults to `memory_type: convention`, `certainty: inferred`, `status: active` — set them explicitly (`decision` / `reference` / `gotcha`; `verified` / `inferred`). `certainty: verified` requires a non-empty `evidence` array; `evidence` and `validation_gaps` are not embedded and do not count toward the size budget. `expires_after_days` is only valid for `status` memories. Prefer `memory_add` with `upsert_match` (strong matches update in place; weak matches refuse unless `force: true`) and `memory_update` with `match` over raw creates.",
   ],
 } satisfies Record<AgentsMemoryBackend, string[]>;
 
@@ -77,7 +77,7 @@ function agentsMdCheckpointSection(
 }
 
 const AGENTS_MD_CERTAINTY_STEP =
-  "Set certainty from evidence, not from how accurately a record describes the code. Kinds of evidence: explicit user requirement or preference, observed implementation behavior, verified technical mechanism, tested end-user behavior. Observing that the code does X establishes only that the implementation does X, not that X is intended or works on every platform. Use `verified` only for the dimension the evidence establishes, name that dimension, and record remaining gaps (unconfirmed intent, untested platforms) in the content or context.";
+  "Set certainty from evidence, not from how accurately a record describes the code. Record the kinds of evidence behind each claim: `user_requirement` (an explicit user requirement or preference), `observed_implementation` (what the code currently does), `verified_mechanism` (a confirmed technical mechanism), `tested_behavior` (end-user behavior exercised in tests or real use). Observing that the code does X establishes only `observed_implementation`, not that X is intended or works on every platform. `verified` is rejected without at least one evidence kind. Record remaining limits (unconfirmed intent, untested platforms) as validation gaps, and keep sources and versions in refs or context.";
 
 const AGENTS_MD_STATUS_STEP =
   "Durable mechanisms and decisions go in `decision`, `reference`, `gotcha`, `constraint`, or `preference` records. Implementation, delivery, and verification state goes in one `status` record that expires and is updated rather than duplicated. State exactly where work stands (local only, uncommitted, committed, pushed, deployed or active) and which verification remains; never describe local work as deployed. When a caveat leaves a durable record, keep it in a status record.";
@@ -110,7 +110,7 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
     "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.",
     "6. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.",
     "7. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.",
-    `8. ${AGENTS_MD_CERTAINTY_STEP} Use \`--certainty\` and \`--context\`.`,
+    `8. ${AGENTS_MD_CERTAINTY_STEP} Use \`--certainty\`, \`--evidence <kinds>\` (comma-separated), \`--validation-gaps <text|json_array>\`, and \`--refs\` or \`--context\`. \`doctor\` lists legacy \`verified\` records without evidence as \`verified_without_evidence\`; review them instead of bulk-changing them.`,
     `9. Separate durable knowledge from delivery status. ${AGENTS_MD_STATUS_STEP} Set \`--expires-after-days\` on status records and review \`doctor\` suggestions semantically before applying deprecations or updates.`,
     "10. Run the end-of-task checkpoint below before the final response.",
     "",
@@ -154,7 +154,7 @@ const AGENTS_MD_MCP_WORKFLOW = [
   "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
   "6. Use path-driven tags. There is no tag-map tool — tags are free-form comma-separated text, so use scoped tags such as `area:cli,topic:backend,kind:decision`. Filter them with the `tags` parameter on query/list/suggest.",
   '7. Capture third-party quirks. Always add a `memory_type: "gotcha"` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.',
-  `8. ${AGENTS_MD_CERTAINTY_STEP} Use the \`certainty\` and \`context\` fields.`,
+  `8. ${AGENTS_MD_CERTAINTY_STEP} Use the \`certainty\`, \`evidence\` (array of kinds), \`validation_gaps\` (array of strings), and \`context\` fields. \`memory_doctor\` lists legacy \`verified\` records without evidence as \`verified_without_evidence\`; review them instead of bulk-changing them.`,
   `9. Separate durable knowledge from delivery status. ${AGENTS_MD_STATUS_STEP} Set \`expires_after_days\` on status records. Use \`memory_doctor\` during maintenance and \`memory_gc\` to preview expired status memories. Prefer \`memory_deprecate\` over permanent deletion.`,
   "10. Run the end-of-task checkpoint below before the final response.",
   "",

@@ -58,6 +58,8 @@ beforeAll(async () => {
     "0002_vector_sync",
     "0003_memory_integrity",
     "0004_memory_history",
+    "0005_memory_evidence",
+    "0006_memory_evidence_triggers",
   ]) {
     const sql = await readFile(
       new URL(`../../iac/migrations/${name}.sql`, import.meta.url),

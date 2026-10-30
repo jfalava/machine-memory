@@ -9,6 +9,7 @@ import {
   SearchLimitInputSchema,
   type MemoryDocument,
 } from "../entities";
+import { EvidenceSchema, ValidationGapsSchema } from "../evidence";
 import {
   CERTAINTY_LEVELS,
   DEFAULT_CERTAINTY,
@@ -20,6 +21,7 @@ import {
   MEMORY_TYPES,
   QUERY_OPERATIONS,
   type Certainty,
+  type EvidenceKind,
   type MemoryStatus,
   type MemoryType,
 } from "../literals";
@@ -56,6 +58,8 @@ export const MigrationRowInputSchema = Schema.Struct({
   last_updated_by: Schema.optionalKey(Schema.String),
   update_count: NonNegativeIntSchema,
   refs: Schema.optionalKey(Schema.String),
+  evidence: Schema.optionalKey(EvidenceSchema),
+  validation_gaps: Schema.optionalKey(ValidationGapsSchema),
   expires_after_days: Schema.optionalKey(Schema.NullOr(Schema.Int)),
   created_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
   updated_at: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -75,6 +79,8 @@ export type MigrationRow = {
   readonly last_updated_by: string;
   readonly update_count: number;
   readonly refs: string;
+  readonly evidence: readonly EvidenceKind[];
+  readonly validation_gaps: readonly string[];
   readonly expires_after_days: number | null;
   readonly created_at: string | null;
   readonly updated_at: string | null;
@@ -102,6 +108,8 @@ export function normalizeMigrationRow(input: MigrationRowInput): MigrationRow {
     last_updated_by: orEmpty(input.last_updated_by),
     update_count: input.update_count,
     refs: input.refs ?? "[]",
+    evidence: input.evidence ?? [],
+    validation_gaps: input.validation_gaps ?? [],
     expires_after_days: orNull(input.expires_after_days),
     created_at: orNull(input.created_at),
     updated_at: orNull(input.updated_at),

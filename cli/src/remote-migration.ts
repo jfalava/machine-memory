@@ -1,8 +1,14 @@
 import { Database } from "bun:sqlite";
-import { Schema } from "effect";
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import { DB_PATH } from "./constants";
+
+import type { EvidenceKind } from "@machine-memory/contract";
+import { Schema } from "effect";
+
+import {
+  parseStoredEvidence,
+  parseStoredValidationGaps,
+} from "./cli/features/memory/evidence";
 import {
   canonicalizeCertainty,
   isMemoryStatus,
@@ -12,6 +18,7 @@ import {
   sqliteDateForComparison,
   stringValue,
 } from "./cli/shared";
+import { DB_PATH } from "./constants";
 import { jsonNumber, jsonObject, jsonString, type JsonValue } from "./json";
 
 export type RemoteMigrationRow = {
@@ -27,6 +34,8 @@ export type RemoteMigrationRow = {
   readonly update_count: number;
   readonly certainty: string;
   readonly refs: string;
+  readonly evidence: readonly EvidenceKind[];
+  readonly validation_gaps: readonly string[];
   readonly expires_after_days: number | null;
   readonly created_at: string | null;
   readonly updated_at: string | null;
@@ -51,6 +60,8 @@ const SOURCE_COLUMNS = [
   "update_count",
   "certainty",
   "refs",
+  "evidence",
+  "validation_gaps",
   "expires_after_days",
   "created_at",
   "updated_at",
@@ -145,6 +156,8 @@ function normalizeSourceRow(row: JsonValue, index: number): RemoteMigrationRow {
     update_count: updateCount ?? 0,
     certainty,
     refs: JSON.stringify(parseStoredRefs(normalized.refs)),
+    evidence: parseStoredEvidence(normalized.evidence),
+    validation_gaps: parseStoredValidationGaps(normalized.validation_gaps),
     expires_after_days: expiresAfterDays,
     created_at: sourceDate(normalized.created_at),
     updated_at: sourceDate(normalized.updated_at),

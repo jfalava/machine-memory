@@ -43,6 +43,10 @@ import {
   type JsonValue,
 } from "../json";
 import { repositoryForCurrentDirectory } from "../repository";
+import {
+  parseStoredEvidence,
+  parseStoredValidationGaps,
+} from "./features/memory/evidence";
 
 export function isMemoryType(value: string): value is MemoryType {
   // SAFETY: MEMORY_TYPES is a const tuple; widening only enables includes().
@@ -305,6 +309,8 @@ export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
   const next = jsonObject(row) ?? {};
   next.refs = parseStoredRefs(next.refs);
   next.certainty = normalizeCertaintyValue(next.certainty);
+  next.evidence = parseStoredEvidence(next.evidence);
+  next.validation_gaps = parseStoredValidationGaps(next.validation_gaps);
   if (next.update_count !== undefined) {
     next.update_count = Number(next.update_count ?? 0);
   }

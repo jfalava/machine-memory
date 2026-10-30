@@ -1,5 +1,7 @@
 import { Effect } from "effect";
+
 import { printJson } from "../../cli-utils";
+import type { MemoryDatabaseError } from "../../effect/database";
 import {
   jsonNumber,
   jsonObject,
@@ -10,11 +12,11 @@ import {
   type JsonValue,
 } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
-import type { MemoryDatabaseError } from "../../effect/database";
-import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
 import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
+import { parseStoredEvidence } from "../features/memory/evidence";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
 
 type MemorySnapshot = {
   id: number;
@@ -22,6 +24,8 @@ type MemorySnapshot = {
   tagsRaw: string;
   memoContext: string;
   memoryType: string;
+  certainty: string;
+  evidenceCount: number;
   refsRaw: JsonValue;
   expiresAfterDays: number | null;
   termSet: Set<string>;
@@ -93,6 +97,12 @@ type TypeBoundaryFinding = {
   suggested_command: string;
 };
 
+type UnevidencedVerifiedFinding = {
+  kind: "verified_without_evidence";
+  id: number;
+  hint: string;
+};
+
 type DoctorFindings = {
   exact_duplicates: ExactDuplicateFinding[];
   near_duplicates: NearDuplicateFinding[];
@@ -102,6 +112,7 @@ type DoctorFindings = {
   type_boundary: TypeBoundaryFinding[];
   tag_hygiene: TagFinding[];
   malformed_refs: RefsFinding[];
+  verified_without_evidence: UnevidencedVerifiedFinding[];
 };
 
 type ExactDuplicateResult = {
@@ -210,6 +221,8 @@ function loadActiveMemories(
             tagsRaw,
             memoContext,
             memoryType: stringValue(row.memory_type),
+            certainty: stringValue(row.certainty),
+            evidenceCount: parseStoredEvidence(row.evidence).length,
             refsRaw: row.refs,
             expiresAfterDays: maybeInteger(row.expires_after_days),
             termSet: setFromTerms([content, tagsRaw, memoContext].join(" ")),
@@ -784,6 +797,19 @@ function detectMalformedRefs(rows: MemorySnapshot[]): RefsFinding[] {
   return findings;
 }
 
+/** Legacy rows predate evidence; only a reviewer knows which kind applies. */
+function detectUnevidencedVerified(
+  rows: MemorySnapshot[],
+): UnevidencedVerifiedFinding[] {
+  return rows
+    .filter((row) => row.certainty === "verified" && row.evidenceCount === 0)
+    .map((row) => ({
+      kind: "verified_without_evidence",
+      id: row.id,
+      hint: `Review, then run: machine-memory update ${row.id} <content> --evidence <kinds>, or lower it with --certainty inferred.`,
+    }));
+}
+
 function summarizeFindings(rows: MemorySnapshot[], findings: DoctorFindings) {
   const commandCount = collectSuggestedCommands(findings).length;
   return {
@@ -796,6 +822,7 @@ function summarizeFindings(rows: MemorySnapshot[], findings: DoctorFindings) {
     type_boundary: findings.type_boundary.length,
     tag_hygiene: findings.tag_hygiene.length,
     malformed_refs: findings.malformed_refs.length,
+    verified_without_evidence: findings.verified_without_evidence.length,
     suggested_commands: commandCount,
   };
 }
@@ -829,6 +856,7 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
     const typeBoundary = detectTypeBoundary(rows);
     const tags = detectTagHygiene(rows);
     const refs = detectMalformedRefs(rows);
+    const unevidenced = detectUnevidencedVerified(rows);
     const findings: DoctorFindings = {
       exact_duplicates: exact.findings,
       near_duplicates: near,
@@ -838,6 +866,7 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
       type_boundary: typeBoundary,
       tag_hygiene: tags,
       malformed_refs: refs,
+      verified_without_evidence: unevidenced,
     };
     const suggestedCommands = collectSuggestedCommands(findings);
     const summary = summarizeFindings(rows, findings);
@@ -866,6 +895,9 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
       malformed_refs: findings.malformed_refs.map(
         (item) => ({ ...item }) satisfies JsonObject,
       ),
+      verified_without_evidence: findings.verified_without_evidence.map(
+        (item) => ({ ...item }) satisfies JsonObject,
+      ),
     } satisfies JsonObject;
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
@@ -878,7 +910,8 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
             summary.status_missing_expiry +
             summary.type_boundary +
             summary.tag_hygiene +
-            summary.malformed_refs,
+            summary.malformed_refs +
+            summary.verified_without_evidence,
           suggested_commands_count: suggestedCommands.length,
         });
         return;

@@ -257,6 +257,8 @@ type DoctorSnapshot = {
   readonly tags: string;
   readonly context: string;
   readonly memoryType: string;
+  readonly certainty: string;
+  readonly evidence: string;
   readonly expiresAfterDays: number | null;
   readonly refs: JsonValue | undefined;
   readonly terms: Set<string>;
@@ -278,6 +280,8 @@ function doctorSnapshots(rows: readonly JsonObject[]): DoctorSnapshot[] {
         tags,
         context,
         memoryType: rawString(row, "memory_type"),
+        certainty: rawString(row, "certainty"),
+        evidence: rawString(row, "evidence", "[]"),
         expiresAfterDays: rawNumber(row, "expires_after_days"),
         refs: row.refs,
         terms: new Set(extractTerms(`${content} ${tags} ${context}`)),
@@ -545,6 +549,14 @@ function hygieneFindings(
     if (hasMalformedRefs(row.refs)) {
       findings.push(doctorFinding("malformed_refs", [row.id]));
     }
+    if (row.certainty === "verified" && row.evidence.trim() === "[]") {
+      // Legacy rows predate evidence; only a reviewer can say which kind applies.
+      findings.push(
+        doctorFinding("verified_without_evidence", [row.id], {
+          hint: "Set the evidence kinds that were actually established, or lower certainty to inferred.",
+        }),
+      );
+    }
     return findings;
   });
 }
@@ -723,6 +735,8 @@ export function scoredResultRow(
     memory_type: row.memory_type,
     status: row.status,
     certainty: row.certainty,
+    evidence: row.evidence,
+    validation_gaps: row.validation_gaps,
     score: row.score,
     match_strength: row.match_strength,
     term_coverage: row.term_coverage,

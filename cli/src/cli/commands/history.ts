@@ -172,8 +172,19 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
         catch: (cause) => commandError("restore", String(cause), cause),
       });
     }
+    // Snapshots from a pre-migration remote schema carry no evidence columns.
+    const withEvidence = jsonObject(history)?.evidence !== undefined;
+    const evidenceSets = withEvidence
+      ? ", evidence = ?, validation_gaps = ?"
+      : "";
+    const evidenceParams = withEvidence
+      ? [
+          JSON.stringify(snapshot.evidence),
+          JSON.stringify(snapshot.validation_gaps),
+        ]
+      : [];
     const restored = yield* database.get(
-      `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, created_at = ?, updated_at = datetime('now')
+      `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, created_at = ?, updated_at = datetime('now')${evidenceSets}
        WHERE repository = ? AND id = ? AND update_count = ? RETURNING *`,
       [
         snapshot.content,
@@ -187,6 +198,7 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
         JSON.stringify(snapshot.refs),
         snapshot.expires_after_days,
         snapshot.created_at,
+        ...evidenceParams,
         repository,
         id,
         expectedUpdateCount,

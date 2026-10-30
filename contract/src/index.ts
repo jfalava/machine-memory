@@ -49,6 +49,7 @@ export {
   DEFAULT_CERTAINTY,
   DEFAULT_MEMORY_STATUS,
   DEFAULT_MEMORY_TYPE,
+  EVIDENCE_KINDS,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
   MAX_EMBEDDING_TOKENS,
@@ -65,13 +66,24 @@ export {
   SEARCH_MODES,
   UPSERT_DEFAULT_MIN_SCORE,
   UPSERT_MIN_SIMILARITY,
+  VALIDATION_GAP_MAX_CHARS,
+  VALIDATION_GAPS_MAX,
   type Certainty,
+  type EvidenceKind,
   type MatchStrength,
   type MemoryStatus,
   type MemoryType,
   type QueryOperation,
   type SearchMode,
 } from "./literals";
+export {
+  EVIDENCE_REQUIRED_MESSAGE,
+  EvidenceKindSchema,
+  EvidenceSchema,
+  StoredEvidenceFieldsSchema,
+  ValidationGapsSchema,
+  evidenceWriteError,
+} from "./evidence";
 export {
   MATCH_THRESHOLDS,
   MatchStrengthSchema,

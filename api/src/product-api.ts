@@ -1,5 +1,6 @@
 import type {
   Certainty,
+  EvidenceKind,
   MemoryStatus,
   MemoryType,
 } from "@machine-memory/contract";
@@ -204,6 +205,8 @@ export type InsertInput = {
   readonly memory_type: MemoryType;
   readonly status: MemoryStatus;
   readonly certainty: Certainty;
+  readonly evidence?: readonly EvidenceKind[];
+  readonly validation_gaps?: readonly string[];
   readonly expires_after_days: number | null;
 };
 
@@ -220,10 +223,12 @@ export function insertParams(input: InsertInput): (string | number | null)[] {
     input.certainty,
     "[]",
     input.expires_after_days,
+    JSON.stringify(input.evidence ?? []),
+    JSON.stringify(input.validation_gaps ?? []),
   ];
 }
 
-export const INSERT_SQL = `INSERT INTO memories (repository, content, tags, context, memory_type, status, superseded_by, source_agent, last_updated_by, update_count, certainty, refs, expires_after_days, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, ?, ?, datetime('now'), datetime('now'))`;
+export const INSERT_SQL = `INSERT INTO memories (repository, content, tags, context, memory_type, status, superseded_by, source_agent, last_updated_by, update_count, certainty, refs, expires_after_days, evidence, validation_gaps, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, 0, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`;
 
 export type UpdateFields = {
   readonly content?: string;
@@ -231,6 +236,8 @@ export type UpdateFields = {
   readonly context?: string;
   readonly memory_type?: string;
   readonly certainty?: string;
+  readonly evidence?: readonly EvidenceKind[];
+  readonly validation_gaps?: readonly string[];
   readonly status?: string;
   readonly expires_after_days?: number | null;
   readonly superseded_by?: number;
@@ -259,7 +266,23 @@ export function updateSets(fields: UpdateFields): ProductQuery | undefined {
     sets.push("certainty = ?");
     params.push(fields.certainty);
   }
+  appendEvidenceSets(sets, params, fields);
   return finishUpdateSets(sets, params, fields);
+}
+
+function appendEvidenceSets(
+  sets: string[],
+  params: (string | number | null)[],
+  fields: UpdateFields,
+): void {
+  if (fields.evidence !== undefined) {
+    sets.push("evidence = ?");
+    params.push(JSON.stringify(fields.evidence));
+  }
+  if (fields.validation_gaps !== undefined) {
+    sets.push("validation_gaps = ?");
+    params.push(JSON.stringify(fields.validation_gaps));
+  }
 }
 
 function finishUpdateSets(

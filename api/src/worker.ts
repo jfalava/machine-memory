@@ -7,11 +7,13 @@ import {
   type MemoryType,
   type MemoryStatus,
   type Certainty,
+  type EvidenceKind,
   type MemoryWriteResult,
   type UpsertMatchInfo,
   decodeRequest,
   EMBEDDING_MODEL,
   embeddingSizeReport,
+  evidenceWriteError,
   encodeResponse,
   ErrorBodySchema,
   extractQueryIdentifiers,
@@ -273,8 +275,8 @@ export const createApiHandlers = ({
           d1
             .prepare(`INSERT INTO memories (repository, content, tags, context, memory_type, status,
             superseded_by, source_agent, last_updated_by, update_count, certainty, refs,
-            expires_after_days, created_at, updated_at)
-            SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, coalesce(?, datetime('now')), coalesce(?, datetime('now'))
+            expires_after_days, evidence, validation_gaps, created_at, updated_at)
+            SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, coalesce(?, datetime('now')), coalesce(?, datetime('now'))
             WHERE NOT EXISTS (SELECT 1 FROM memory_migration_sources WHERE repository = ? AND source = ? AND source_id = ?)
             RETURNING id`)
             .bind(
@@ -290,6 +292,8 @@ export const createApiHandlers = ({
               row.certainty,
               row.refs,
               row.expires_after_days,
+              JSON.stringify(row.evidence),
+              JSON.stringify(row.validation_gaps),
               row.created_at,
               row.updated_at,
               request.repository,
@@ -1486,9 +1490,15 @@ export const createApiHandlers = ({
       memory_type: MemoryType;
       status: MemoryStatus;
       certainty: Certainty;
+      evidence?: readonly EvidenceKind[];
+      validation_gaps?: readonly string[];
       expires_after_days?: number;
     }) =>
       Effect.gen(function* () {
+        const evidenceError = evidenceWriteError(args);
+        if (evidenceError !== undefined) {
+          return yield* badRequest(evidenceError);
+        }
         const size = embeddingSizeReport(
           embeddingTextForMemory({
             content: args.content,
@@ -1512,6 +1522,8 @@ export const createApiHandlers = ({
           memory_type: args.memory_type,
           status: args.status,
           certainty: args.certainty,
+          evidence: args.evidence,
+          validation_gaps: args.validation_gaps,
           expires_after_days: args.expires_after_days ?? null,
         });
         const conflicts = yield* fetchProductConflicts(
@@ -1544,6 +1556,8 @@ export const createApiHandlers = ({
       memory_type: MemoryType;
       status: MemoryStatus;
       certainty: Certainty;
+      evidence?: readonly EvidenceKind[];
+      validation_gaps?: readonly string[];
       expires_after_days?: number;
       force?: boolean;
       upsert_threshold: number;
@@ -1601,6 +1615,8 @@ export const createApiHandlers = ({
         memory_type: MemoryType;
         status: MemoryStatus;
         certainty: Certainty;
+        evidence?: readonly EvidenceKind[];
+        validation_gaps?: readonly string[];
         expires_after_days?: number;
       },
       tags: string,
@@ -1608,6 +1624,10 @@ export const createApiHandlers = ({
       info: UpsertMatchInfo,
     ) =>
       Effect.gen(function* () {
+        const evidenceError = evidenceWriteError(args);
+        if (evidenceError !== undefined) {
+          return yield* badRequest(evidenceError);
+        }
         const size = embeddingSizeReport(
           embeddingTextForMemory({
             content: args.content,
@@ -1631,6 +1651,8 @@ export const createApiHandlers = ({
           memory_type: args.memory_type,
           status: args.status,
           certainty: args.certainty,
+          evidence: args.evidence,
+          validation_gaps: args.validation_gaps,
           expires_after_days: args.expires_after_days ?? null,
         });
         return yield* HttpServerResponse.json(
@@ -1648,6 +1670,20 @@ export const createApiHandlers = ({
         );
       });
 
+    const strongUpsertError = (
+      args: {
+        expires_after_days?: number;
+        certainty?: Certainty;
+        evidence?: readonly EvidenceKind[];
+      },
+      prospective: { memory_type: MemoryType },
+      existing: ReturnType<typeof toProductRow>,
+    ): string | undefined =>
+      args.expires_after_days !== undefined &&
+      prospective.memory_type !== "status"
+        ? "expires_after_days is only valid for status memories."
+        : evidenceWriteError(args, existing);
+
     const applyStrongUpsert = (
       args: {
         repository: string;
@@ -1656,6 +1692,8 @@ export const createApiHandlers = ({
         context?: string;
         memory_type?: MemoryType;
         certainty?: Certainty;
+        evidence?: readonly EvidenceKind[];
+        validation_gaps?: readonly string[];
         expires_after_days?: number;
       },
       best: { row: ReturnType<typeof scoredResultRow>; score: number },
@@ -1677,13 +1715,9 @@ export const createApiHandlers = ({
           status: existing.status,
           certainty: args.certainty ?? existing.certainty,
         };
-        if (
-          args.expires_after_days !== undefined &&
-          prospective.memory_type !== "status"
-        ) {
-          return yield* badRequest(
-            "expires_after_days is only valid for status memories.",
-          );
+        const invalid = strongUpsertError(args, prospective, existing);
+        if (invalid !== undefined) {
+          return yield* badRequest(invalid);
         }
         const size = embeddingSizeReport(embeddingTextForMemory(prospective));
         if (!size.within_budget) {
@@ -1697,6 +1731,8 @@ export const createApiHandlers = ({
           context: args.context,
           memory_type: args.memory_type,
           certainty: args.certainty,
+          evidence: args.evidence,
+          validation_gaps: args.validation_gaps,
           expires_after_days:
             prospective.memory_type !== "status"
               ? null
@@ -1762,6 +1798,8 @@ export const createApiHandlers = ({
             memory_type: args.memory_type,
             status: args.status,
             certainty: args.certainty,
+            evidence: args.evidence,
+            validation_gaps: args.validation_gaps,
             expires_after_days: args.expires_after_days,
           });
         }
@@ -1802,6 +1840,8 @@ export const createApiHandlers = ({
             context: args.context,
             memory_type: args.memory_type,
             certainty: args.certainty,
+            evidence: args.evidence,
+            validation_gaps: args.validation_gaps,
             status: args.status,
             expires_after_days: args.expires_after_days,
             superseded_by: args.superseded_by,
@@ -1872,7 +1912,7 @@ export const createApiHandlers = ({
         }
         const rowData = yield* d1
           .prepare(
-            `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, created_at = ?, updated_at = datetime('now') WHERE repository = ? AND id = ? AND update_count = ? RETURNING *`,
+            `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, evidence = ?, validation_gaps = ?, created_at = ?, updated_at = datetime('now') WHERE repository = ? AND id = ? AND update_count = ? RETURNING *`,
           )
           .bind(
             history.content,
@@ -1885,6 +1925,8 @@ export const createApiHandlers = ({
             history.certainty,
             JSON.stringify(history.refs),
             history.expires_after_days,
+            JSON.stringify(history.evidence),
+            JSON.stringify(history.validation_gaps),
             history.created_at,
             args.repository,
             args.id,
@@ -1950,6 +1992,8 @@ export const createApiHandlers = ({
       fields: {
         superseded_by?: number;
         memory_type?: MemoryType;
+        certainty?: Certainty;
+        evidence?: readonly EvidenceKind[];
         expires_after_days?: number;
       },
     ): string | undefined => {
@@ -1966,7 +2010,7 @@ export const createApiHandlers = ({
       ) {
         return "expires_after_days is only valid for status memories.";
       }
-      return undefined;
+      return evidenceWriteError(fields, existing);
     };
 
     const prospectiveUpdateText = (
@@ -1998,6 +2042,8 @@ export const createApiHandlers = ({
         context?: string;
         memory_type?: MemoryType;
         certainty?: Certainty;
+        evidence?: readonly EvidenceKind[];
+        validation_gaps?: readonly string[];
         status?: MemoryStatus;
         expires_after_days?: number;
         superseded_by?: number;
@@ -2063,6 +2109,8 @@ export const createApiHandlers = ({
         context?: string;
         memory_type?: MemoryType;
         certainty?: Certainty;
+        evidence?: readonly EvidenceKind[];
+        validation_gaps?: readonly string[];
         status?: MemoryStatus;
         expires_after_days?: number;
         superseded_by?: number;

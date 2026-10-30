@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 
+import type { EvidenceKind } from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
@@ -27,6 +28,12 @@ import { suggestTagsForPath } from "../../path-tags";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { compareFact } from "../features/memory/compare";
 import {
+  assertEvidenceWrite,
+  parseEvidenceFlag,
+  parseStoredEvidence,
+  parseValidationGapsFlag,
+} from "../features/memory/evidence";
+import {
   embeddingSizeReport,
   measureEmbeddingFit,
 } from "../features/memory/size-report";
@@ -48,6 +55,8 @@ import {
   getMemoryById,
   hasMinimalOutput,
   mergeTagValues,
+  normalizeCertaintyValue,
+  normalizeSqliteRow,
   parseContentFromFileFlag,
   parseIdSpec,
   parseIntegerFlag,
@@ -117,6 +126,9 @@ type AddMetadata = {
   sourceAgent: string;
   updatedBy: string;
   refs: string[];
+  /** undefined when the flag was omitted; [] clears on an upsert update. */
+  evidence: EvidenceKind[] | undefined;
+  validationGaps: string[] | undefined;
   expiresAfterDays: number | null | undefined;
   explicit: AddExplicitFlags;
 };
@@ -226,12 +238,17 @@ function prospectiveUpdateDocuments(
     memory_type: requireMemoryType(args),
     certainty: requireCertainty(args),
   };
+  const evidence = parseEvidenceFlag(args);
   return Effect.forEach(targetIds, (id) =>
     getMemoryById(database, id).pipe(
       Effect.map((row) => {
         if (!row) {
           return null;
         }
+        assertEvidenceWrite(
+          { certainty: overrides.certainty, evidence },
+          existingEvidence(row),
+        );
         return {
           id,
           updateCount: jsonNumber(row.update_count) ?? 0,
@@ -256,6 +273,27 @@ function prospectiveUpdateDocuments(
     Effect.map((entries) =>
       entries.filter((entry): entry is ProspectiveUpdate => entry !== null),
     ),
+  );
+}
+
+function existingEvidence(row: JsonObject) {
+  return {
+    certainty: normalizeCertaintyValue(row.certainty),
+    evidence: parseStoredEvidence(row.evidence),
+  };
+}
+
+/** A create asserts its certainty; a strong-upsert update only when given. */
+function assertAddEvidence(metadata: AddMetadata, existing?: JsonObject) {
+  assertEvidenceWrite(
+    {
+      certainty:
+        existing === undefined || metadata.explicit.certainty
+          ? normalizeCertaintyValue(metadata.certainty)
+          : undefined,
+      evidence: metadata.evidence,
+    },
+    existing === undefined ? undefined : existingEvidence(existing),
   );
 }
 
@@ -310,6 +348,8 @@ function resolveAddMetadata(
       sourceAgent,
       updatedBy: getFlagValue(args, "--updated-by") ?? sourceAgent,
       refs: parseRefsFlag(args) ?? [],
+      evidence: parseEvidenceFlag(args),
+      validationGaps: parseValidationGapsFlag(args),
       expiresAfterDays: parseIntegerFlag(args, "--expires-after-days"),
       explicit: explicitFlags,
     })),
@@ -424,7 +464,28 @@ function upsertUpdateSpecs(metadata: AddMetadata): UpdateSpec[] {
       ? { clause: "last_updated_by = ?", value: metadata.updatedBy }
       : undefined,
   ];
-  return specs.filter((spec): spec is UpdateSpec => spec !== undefined);
+  return [
+    ...specs.filter((spec): spec is UpdateSpec => spec !== undefined),
+    ...evidenceUpdateSpecs(metadata.evidence, metadata.validationGaps),
+  ];
+}
+
+/** Only flags that were given are written; [] explicitly clears. */
+function evidenceUpdateSpecs(
+  evidence: EvidenceKind[] | undefined,
+  validationGaps: string[] | undefined,
+): UpdateSpec[] {
+  const specs: UpdateSpec[] = [];
+  if (evidence !== undefined) {
+    specs.push({ clause: "evidence = ?", value: JSON.stringify(evidence) });
+  }
+  if (validationGaps !== undefined) {
+    specs.push({
+      clause: "validation_gaps = ?",
+      value: JSON.stringify(validationGaps),
+    });
+  }
+  return specs;
 }
 
 function updateFromAddPayload(
@@ -525,6 +586,7 @@ function maybeHandleAddUpsert(
     const info =
       matched !== null ? upsertMatchInfo(matched, content, metadata) : null;
     const summary = info ? summarizeUpsertMatch(info) : null;
+    assertAddEvidence(metadata, strong && matched ? matched : undefined);
 
     if (dryRun) {
       return yield* runAddUpsertDryRun({
@@ -766,23 +828,50 @@ function addInsert(
   content: string,
   metadata: AddMetadata,
 ): Effect.Effect<JsonValue, MemoryDatabaseError> {
+  const columns = [
+    "repository",
+    "content",
+    "tags",
+    "context",
+    "memory_type",
+    "certainty",
+    "status",
+    "superseded_by",
+    "source_agent",
+    "last_updated_by",
+    "update_count",
+    "refs",
+    "expires_after_days",
+  ];
+  const params: (string | number | null)[] = [
+    repositoryForCurrentDirectory(),
+    content,
+    metadata.tags,
+    metadata.memo,
+    metadata.memoryType,
+    metadata.certainty,
+    "active",
+    null,
+    metadata.sourceAgent,
+    metadata.updatedBy,
+    0,
+    JSON.stringify(metadata.refs),
+    metadata.expiresAfterDays ?? null,
+  ];
+  // Omitted columns keep their '[]' default, so writes still work against a
+  // remote database that has not applied the evidence migration yet.
+  for (const [column, values] of [
+    ["evidence", metadata.evidence],
+    ["validation_gaps", metadata.validationGaps],
+  ] as const) {
+    if (values !== undefined && values.length > 0) {
+      columns.push(column);
+      params.push(JSON.stringify(values));
+    }
+  }
   return database.run(
-    `INSERT INTO memories (
-     repository, content, tags, context, memory_type, certainty, status, superseded_by,
-     source_agent, last_updated_by, update_count, refs, expires_after_days
-   ) VALUES (?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?, 0, ?, ?)`,
-    [
-      repositoryForCurrentDirectory(),
-      content,
-      metadata.tags,
-      metadata.memo,
-      metadata.memoryType,
-      metadata.certainty,
-      metadata.sourceAgent,
-      metadata.updatedBy,
-      JSON.stringify(metadata.refs),
-      metadata.expiresAfterDays ?? null,
-    ],
+    `INSERT INTO memories (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+    params,
   );
 }
 
@@ -962,6 +1051,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
     ) {
       return;
     }
+    assertAddEvidence(metadata);
     if (hasFlag(args, "--dry-run")) {
       yield* runAddDryRun(commandCtx, content, metadata);
       return;
@@ -1074,6 +1164,7 @@ function optionalUpdateSpecs(args: string[]): UpdateSpec[] {
         ? undefined
         : { clause: "refs = ?", value: JSON.stringify(value) };
     })(),
+
     (() => {
       const value = parseIntegerFlag(args, "--expires-after-days", {
         allowNullLiteral: true,
@@ -1089,6 +1180,12 @@ function optionalUpdateSpecs(args: string[]): UpdateSpec[] {
       specs.push(spec);
     }
   }
+  specs.push(
+    ...evidenceUpdateSpecs(
+      parseEvidenceFlag(args),
+      parseValidationGapsFlag(args),
+    ),
+  );
   return specs;
 }
 
@@ -1165,7 +1262,7 @@ function runBatchMemoryUpdate(
         };
       }
       if (outcome.row) {
-        rows.push(outcome.row);
+        rows.push(normalizeSqliteRow(outcome.row));
       } else {
         conflictIds.push(targetId);
       }
