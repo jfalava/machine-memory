@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
+import { describe, expect, it } from "vitest";
+
 import { toProductRow, toRankedRow } from "../../api/src/product-logic";
 import {
   decodeResponse,
@@ -36,6 +37,9 @@ describe("database to product wire boundary", () => {
       tags: "",
       context: "",
       refs: ["docs/status.md"],
+      // Rows from a schema without the evidence columns decode as unspecified.
+      evidence: [],
+      validation_gaps: [],
     });
     const get = { ok: true as const, result: memory };
     expect(

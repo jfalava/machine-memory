@@ -22,10 +22,15 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Oxlint runs with typeCheck off; type errors are reported only by the
+      # typecheck step below.
       - name: Lint all workspaces
         run: bun run lint:global
 
-      - name: Typecheck all workspaces
+      # One pass per workspace: `effect-tsgo tsrs --noEmit` reports TypeScript
+      # and Effect diagnostics together (exit policy in tsconfig.effect.json).
+      # docs uses `astro check` because tsrs cannot parse .astro files.
+      - name: Typecheck all workspaces (tsrs + Effect diagnostics)
         run: bun run typecheck:global
 
       - name: Test all workspaces

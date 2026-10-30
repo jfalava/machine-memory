@@ -8,7 +8,12 @@ import { Effect } from "effect";
 import { usageError } from "../../cli-utils";
 import { commandError } from "../../effect/errors";
 import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
-import { jsonNumber, jsonObject, type JsonObject } from "../../json";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  type JsonObject,
+} from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import {
   assertEmbeddingFit,
@@ -36,8 +41,8 @@ function historyRow(value: JsonObject): JsonObject {
   const memoryId = jsonNumber(row.memory_id) ?? 0;
   row.id = memoryId;
   row.revision_id = Number(row.revision_id ?? 0);
-  row.operation = String(row.operation ?? "update");
-  row.snapshot_at = String(row.snapshot_at ?? "");
+  row.operation = jsonString(row.operation) ?? "update";
+  row.snapshot_at = jsonString(row.snapshot_at) ?? "";
   return row;
 }
 
@@ -135,11 +140,9 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
       id,
     });
     if (!decoded.ok) {
-      return yield* Effect.fail(
-        commandError(
-          "restore",
-          `The historical memory is not valid under the current schema: ${decoded.error}`,
-        ),
+      return yield* commandError(
+        "restore",
+        `The historical memory is not valid under the current schema: ${decoded.error}`,
       );
     }
     const snapshot = normalizeStoredMemoryRow(decoded.value);
@@ -172,8 +175,19 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
         catch: (cause) => commandError("restore", String(cause), cause),
       });
     }
+    // Snapshots from a pre-migration remote schema carry no evidence columns.
+    const withEvidence = jsonObject(history)?.evidence !== undefined;
+    const evidenceSets = withEvidence
+      ? ", evidence = ?, validation_gaps = ?"
+      : "";
+    const evidenceParams = withEvidence
+      ? [
+          JSON.stringify(snapshot.evidence),
+          JSON.stringify(snapshot.validation_gaps),
+        ]
+      : [];
     const restored = yield* database.get(
-      `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, created_at = ?, updated_at = datetime('now')
+      `UPDATE memories SET content = ?, tags = ?, context = ?, memory_type = ?, status = ?, superseded_by = ?, source_agent = ?, last_updated_by = 'restore', update_count = COALESCE(update_count, 0) + 1, certainty = ?, refs = ?, expires_after_days = ?, created_at = ?, updated_at = datetime('now')${evidenceSets}
        WHERE repository = ? AND id = ? AND update_count = ? RETURNING *`,
       [
         snapshot.content,
@@ -187,6 +201,7 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
         JSON.stringify(snapshot.refs),
         snapshot.expires_after_days,
         snapshot.created_at,
+        ...evidenceParams,
         repository,
         id,
         expectedUpdateCount,

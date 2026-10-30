@@ -1,9 +1,12 @@
+import { EVIDENCE_KINDS } from "@machine-memory/contract";
+
 import {
   CERTAINTY_LEVELS,
   MEMORY_STATUSES,
   MEMORY_TYPES,
   VERSION,
 } from "../constants";
+import type { JsonObject } from "../json";
 import {
   ADD_USAGE,
   DEPRECATE_USAGE,
@@ -44,12 +47,23 @@ export function helpPayload() {
         "Query identifiers (paths, flags, snake/kebab/camel case, dotted or tag-like tokens) or suggested file paths found literally in the memory.",
       term_coverage:
         "Fraction of distinct query terms found in the memory's content, tags, context, or refs.",
+      evidence:
+        "Kinds of evidence behind a claim (see enums.evidence); [] means unspecified. add/update reject --certainty verified without at least one kind. Legacy verified rows keep their certainty until re-asserted; doctor lists them as verified_without_evidence. Not embedded.",
+      validation_gaps:
+        "Known limits of a claim's validation, e.g. unconfirmed intent or untested platforms. --validation-gaps takes one plain-text gap or a JSON array; none clears. Not embedded. --json-min reports validation_gap_count.",
+      dropped:
+        "update/diff/add --upsert-match: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
+      review_candidates:
+        "update/deprecate/add --upsert-match: other active records that may rely on the changed or retired premise (strong = shares a literal path or identifier). Update or deprecate them too. Minimal output lists review_candidate_ids.",
       snippet:
         "First 140 characters of content in --json-min summaries, for triage before a full get.",
     },
     global_options: {
       pretty:
         "Render human-readable output for machine commands; existing human commands keep their normal output.",
+      repo: "--repo <owner/name> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. The flag wins over the variable.",
+      allow_new_repo:
+        "--allow-new-repo lets add/import write to a --repo that has no memories yet; without it a mistyped slug is refused.",
     },
     commands: {
       help: "Show this help message",
@@ -80,7 +94,7 @@ export function helpPayload() {
       update: {
         usage: UPDATE_USAGE,
         notes:
-          "--dry-run prints the per-target size report without writing. Accepts --brief|--json-min|--quiet.",
+          "--dry-run prints the per-target size report and any dropped details without writing. A content change returns dropped and review_candidates. Accepts --brief|--json-min|--quiet.",
       },
       restore: {
         usage: `restore <id> --revision <revision_id> --expected-update-count <n>${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -89,6 +103,8 @@ export function helpPayload() {
       },
       deprecate: {
         usage: DEPRECATE_USAGE,
+        notes:
+          "Returns review_candidates: active records that may rely on the retired premise.",
       },
       delete: { usage: `delete <id|id,id,...>${DATABASE_BACKEND_USAGE}` },
       suggest: {
@@ -99,9 +115,20 @@ export function helpPayload() {
       },
       doctor: {
         usage: `doctor${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        notes:
+          "verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
+      },
+      checkpoint: {
+        usage: `checkpoint [--files "src/a.ts,src/b.ts" | --files-json '[...]'] [--query <search_term>] [--since <ISO date>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        description:
+          "End-of-task review: memories written since --since (default 12 hours ago), memories related to the touched files (default: changed files in the Git working tree, else the last commit), review flags, and the five-way classification with commands.",
       },
       verify: { usage: `verify <id> <fact>${DATABASE_BACKEND_USAGE}` },
-      diff: { usage: `diff <id> <new_content>${DATABASE_BACKEND_USAGE}` },
+      diff: {
+        usage: `diff <id> <new_content>${DATABASE_BACKEND_USAGE}`,
+        notes:
+          "Reports term changes plus dropped identifiers and sentences, the same check update applies.",
+      },
       "tag-map": {
         usage:
           "tag-map <list|set|delete|suggest> [path_prefix] [tags_csv|path]",
@@ -148,6 +175,7 @@ export function helpPayload() {
     enums: {
       memory_type: MEMORY_TYPES,
       certainty: CERTAINTY_LEVELS,
+      evidence: EVIDENCE_KINDS,
       status: MEMORY_STATUSES,
     },
     what_to_store: [
@@ -159,4 +187,133 @@ export function helpPayload() {
       "User preferences (e.g. 'user prefers explicit error handling over try/catch')",
     ],
   };
+}
+
+/**
+ * What each command's focused help includes beyond its own entry. Commands
+ * not listed get their entry plus the shared database and global options.
+ */
+const HELP_FOCUS = {
+  add: {
+    sections: ["embedding_budget"],
+    fields: [
+      "conflict_count",
+      "status_cascade_count",
+      "tokens",
+      "evidence",
+      "validation_gaps",
+      "dropped",
+      "review_candidates",
+    ],
+    enums: ["memory_type", "certainty", "evidence", "status"],
+  },
+  update: {
+    sections: ["embedding_budget"],
+    fields: [
+      "tokens",
+      "evidence",
+      "validation_gaps",
+      "dropped",
+      "review_candidates",
+    ],
+    enums: ["memory_type", "certainty", "evidence"],
+  },
+  size: {
+    sections: ["embedding_budget"],
+    fields: ["tokens"],
+    enums: ["memory_type", "certainty"],
+  },
+  deprecate: { sections: [], fields: ["review_candidates"], enums: [] },
+  diff: { sections: [], fields: ["dropped"], enums: [] },
+  query: {
+    sections: [],
+    fields: [
+      "match_strength",
+      "no_strong_match",
+      "exact_matches",
+      "term_coverage",
+      "snippet",
+      "evidence",
+    ],
+    enums: ["memory_type", "certainty", "status"],
+  },
+  suggest: {
+    sections: [],
+    fields: [
+      "match_strength",
+      "no_strong_match",
+      "exact_matches",
+      "term_coverage",
+      "snippet",
+      "evidence",
+    ],
+    enums: ["memory_type", "certainty", "status"],
+  },
+  sweep: {
+    sections: [],
+    fields: ["match_strength", "no_strong_match", "exact_matches", "snippet"],
+    enums: [],
+  },
+  checkpoint: {
+    sections: [],
+    fields: ["match_strength", "snippet", "evidence", "validation_gaps"],
+    enums: ["evidence"],
+  },
+  get: { sections: [], fields: ["evidence", "validation_gaps"], enums: [] },
+  list: {
+    sections: [],
+    fields: ["evidence", "validation_gaps"],
+    enums: ["memory_type", "certainty", "status"],
+  },
+  export: { sections: [], fields: [], enums: ["memory_type", "certainty"] },
+} as const satisfies {
+  [command: string]: {
+    sections: readonly ["embedding_budget"] | readonly [];
+    fields: readonly string[];
+    enums: readonly string[];
+  };
+};
+
+function pick(source: JsonObject, keys: readonly string[]): JsonObject {
+  return Object.fromEntries(
+    Object.entries(source).filter(([key]) => keys.includes(key)),
+  );
+}
+
+/** Help for one command; the full catalog for `help` or an unknown name. */
+export function commandHelpPayload(command: string | undefined): JsonObject {
+  const full = helpPayload();
+  const entry = Object.entries(full.commands).find(
+    ([name]) => name === command,
+  );
+  if (command === undefined || command === "help" || entry === undefined) {
+    return full;
+  }
+  const focus = Object.entries(HELP_FOCUS).find(
+    ([name]) => name === command,
+  )?.[1];
+  const usage = JSON.stringify(entry[1]);
+  const payload: JsonObject = {
+    name: full.name,
+    version: full.version,
+    command,
+    commands: { [command]: entry[1] },
+    global_options: full.global_options,
+    full_help: "machine-memory help",
+  };
+  if (usage.includes("--local|--remote")) {
+    payload.database = full.database;
+  }
+  if (focus !== undefined) {
+    if (focus.sections.length > 0) {
+      payload.embedding_budget = full.embedding_budget;
+    }
+    if (focus.fields.length > 0) {
+      payload.output_fields = pick(full.output_fields, focus.fields);
+    }
+    if (focus.enums.length > 0) {
+      payload.enums = pick(full.enums, focus.enums);
+    }
+  }
+  return payload;
 }

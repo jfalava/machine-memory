@@ -23,6 +23,8 @@ const row = {
   update_count: 0,
   certainty: "verified",
   refs: "[]",
+  evidence: ["verified_mechanism" as const],
+  validation_gaps: [],
   expires_after_days: null,
   created_at: null,
   updated_at: null,

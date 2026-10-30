@@ -1,5 +1,6 @@
 import pc from "picocolors";
 import { getBorderCharacters, table as formatTable } from "table";
+
 import {
   jsonBoolean,
   jsonNumber,
@@ -124,7 +125,11 @@ function renderHelpUsage(indent: string, usage: string): string[] {
 function renderHelpChildren(name: string, value: JsonObject): string[] {
   const childLines: string[] = [];
   for (const [childName, childValue] of Object.entries(value)) {
-    if (childName === "usage" || childName === "description") {
+    if (
+      childName === "usage" ||
+      childName === "description" ||
+      childName === "notes"
+    ) {
       continue;
     }
     if (childLines.length > 0) {
@@ -151,11 +156,14 @@ function renderHelpCommand(
 
   const usage = jsonString(value.usage);
   const description = jsonString(value.description);
+  const notes = jsonString(value.notes);
   if (usage) {
     lines.push(...renderHelpUsage(indent, usage));
   }
-  if (description) {
-    lines.push(...renderHelpText(indent + "  ", description));
+  for (const text of [description, notes]) {
+    if (text) {
+      lines.push(...renderHelpText(indent + "  ", text));
+    }
   }
   if (!usage && !description) {
     const childLines = renderHelpChildren(name, value);

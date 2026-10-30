@@ -17,3 +17,18 @@ test("history triggers use D1-compatible trigger bodies", async () => {
   );
   expect(sql.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
 });
+
+test("evidence migrations keep columns separate from rerunnable D1-compatible triggers", async () => {
+  const columns = await readFile(
+    new URL("../migrations/0005_memory_evidence.sql", import.meta.url),
+    "utf8",
+  );
+  const triggers = await readFile(
+    new URL("../migrations/0006_memory_evidence_triggers.sql", import.meta.url),
+    "utf8",
+  );
+  // The local CLI reruns 0006 on every migration, so it must not add columns.
+  expect(triggers).not.toMatch(/\bALTER\b/i);
+  expect(columns).not.toMatch(/\bTRIGGER\b/i);
+  expect(triggers.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
+});

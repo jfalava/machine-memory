@@ -7,11 +7,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "oxlint --type-aware && vitest run && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
+    "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "effect": "catalog:effect"

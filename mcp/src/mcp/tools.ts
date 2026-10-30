@@ -222,7 +222,7 @@ export function createMemoryServer(
     "memory_doctor",
     {
       description:
-        "Audit active memories in one repository for exact and near duplicates, stale status overlap, canonical-topic overlap, missing status expiry, type-boundary problems, tag taxonomy issues, and malformed refs. This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
+        "Audit active memories in one repository for exact and near duplicates, stale status overlap, canonical-topic overlap, missing status expiry, type-boundary problems, tag taxonomy issues, malformed refs, verified records without evidence (verified_without_evidence: legacy rows to review, not bulk-fix), and gotchas naming the same identifiers (gotcha_overlap: consolidate the shared workaround). This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
       inputSchema: memoryDoctorInput,
     },
     async (args: MemoryDoctorArgs) => {
@@ -307,7 +307,7 @@ export function createMemoryServer(
     "memory_diff",
     {
       description:
-        "Diff proposed new content against a stored memory. Ports the CLI diff command: returns whether the proposal conflicts plus similarity and added/removed terms. Use this before memory_update when wording must change and the inference may conflict.",
+        "Diff proposed new content against a stored memory. Ports the CLI diff command: returns whether the proposal conflicts plus similarity, added/removed terms, and dropped: identifiers and sentences of the stored content that the proposal no longer carries. Use this before memory_update when wording must change and the inference may conflict.",
       inputSchema: memoryDiffInput,
     },
     async (args: MemoryDiffArgs) => {
@@ -323,7 +323,7 @@ export function createMemoryServer(
   server.registerTool(
     "memory_add",
     {
-      description: `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. With upsert_match, a strong existing match is updated in place (echoes mode and upsert_match); a weak match refuses to create unless force is true. New records echo potential_conflicts so near-duplicates stay visible. Rejects on flight when the composed embedding text exceeds the 512 byte+2 budget (same as CLI size / Worker REST); call memory_size to preflight.`,
+      description: `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. With upsert_match, a strong existing match is updated in place (echoes mode and upsert_match); a weak match refuses to create unless force is true. New records echo potential_conflicts so near-duplicates stay visible. certainty verified requires a non-empty evidence array naming what was established (user_requirement, observed_implementation, verified_mechanism, tested_behavior); record remaining limits in validation_gaps. evidence and validation_gaps are not embedded. Rejects on flight when the composed embedding text exceeds the 512 byte+2 budget (same as CLI size / Worker REST); call memory_size to preflight.`,
       inputSchema: memoryAddInput,
     },
     async (args: MemoryAddArgs) => {
@@ -339,7 +339,7 @@ export function createMemoryServer(
   server.registerTool(
     "memory_update",
     {
-      description: `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change. Commits the row and queues vector indexing together; semantic search catches up asynchronously. Rejects active memories when the resulting composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
+      description: `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change. A content or status change returns dropped (identifiers and sentences the new content lost) and review_candidates (other active records that may rely on the old premise); resolve both. evidence and validation_gaps replace the stored arrays when given ([] clears). Setting certainty verified, or clearing evidence on a verified record, requires a non-empty evidence array. Commits the row and queues vector indexing together; semantic search catches up asynchronously. Rejects active memories when the resulting composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
       inputSchema: memoryUpdateInput,
     },
     async (args: MemoryUpdateArgs) => {
@@ -355,7 +355,7 @@ export function createMemoryServer(
   server.registerTool(
     "memory_deprecate",
     {
-      description: `⚠️ WRITE OPERATION — marks one to 100 explicit ids deprecated, or superseded_by when a canonical replacement id is supplied. There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} This preserves audit history and re-syncs each changed vector. Prefer this over permanent deletion for obsolete or replaced memories.`,
+      description: `⚠️ WRITE OPERATION — marks one to 100 explicit ids deprecated, or superseded_by when a canonical replacement id is supplied. There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} This preserves audit history and re-syncs each changed vector. Returns review_candidates when other active records may rely on the retired premise; resolve each one. Prefer this over permanent deletion for obsolete or replaced memories.`,
       inputSchema: memoryDeprecateInput,
     },
     async (args: MemoryDeprecateArgs) => {

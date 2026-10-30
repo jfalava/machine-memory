@@ -72,6 +72,8 @@ function query(
         headers.authorization = `Bearer ${token}`;
       }
 
+      // The CLI's single HTTP boundary; errors are typed by tryPromise's catch.
+      // @effect-diagnostics-next-line globalFetchInEffect:off
       const response = await fetch(url, {
         method: "POST",
         headers,

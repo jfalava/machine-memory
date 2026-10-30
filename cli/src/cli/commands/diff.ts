@@ -1,9 +1,11 @@
+import { droppedDetails } from "@machine-memory/contract";
 import { Effect } from "effect";
+
 import { usageError } from "../../cli-utils";
-import { getMemoryById, stringValue } from "../shared";
 import { compareFact } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import { getMemoryById, stringValue } from "../shared";
 
 export function handleDiffCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -32,6 +34,7 @@ export function handleDiffCommand(commandCtx: CommandContext) {
         similarity: result.similarity,
         added_terms: result.addedTerms,
         removed_terms: result.removedTerms,
+        dropped: droppedDetails(stringValue(memory.content), fact),
       });
     });
   });

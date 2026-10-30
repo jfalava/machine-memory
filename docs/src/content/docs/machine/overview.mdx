@@ -35,6 +35,21 @@ machine-memory --pretty query "backend" --remote
 machine-memory query "backend" --remote --pretty
 ```
 
+## Other repositories
+
+Commands act on the repository named by the current checkout's `origin`
+remote. To read or write another repository's memories without changing
+directory, pass `--repo owner/name` anywhere on the command line, or set
+`MACHINE_MEMORY_REPO`. The flag wins over the variable.
+
+```sh
+machine-memory query "node overlay" --repo jfalava/outfit --remote
+```
+
+A mistyped slug would silently start a new namespace, so `add` and `import`
+refuse a `--repo` that has no memories yet unless `--allow-new-repo` is
+given.
+
 ## Commands
 
 ### CLI and memory lifecycle
@@ -58,8 +73,9 @@ machine-memory query "backend" --remote --pretty
 | [`list`](/machine/list)         | List memories using filters and recency order.                    |
 | [`suggest`](/machine/suggest)   | Find memories related to a set of file paths.                     |
 | [`sweep`](/machine/sweep)       | Combine file suggestions, text search, and filtered listing.      |
+| [`checkpoint`](/machine/checkpoint) | Gather recent writes, related memories, and review flags for the end-of-task review. |
 | [`verify`](/machine/verify)     | Compare a proposed fact with an existing memory.                  |
-| [`diff`](/machine/diff)         | Explain how proposed content differs from an existing memory.     |
+| [`diff`](/machine/diff)         | Explain how proposed content differs, including dropped details.  |
 | [`coverage`](/machine/coverage) | Find directories that are not represented by memory tags.         |
 | [`stats`](/machine/stats)       | Summarize repository memory health and distribution.              |
 | [`doctor`](/machine/doctor)     | Detect duplicates, stale status, tag, reference, and type issues. |

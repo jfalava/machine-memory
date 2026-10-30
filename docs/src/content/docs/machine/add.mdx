@@ -53,6 +53,35 @@ retrieval metadata. `--type` accepts `decision`, `convention`, `gotcha`,
 `verified`, `inferred`, or `speculative`. `--refs` accepts JSON or CSV
 references, and `--expires-after-days` is useful for transient status.
 
+## Evidence
+
+Certainty says how sure a claim is; evidence says what it rests on.
+`--evidence` takes a comma-separated list of the kinds that were actually
+established:
+
+| Kind                      | Meaning                                                 |
+| ------------------------- | ------------------------------------------------------- |
+| `user_requirement`        | The user explicitly asked for it or stated a preference |
+| `observed_implementation` | The code currently behaves this way                     |
+| `verified_mechanism`      | The underlying technical mechanism was confirmed        |
+| `tested_behavior`         | End-user behavior was exercised in tests or real use    |
+
+Observing the implementation does not establish intent or cross-platform
+behavior, so record what is still unconfirmed with `--validation-gaps`: one
+plain-text gap, or a JSON array of up to 16 gaps of at most 300 characters.
+
+```sh
+machine-memory add "Admin shortcuts fire only inside focused forms" \
+  --type decision --certainty verified --evidence observed_implementation \
+  --validation-gaps '["User intent unconfirmed","Safari and Windows untested"]' \
+  (--local|--remote)
+```
+
+`--certainty verified` is rejected unless at least one evidence kind is given.
+Evidence and gaps are stored metadata only: they are not embedded and do not
+count toward the embedding budget. `get` and `list` return them as arrays,
+and `--json-min` summaries include `evidence` plus a `validation_gap_count`.
+
 `--from-file` and inline content are mutually exclusive. `--no-conflicts`
 suppresses conflict details; `--brief`, `--json-min`, and `--quiet` select
 smaller responses. A forced create over a weak match includes an

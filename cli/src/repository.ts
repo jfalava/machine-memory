@@ -1,12 +1,51 @@
 import { execFileSync } from "node:child_process";
 
+import { MAX_NAMESPACE_BYTES } from "@machine-memory/contract";
+
 let cachedRepository: string | undefined;
 
+type RepositoryOverride = {
+  readonly slug: string;
+  readonly allowNew: boolean;
+};
+
+let repositoryOverride: RepositoryOverride | undefined;
+
+const REPOSITORY_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+/** Validates an explicit owner/name slug from --repo or MACHINE_MEMORY_REPO. */
+export function parseRepositorySlug(value: string): string {
+  const slug = value.trim();
+  if (
+    !REPOSITORY_SLUG.test(slug) ||
+    new TextEncoder().encode(slug).byteLength > MAX_NAMESPACE_BYTES
+  ) {
+    throw new Error(
+      `Invalid repository '${value}'. Use an owner/name slug of at most ${MAX_NAMESPACE_BYTES} bytes, e.g. --repo jfalava/machine-memory.`,
+    );
+  }
+  return slug;
+}
+
+/** Process-wide target for every repository-scoped command in this run. */
+export function setRepositoryOverride(
+  override: RepositoryOverride | undefined,
+): void {
+  repositoryOverride = override;
+}
+
+export function activeRepositoryOverride(): RepositoryOverride | undefined {
+  return repositoryOverride;
+}
+
 /**
- * Infer the repository identity from the current checkout's origin remote.
- * The value is normalized to the final owner/name path, without `.git`.
+ * The repository commands act on: --repo or MACHINE_MEMORY_REPO when given,
+ * otherwise the current checkout's origin remote, normalized to owner/name.
  */
 export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
+  if (repositoryOverride !== undefined) {
+    return repositoryOverride.slug;
+  }
   if (cachedRepository !== undefined && cwd === process.cwd()) {
     return cachedRepository;
   }

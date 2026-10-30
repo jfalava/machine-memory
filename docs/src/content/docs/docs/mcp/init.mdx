@@ -97,9 +97,9 @@ The MCP block tells agents to:
 - Set `memory_type`/`certainty` explicitly (`memory_add` defaults to `convention`/`inferred`); `expires_after_days` works only for `status` memories
 - Preflight long content with `memory_size`; respect on-flight size rejection on writes
 - Treat search results as ranked candidates, not an exhaustive list; rely on `match_strength` and `no_strong_match` rather than scores, and prefer known IDs, `memory_suggest`, and `tags` filters
-- Set certainty from evidence (user requirement, observed implementation, verified mechanism, tested behavior) and record validation gaps
+- Set certainty from evidence: name the `evidence` kinds (`user_requirement`, `observed_implementation`, `verified_mechanism`, `tested_behavior`) and list `validation_gaps`; `verified` without evidence is rejected
 - Keep durable knowledge separate from delivery status; say whether work is local, committed, pushed, or deployed in an expiring `status` record
-- Carry over unrelated details when replacing a record, and reconcile records that depend on a changed decision
+- Carry over unrelated details when replacing a record (`memory_diff` and `memory_update` report `dropped` details), and resolve the `review_candidates` that updates and deprecations return
 - Let the parent agent own memory writes; child agents return persistence candidates with evidence
 - Scan before edits, then run the end-of-task checkpoint: classify each finding as covered, new durable knowledge, superseded, transient status, or intentionally omitted
 

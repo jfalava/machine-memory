@@ -6,11 +6,13 @@ import { Schema } from "effect";
 
 import integritySql from "../../iac/migrations/0003_memory_integrity.sql" with { type: "text" };
 import historySql from "../../iac/migrations/0004_memory_history.sql" with { type: "text" };
+// 0005 only adds columns; ensureEvidenceColumns applies it idempotently here.
+import evidenceTriggersSql from "../../iac/migrations/0006_memory_evidence_triggers.sql" with { type: "text" };
 import { DB_PATH } from "./constants";
 import { jsonObject, jsonString } from "./json";
 import { repositoryForCurrentDirectory } from "./repository";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const BUSY_TIMEOUT_MS = Number(
   process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
 );
@@ -116,9 +118,12 @@ function tableExists(database: Database, tableName: string): boolean {
   return Boolean(row);
 }
 
-function listMemoryColumns(database: Database): Set<string> {
+function listMemoryColumns(
+  database: Database,
+  table: "memories" | "memory_history" = "memories",
+): Set<string> {
   const rows = Schema.decodeUnknownSync(Schema.Array(Schema.Json))(
-    allWithRetry(database, "PRAGMA table_info(memories)"),
+    allWithRetry(database, `PRAGMA table_info(${table})`),
   );
   return new Set(
     rows
@@ -206,10 +211,7 @@ function migrateSchema(database: Database) {
         "INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')",
       );
     }
-    // SQLite and D1 enforce the same write invariants, including concurrent writes.
-    database.exec(
-      `${integritySql}\n${historySql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
-    );
+    applyMigrationSql(database);
     runWithRetry(database, "COMMIT");
   } catch (err) {
     try {
@@ -217,6 +219,15 @@ function migrateSchema(database: Database) {
     } catch {}
     throw err;
   }
+}
+
+/** SQLite and D1 enforce the same write invariants, including concurrent writes. */
+function applyMigrationSql(database: Database) {
+  database.exec(`${integritySql}\n${historySql}`);
+  ensureEvidenceColumns(database, "memory_history");
+  database.exec(
+    `${evidenceTriggersSql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
+  );
 }
 
 function ensureSchemaReadable(database: Database) {
@@ -250,8 +261,13 @@ function isSchemaReady(database: Database): boolean {
     "refs",
     "expires_after_days",
     "repository",
+    ...EVIDENCE_COLUMNS,
   ];
-  return required.every((columnName) => columns.has(columnName));
+  const historyColumns = listMemoryColumns(database, "memory_history");
+  return (
+    required.every((columnName) => columns.has(columnName)) &&
+    EVIDENCE_COLUMNS.every((columnName) => historyColumns.has(columnName))
+  );
 }
 
 function ensureMemoryTableColumns(database: Database) {
@@ -305,6 +321,7 @@ function ensureMemoryTableColumns(database: Database) {
       runWithRetry(database, migration.sql);
     }
   }
+  ensureEvidenceColumns(database, "memories");
 
   ensureRepository(database);
 
@@ -320,6 +337,24 @@ function ensureMemoryTableColumns(database: Database) {
        END
      WHERE certainty IN ('hard', 'soft', 'uncertain')`,
   );
+}
+
+const EVIDENCE_COLUMNS = ["evidence", "validation_gaps"] as const;
+
+/** Mirrors iac/migrations/0005_memory_evidence.sql without failing on rerun. */
+function ensureEvidenceColumns(
+  database: Database,
+  table: "memories" | "memory_history",
+) {
+  const columns = listMemoryColumns(database, table);
+  for (const column of EVIDENCE_COLUMNS) {
+    if (!columns.has(column)) {
+      runWithRetry(
+        database,
+        `ALTER TABLE ${table} ADD COLUMN ${column} TEXT NOT NULL DEFAULT '[]'`,
+      );
+    }
+  }
 }
 
 function ensureRepository(database: Database) {

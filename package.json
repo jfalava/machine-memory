@@ -12,21 +12,22 @@
     ],
     "catalogs": {
       "effect": {
-        "@effect/platform-node": "4.1.0",
-        "@effect/platform-bun": "4.1.0",
-        "@effect/sql-d1": "4.1.0",
-        "effect": "4.1.0"
+        "@effect/platform-node": "4.0.5",
+        "@effect/platform-bun": "4.0.5",
+        "@effect/sql-d1": "4.0.5",
+        "effect": "4.0.5"
       },
       "types": {
         "bun-types": "1.4.4",
-        "@cloudflare/workers-types": "5.20261029.1"
+        "@cloudflare/workers-types": "5.20261016.1"
       },
       "iac": {
-        "alchemy": "2.0.0-beta.84"
+        "alchemy": "2.0.0-beta.83"
       },
       "build": {
         "oxlint": "1.90.0",
         "oxlint-tsgolint": "7.0.2005",
+        "tsrs": "0.20.1-ts7.1.0-beta",
         "typescript": "7.0.2",
         "wrangler": "4.156.0"
       },
@@ -51,6 +52,7 @@
     "@oxlint/plugins": "1.90.0",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:build",
+    "tsrs": "catalog:build",
     "typescript": "catalog:build",
     "vite-tsconfig-paths": "6.1.1"
   },

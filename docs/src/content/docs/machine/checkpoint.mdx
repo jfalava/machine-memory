@@ -1,0 +1,31 @@
+---
+title: checkpoint
+description: Gather what an end-of-task memory review needs in one call.
+sidebar:
+  order: 12.5
+---
+
+## Usage
+
+```sh
+machine-memory checkpoint (--local|--remote) --json-min
+machine-memory checkpoint --files "src/a.ts,src/b.ts" --since 2026-10-30T09:00:00Z (--local|--remote)
+machine-memory checkpoint --query "keyboard shortcuts" (--local|--remote)
+```
+
+`checkpoint` is read-only. Run it before the final response of a task to
+classify every validated finding (see the managed `AGENTS.md` block). It returns:
+
+| Field            | Contents                                                                                                                                             |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recent`         | Memories written or changed since `--since` (default: 12 hours ago), including deprecations, newest first.                                          |
+| `files`          | The touched files: `--files`/`--files-json`, otherwise the Git working-tree changes plus untracked files, otherwise the files in the last commit.     |
+| `related`        | [`suggest`](/machine/suggest) results for those files, with `match_strength`. `--query` adds `query_results`.                                         |
+| `review`         | IDs to look at: `verified_without_evidence`, `status_without_expiry`, `verified_with_gaps`, `related_status`, and `strong_related`.                   |
+| `classification` | The five groups (already covered, new durable knowledge, superseded or conflicting, transient status, intentionally omitted) with the command for each. |
+
+With [`--repo`](/machine/overview#other-repositories), the working tree belongs
+to a different checkout, so `checkpoint` only uses files passed with `--files`.
+
+`--json-min` returns minimal summaries with content snippets. `--quiet` prints
+only `{recent_ids, related_ids}`, and `--brief` prints one line per memory.

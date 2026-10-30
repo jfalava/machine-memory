@@ -26,6 +26,7 @@
     "src/content/docs/infrastructure/what-gets-deployed.mdx",
     "src/content/docs/installation.mdx",
     "src/content/docs/machine/add.mdx",
+    "src/content/docs/machine/checkpoint.mdx",
     "src/content/docs/machine/coverage.mdx",
     "src/content/docs/machine/delete.mdx",
     "src/content/docs/machine/deprecate.mdx",

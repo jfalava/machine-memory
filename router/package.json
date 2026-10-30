@@ -3,12 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --fix && vitest run && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
+    "check": "oxlint --type-aware --fix && vitest run && bun run typecheck",
     "format": "oxfmt",
-    "lint": "oxlint",
+    "lint": "oxlint --type-aware",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@cloudflare/workers-types": "5.20261029.1",

@@ -8,6 +8,7 @@ import {
   MemoryTypeSchema,
   MemoryStatusSchema,
 } from "../entities";
+import { DroppedDetailsSchema } from "../reconcile";
 import { MatchStrengthSchema } from "../search";
 
 export const FactCheckResultSchema = Schema.Struct({
@@ -54,6 +55,10 @@ export const MemoryWriteResultSchema = Schema.Struct({
   upsert_match: Schema.optionalKey(UpsertMatchInfoSchema),
   matched: Schema.optionalKey(MatchedUpdateTargetSchema),
   potential_conflicts: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
+  /** Paths, identifiers, and sentences the new content no longer carries. */
+  dropped: Schema.optionalKey(DroppedDetailsSchema),
+  /** Other active records that may rely on the changed premise. */
+  review_candidates: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
 });
 export type MemoryWriteResult = typeof MemoryWriteResultSchema.Type;
 
@@ -168,6 +173,7 @@ export const MemoryDiffResultSchema = Schema.Struct({
   similarity: Schema.Number,
   added_terms: Schema.Array(Schema.String),
   removed_terms: Schema.Array(Schema.String),
+  dropped: DroppedDetailsSchema,
 });
 export type MemoryDiffResult = typeof MemoryDiffResultSchema.Type;
 export const MemoryDiffSuccessSchema = okResponseSchema(MemoryDiffResultSchema);
@@ -213,6 +219,8 @@ export const MemoryDeprecateResultSchema = Schema.Struct({
   deprecated: Schema.Array(MemoryRowSchema),
   not_found: Schema.Array(Schema.Number),
   count: Schema.Number,
+  /** Active records that may rely on a retired premise. */
+  review_candidates: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
 });
 export type MemoryDeprecateResult = typeof MemoryDeprecateResultSchema.Type;
 export const MemoryDeprecateSuccessSchema = okResponseSchema(

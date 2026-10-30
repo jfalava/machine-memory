@@ -8,9 +8,10 @@ import { printJson } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
 import { CommandError } from "../effect/errors";
+import { parseRepositorySlug, setRepositoryOverride } from "../repository";
 import { UpgradeError } from "../upgrade";
 import { builtinCommands, featureCommands } from "./commands/definitions";
-import { helpPayload } from "./help";
+import { commandHelpPayload, helpPayload } from "./help";
 import {
   commandErrorForRender,
   humanCommandFailureOutput,
@@ -66,6 +67,49 @@ const formatter: CliOutput.Formatter = {
     JSON.stringify({ error: errors.map((error) => error.message).join("\n") }),
 };
 
+type RepositoryFlags = {
+  readonly args: string[];
+  readonly repo?: string;
+  readonly allowNew: boolean;
+};
+
+/**
+ * --repo and --allow-new-repo apply to every repository-scoped command, so they
+ * are read before command parsing, like a global flag, and removed from argv.
+ */
+function extractRepositoryFlags(args: ReadonlyArray<string>): RepositoryFlags {
+  const rest: string[] = [];
+  let repo = process.env["MACHINE_MEMORY_REPO"]?.trim() || undefined;
+  let allowNew = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--allow-new-repo") {
+      allowNew = true;
+    } else if (arg === "--repo") {
+      repo = args[index + 1];
+      if (repo === undefined || repo.startsWith("--")) {
+        throw new Error("--repo requires an owner/name value.");
+      }
+      index += 1;
+    } else if (arg.startsWith("--repo=")) {
+      repo = arg.slice("--repo=".length);
+    } else {
+      rest.push(arg);
+    }
+  }
+  return { args: rest, repo, allowNew };
+}
+
+function applyRepositoryFlags(rawArgs: ReadonlyArray<string>): string[] {
+  const flags = extractRepositoryFlags(rawArgs);
+  setRepositoryOverride(
+    flags.repo === undefined
+      ? undefined
+      : { slug: parseRepositorySlug(flags.repo), allowNew: flags.allowNew },
+  );
+  return flags.args;
+}
+
 function prettyRequested(args: ReadonlyArray<string>): boolean {
   return args.some((arg) => arg === "--pretty" || arg === "--pretty=true");
 }
@@ -110,11 +154,15 @@ function formatterFor(
   pretty: boolean,
 ): CliOutput.Formatter {
   if (!command || !HUMAN_COMMANDS.has(command)) {
+    // `<command> --help` describes that command only, not the whole catalog.
     if (!pretty) {
-      return formatter;
+      return {
+        ...formatter,
+        formatHelpDoc: () => JSON.stringify(commandHelpPayload(command)),
+      };
     }
     return {
-      formatHelpDoc: () => renderPretty("help", helpPayload()),
+      formatHelpDoc: () => renderPretty("help", commandHelpPayload(command)),
       formatVersion: (_name, version) => `machine-memory v${version}`,
       formatCliError: (error) =>
         prettyErrorText(command ?? "machine-memory", error.message),
@@ -257,7 +305,18 @@ function renderError(
   renderMachineError(error);
 }
 
-export function runCli(args: ReadonlyArray<string>) {
+export function runCli(rawArgs: ReadonlyArray<string>) {
+  let args: string[];
+  try {
+    args = applyRepositoryFlags(rawArgs);
+  } catch (cause) {
+    return Effect.sync(() => {
+      printJson({
+        error: cause instanceof Error ? cause.message : "Invalid --repo.",
+      });
+      process.exitCode = 1;
+    });
+  }
   const command = unknownCommand(args);
   const commandPathName = commandPath(args);
   const pretty = prettyRequested(args);

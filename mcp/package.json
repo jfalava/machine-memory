@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --fix && effect-tsgo diagnostics --project tsconfig.json --format text --strict",
+    "check": "oxlint --type-aware --fix && bun run typecheck",
     "format": "oxfmt",
-    "lint": "oxlint",
+    "lint": "oxlint --type-aware",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.4",

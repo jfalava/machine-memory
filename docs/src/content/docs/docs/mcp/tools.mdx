@@ -70,7 +70,7 @@ Every tool that takes `repository` expects `owner/name`. Rows live in D1; embedd
 
 `memory_add` accepts `upsert_match` (with `force` and `upsert_threshold`, default score 32 alongside similarity ≥ 0.62): a strong match updates in place, otherwise a new record is created, and a weak match refuses unless forced. New records echo `potential_conflicts` so near-duplicates stay visible.
 
-`memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
+`memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change. A content or status change also returns `dropped` (identifiers and sentences the new content lost) and `review_candidates` (other active memories that may rely on the old premise). `memory_deprecate` returns `review_candidates` too, and `memory_diff` returns `dropped` before anything is written. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
 
 ### History and recovery
 
@@ -107,6 +107,8 @@ See [history and restore](/machine/history) for CLI usage and constraints.
 
 Filters `status`, `memory_type`, and `certainty` use the same enums as the CLI.
 
+Search results and full rows include `evidence` and `validation_gaps`. Neither is embedded, so they do not affect semantic search or the size budget.
+
 `memory_query` returns `{ count, no_strong_match, results }`. Each result includes `score`, which only ranks within the response, plus absolute relevance fields: `match_strength` (`strong`, `weak`, or `none`), `term_coverage`, and `exact_matches`. Strong results come first. When `no_strong_match` is true, treat the results as loosely related candidates. The thresholds match the CLI; see [query match strength](/machine/query#match-strength).
 
 ### Writes
@@ -117,7 +119,9 @@ Typical fields on `memory_add` / `memory_update`:
 - `tags` — comma-separated, e.g. `area:cli,topic:backend,kind:decision`
 - `context` — optional supporting text
 - `memory_type` — `decision`, `convention`, `gotcha`, `preference`, `constraint`, `reference`, `status`
-- `certainty` — `verified`, `inferred`, `speculative`
+- `certainty` — `verified`, `inferred`, `speculative`; `verified` requires a non-empty `evidence`
+- `evidence` — array of `user_requirement`, `observed_implementation`, `verified_mechanism`, `tested_behavior`; on update it replaces the stored array and `[]` clears it
+- `validation_gaps` — array of up to 16 short strings naming what is still unconfirmed, such as user intent or untested platforms
 - `status` — `active`, `deprecated`, `superseded_by`
 - `expires_after_days` — only valid when `memory_type` is `status`
 

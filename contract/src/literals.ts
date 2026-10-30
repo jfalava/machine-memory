@@ -16,6 +16,21 @@ export const CERTAINTY_LEVELS = [
   "speculative",
 ] as const;
 
+/**
+ * What a claim rests on. Certainty says how sure; evidence says why. A record
+ * can hold several kinds, and each kind covers only its own dimension.
+ */
+export const EVIDENCE_KINDS = [
+  "user_requirement",
+  "observed_implementation",
+  "verified_mechanism",
+  "tested_behavior",
+] as const;
+
+/** Validation gaps are short notes, not documents; they are never embedded. */
+export const VALIDATION_GAPS_MAX = 16;
+export const VALIDATION_GAP_MAX_CHARS = 300;
+
 export const MEMORY_STATUSES = [
   "active",
   "deprecated",
@@ -63,6 +78,7 @@ export const DEFAULT_CERTAINTY = "inferred" as const;
 
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 export type Certainty = (typeof CERTAINTY_LEVELS)[number];
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
 export type SearchMode = (typeof SEARCH_MODES)[number];
 export type MatchStrength = (typeof MATCH_STRENGTHS)[number];

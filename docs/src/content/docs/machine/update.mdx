@@ -19,13 +19,37 @@ rows, missing IDs, and a count.
 
 ## Metadata
 
-`--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, and `--refs`
-replace the corresponding metadata. `--expires-after-days <n|null>` sets or
-clears expiry. The content update increments `update_count` and refreshes
+`--tags`, `--context`, `--type`, `--certainty`, `--updated-by`, `--refs`,
+`--evidence`, and `--validation-gaps` replace the corresponding metadata;
+omitted flags keep the stored values. `--evidence none` and
+`--validation-gaps none` clear them. `--expires-after-days <n|null>` sets or
+clears expiry.
+
+Setting `--certainty verified`, or clearing the evidence of a verified memory,
+requires at least one evidence kind (see [`add`](/machine/add#evidence)).
+Memories saved before evidence existed keep their certainty with no evidence;
+content-only updates to them still work, and [`doctor`](/machine/doctor)
+lists them for review. The content update increments `update_count` and refreshes
 `updated_at`.
 
 `--match` must resolve to an active memory and cannot be combined with more
 than one positional content argument.
+
+## Reconciliation
+
+When the content changes, the response reports:
+
+- `dropped`: identifiers and sentences the new content no longer carries, as
+  in [`diff`](/machine/diff). `--dry-run` reports them per target before
+  anything is written.
+- `review_candidates`: up to five other active memories that may rely on the
+  old premise, with `match_strength`. A strong candidate names the same path
+  or identifier. Update or deprecate each one, or confirm it still holds.
+  Status memories do not trigger this check.
+
+`--json-min` and `--quiet` keep `dropped` and list `review_candidate_ids`
+instead of summaries; batch updates group both per ID under `reconciliation`.
+`add --upsert-match` reports the same fields when it updates a strong match.
 
 Updates save the previous row automatically. Use [history and restore](/machine/history)
 to review or recover an accidental overwrite without a prior read.

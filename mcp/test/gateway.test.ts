@@ -65,6 +65,8 @@ const ROW = {
   memory_type: "decision",
   status: "active",
   certainty: "verified",
+  evidence: ["observed_implementation"],
+  validation_gaps: [],
 };
 
 const SCORED_ROW = {
@@ -171,6 +173,8 @@ describe("mcp gateway to api product routes", () => {
     const memory = toProductRow({
       ...FULL_ROW,
       refs: JSON.stringify(FULL_ROW.refs),
+      evidence: JSON.stringify(FULL_ROW.evidence),
+      validation_gaps: JSON.stringify(FULL_ROW.validation_gaps),
     });
     const client = await linkedClient({
       api: stubApi(

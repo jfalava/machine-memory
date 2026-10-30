@@ -3,7 +3,11 @@ import { Effect } from "effect";
 import { printJson, usageError } from "../../cli-utils";
 import type { JsonObject } from "../../json";
 import { requireDatabase, type CommandContext } from "../runtime/context";
-import { printBriefLines, printCommandOutput } from "../runtime/output";
+import {
+  evidenceSummary,
+  printBriefLines,
+  printCommandOutput,
+} from "../runtime/output";
 import {
   getMemoryById,
   normalizeCertaintyValue,
@@ -19,6 +23,7 @@ function minimalGetSummary(row: JsonObject): JsonObject {
     certainty: normalizeCertaintyValue(row.certainty),
     status: stringValue(row.status, "active"),
     tags: parseTags(stringValue(row.tags)),
+    ...evidenceSummary(row),
   } satisfies JsonObject;
 }
 

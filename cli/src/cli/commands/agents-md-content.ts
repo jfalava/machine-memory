@@ -15,6 +15,7 @@ const AGENTS_MD_BACKEND_CONTENT = {
     "Run `machine-memory doctor` during maintenance, not every task. Do not create or rely on a local `machine-memory.db` for this repository.",
     'Search policy: use `machine-memory query "<term>" --remote` for exact names, paths, commands, and identifiers; use `--semantic --remote` when the same concept may use different wording; use `--hybrid --remote` for broad investigation or when recall matters more than exact matching.',
     "When unsure, start with `--hybrid`; add `--explain-score` when ranking needs inspection. D1 records are canonical and Vectorize is only a retrieval index.",
+    "To read or write another repository's memories, pass `--repo owner/name` instead of changing directory; `add` and `import` refuse a repository with no memories unless `--allow-new-repo` is given. `machine-memory <command> --help` prints help for that command only.",
     "After adding or updating a memory, its Vectorize embedding is synchronized automatically. Run `machine-memory reindex --remote` only after provisioning, changing the embedding index or model, or repairing missing vectors.",
   ],
   mcp: [
@@ -23,7 +24,7 @@ const AGENTS_MD_BACKEND_CONTENT = {
     "Repository scope: every tool that reads or writes a specific repo requires an exact `owner/name` slug. There is no default. Reads are loose — a wrong slug returns empty/not-found and nothing is lost. Writes are strict: confirm the slug with `list_repositories` before every write; derive it from `git remote get-url origin` when it matches a known entry. Deletion is permanent.",
     'Search policy: `memory_suggest` with `{ repository, files }` for file-scoped lookup; `memory_query` with `mode: "keyword"` for exact names, paths, commands, and identifiers, `mode: "semantic"` when the same concept may use different wording, `mode: "hybrid"` (default) for broad investigation. Filter with `tags` (substring) / `status` / `memory_type` / `certainty` and cap with `limit` (default 8, max 50). For `memory_list` and `list_repositories`, follow `offset` pages while `has_more` is true. D1 records are canonical and Vectorize is only a retrieval index.',
     "Mutations (`memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many`) require an explicit repository and echo `written_to` or `deleted_from`. `memory_add` also echoes `potential_conflicts`. Use `memory_history` before `memory_restore`; pass its revision_id and current_update_count so a newer write cannot be overwritten. Deletion is permanent; prefer `memory_deprecate` when audit history should remain. Embeddings re-sync to Vectorize automatically on add/update/restore/deprecate; history snapshots are not embedded.",
-    "`memory_add` defaults to `memory_type: convention`, `certainty: inferred`, `status: active` — set them explicitly (`decision` / `reference` / `gotcha`; `verified` / `inferred`). `expires_after_days` is only valid for `status` memories. Prefer `memory_add` with `upsert_match` (strong matches update in place; weak matches refuse unless `force: true`) and `memory_update` with `match` over raw creates.",
+    "`memory_add` defaults to `memory_type: convention`, `certainty: inferred`, `status: active` — set them explicitly (`decision` / `reference` / `gotcha`; `verified` / `inferred`). `certainty: verified` requires a non-empty `evidence` array; `evidence` and `validation_gaps` are not embedded and do not count toward the size budget. `expires_after_days` is only valid for `status` memories. Prefer `memory_add` with `upsert_match` (strong matches update in place; weak matches refuse unless `force: true`) and `memory_update` with `match` over raw creates.",
   ],
 } satisfies Record<AgentsMemoryBackend, string[]>;
 
@@ -60,9 +61,12 @@ function agentsMdCheckpointSection(
   add: string,
   update: string,
   deprecate: string,
+  gather: string,
 ): string[] {
   return [
     "### End-of-task checkpoint (before the final response)",
+    "",
+    gather,
     "",
     "Collect every validated finding from the task, including child results and mechanisms discovered while investigating approaches that were later abandoned. A rejected remedy does not make the verified mechanism behind its failure disposable. Classify each finding:",
     "",
@@ -77,13 +81,13 @@ function agentsMdCheckpointSection(
 }
 
 const AGENTS_MD_CERTAINTY_STEP =
-  "Set certainty from evidence, not from how accurately a record describes the code. Kinds of evidence: explicit user requirement or preference, observed implementation behavior, verified technical mechanism, tested end-user behavior. Observing that the code does X establishes only that the implementation does X, not that X is intended or works on every platform. Use `verified` only for the dimension the evidence establishes, name that dimension, and record remaining gaps (unconfirmed intent, untested platforms) in the content or context.";
+  "Set certainty from evidence, not from how accurately a record describes the code. Record the kinds of evidence behind each claim: `user_requirement` (an explicit user requirement or preference), `observed_implementation` (what the code currently does), `verified_mechanism` (a confirmed technical mechanism), `tested_behavior` (end-user behavior exercised in tests or real use). Observing that the code does X establishes only `observed_implementation`, not that X is intended or works on every platform. `verified` is rejected without at least one evidence kind. Record remaining limits (unconfirmed intent, untested platforms) as validation gaps, and keep sources and versions in refs or context.";
 
 const AGENTS_MD_STATUS_STEP =
   "Durable mechanisms and decisions go in `decision`, `reference`, `gotcha`, `constraint`, or `preference` records. Implementation, delivery, and verification state goes in one `status` record that expires and is updated rather than duplicated. State exactly where work stands (local only, uncommitted, committed, pushed, deployed or active) and which verification remains; never describe local work as deployed. When a caveat leaves a durable record, keep it in a status record.";
 
 const AGENTS_MD_RECONCILE_STEP =
-  "Reconcile dependents. When a decision changes or is reversed, search for other active records that rely on the old premise and update or deprecate them. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it.";
+  "Reconcile dependents. When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return `review_candidates` (records sharing the old premise; strong ones name the same path or identifier): resolve each one, or confirm it still holds. Consolidate overlapping records instead of adding a partially redundant one; isolate a version-specific limitation in its own record and reference the existing workaround rather than repeating it.";
 
 function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
   return [
@@ -105,12 +109,12 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
     "",
     "1. Scan relevant context fast. Run exactly one focused `suggest`, `query`, or `list` command before code changes; repeat only if the touched paths or scope materially changes.",
     `2. Verify uncertain context before acting. Use \`machine-memory verify <id> "<inferred fact>" ${backendFlag}\` or \`machine-memory diff <id> "<proposed updated wording>" ${backendFlag}\` when an inference may conflict with existing memory.`,
-    `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.`,
+    `3. Maintain memory while implementing. Prefer \`machine-memory update --match "topic query" "new canonical content" ${backendFlag}\`; if no reliable match exists, use \`machine-memory add "..." --upsert-match "topic query" ${backendFlag}\`. Weak matches refuse to silently create: inspect with \`--dry-run\`, then pass \`--force\` if a new record is intended. An update replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats. \`update --dry-run\` and \`diff\` report \`dropped\` identifiers and sentences the new text would lose; keep each one or confirm it is obsolete.`,
     `4. ${AGENTS_MD_RECONCILE_STEP} Use \`machine-memory deprecate <id> --superseded-by <id> ${backendFlag}\` when a record is replaced.`,
     "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence.",
     "6. Use path-driven tags. Prefer `--path` and `tag-map`; use scoped tags such as `area:cli,topic:backend,kind:decision` when no mapping exists.",
     "7. Capture third-party quirks. Always add a `--type gotcha` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.",
-    `8. ${AGENTS_MD_CERTAINTY_STEP} Use \`--certainty\` and \`--context\`.`,
+    `8. ${AGENTS_MD_CERTAINTY_STEP} Use \`--certainty\`, \`--evidence <kinds>\` (comma-separated), \`--validation-gaps <text|json_array>\`, and \`--refs\` or \`--context\`. \`doctor\` lists legacy \`verified\` records without evidence as \`verified_without_evidence\`; review them instead of bulk-changing them.`,
     `9. Separate durable knowledge from delivery status. ${AGENTS_MD_STATUS_STEP} Set \`--expires-after-days\` on status records and review \`doctor\` suggestions semantically before applying deprecations or updates.`,
     "10. Run the end-of-task checkpoint below before the final response.",
     "",
@@ -120,6 +124,7 @@ function agentsMdCliWorkflow(backendFlag: "--local" | "--remote"): string[] {
       `\`machine-memory add ... ${backendFlag}\``,
       `\`machine-memory update ... ${backendFlag}\``,
       `\`machine-memory deprecate ... ${backendFlag}\``,
+      `Start with \`machine-memory checkpoint ${backendFlag} --json-min\`: it lists memories written since \`--since\` (default 12 hours), memories related to the touched files (default: the Git working-tree changes, else the last commit; override with \`--files\`), review flags such as \`verified_without_evidence\` and \`status_without_expiry\`, and the commands for each group below.`,
     ),
     "",
     "### Checklist (verify before proceeding)",
@@ -149,12 +154,12 @@ const AGENTS_MD_MCP_WORKFLOW = [
   "",
   "1. Scan relevant context fast. Run exactly one focused `memory_suggest`, `memory_query`, or `memory_list` before code changes; repeat only if the touched paths or scope materially changes.",
   "2. Verify uncertain context before acting. Use `memory_verify` with `{ repository, id, fact }` or `memory_diff` with `{ repository, id, content }` when an inference may conflict with existing memory.",
-  "3. Maintain memory while implementing. Prefer `memory_update` with `match` (or the exact `id`; only changed fields are needed); if no reliable match exists, use `memory_add` with `upsert_match`. Weak upsert matches refuse to silently create: inspect with `memory_get`, then pass `force: true` if a new record is intended. Call `memory_size` first when content may be long. A new `content` replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats.",
+  "3. Maintain memory while implementing. Prefer `memory_update` with `match` (or the exact `id`; only changed fields are needed); if no reliable match exists, use `memory_add` with `upsert_match`. Weak upsert matches refuse to silently create: inspect with `memory_get`, then pass `force: true` if a new record is intended. Call `memory_size` first when content may be long. A new `content` replaces the whole content: read the current record first and carry over unrelated valid details such as source paths, versions, and caveats. `memory_diff` and `memory_update` report `dropped` identifiers and sentences; keep each one or confirm it is obsolete.",
   `4. ${AGENTS_MD_RECONCILE_STEP} Use \`memory_deprecate\` with \`superseded_by\` when a record is replaced.`,
   "5. Write for retrieval. Put commands, API paths, file paths, keys, routes, thresholds, and exact feature keywords in the first sentence of `content`.",
   "6. Use path-driven tags. There is no tag-map tool — tags are free-form comma-separated text, so use scoped tags such as `area:cli,topic:backend,kind:decision`. Filter them with the `tags` parameter on query/list/suggest.",
   '7. Capture third-party quirks. Always add a `memory_type: "gotcha"` memory for surprising library or tool behavior, leading with the library name, version, behavior, and fix.',
-  `8. ${AGENTS_MD_CERTAINTY_STEP} Use the \`certainty\` and \`context\` fields.`,
+  `8. ${AGENTS_MD_CERTAINTY_STEP} Use the \`certainty\`, \`evidence\` (array of kinds), \`validation_gaps\` (array of strings), and \`context\` fields. \`memory_doctor\` lists legacy \`verified\` records without evidence as \`verified_without_evidence\`; review them instead of bulk-changing them.`,
   `9. Separate durable knowledge from delivery status. ${AGENTS_MD_STATUS_STEP} Set \`expires_after_days\` on status records. Use \`memory_doctor\` during maintenance and \`memory_gc\` to preview expired status memories. Prefer \`memory_deprecate\` over permanent deletion.`,
   "10. Run the end-of-task checkpoint below before the final response.",
   "",
@@ -164,6 +169,7 @@ const AGENTS_MD_MCP_WORKFLOW = [
     "`memory_add`",
     "`memory_update`",
     "`memory_deprecate`",
+    "Start by listing this task's writes with `memory_list` (newest first) and the memories related to the touched files with `memory_suggest`; check each write for missing evidence or status expiry.",
   ),
   "",
   "### Checklist (verify before proceeding)",

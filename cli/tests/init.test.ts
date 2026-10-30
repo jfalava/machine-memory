@@ -104,7 +104,13 @@ describe("init templates", () => {
         "A rejected remedy does not make the verified mechanism behind its failure disposable.",
       );
       expect(content).toContain("Set certainty from evidence");
-      expect(content).toContain("tested end-user behavior");
+      expect(content).toContain("end-user behavior exercised in tests");
+      expect(content).toContain(
+        "`verified` is rejected without at least one evidence kind",
+      );
+      expect(content).toContain("verified_without_evidence");
+      expect(content).toContain("review_candidates");
+      expect(content).toContain("dropped");
       expect(content).toContain("never describe local work as deployed");
       expect(content).toContain("Reconcile dependents.");
       expect(content).toContain("carry over unrelated valid details");

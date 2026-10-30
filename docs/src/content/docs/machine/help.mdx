@@ -17,3 +17,8 @@ as JSON. It does not access the database, so no backend flag is required.
 
 Use it when an agent needs to discover the current command surface rather than
 relying on a copied list of flags.
+
+For one command, run `machine-memory help <command>` or
+`machine-memory <command> --help`. Focused help returns only that command's
+usage and notes, plus the output fields, enums, and embedding budget relevant
+to it, and points at `machine-memory help` for the full catalog.
