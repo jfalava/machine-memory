@@ -113,8 +113,6 @@ import {
 import { VectorCoordinator } from "./vector-coordinator";
 import { parseEmbedding } from "./vector-sync";
 
-const INTERNAL_ERROR = "Internal server error.";
-
 function badRequest(error: string) {
   return HttpServerResponse.json(
     encodeResponse(ErrorBodySchema, { ok: false, error }),
@@ -192,6 +190,7 @@ export const createApiHandlers = ({
     Error,
     RuntimeContext
   >;
+  /** Runs after every handled request; must log its own failures and defects. */
   wake: Effect.Effect<void, never, RuntimeContext>;
 }) =>
   // oxlint-disable-next-line max-statements -- assemble route handlers over shared bindings
@@ -2203,22 +2202,16 @@ export const createApiHandlers = ({
       size: handleProductSize,
       "list-repositories": handleProductListRepositories,
     } satisfies Record<ProductRoute, RestHandlerFn>;
-    const wakeSafely = wake.pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError("Vector wake failed; cron will retry.", cause),
-      ),
-    );
     const handleProduct = (route: ProductRoute, body: JsonValue) =>
-      productHandlers[route](body).pipe(Effect.tap(() => wakeSafely));
+      productHandlers[route](body).pipe(Effect.tap(() => wake));
 
     const restHandlers = {
       expectedToken,
-      handleQuery: (body) =>
-        handleQuery(body).pipe(Effect.tap(() => wakeSafely)),
+      handleQuery: (body) => handleQuery(body).pipe(Effect.tap(() => wake)),
       handleMigration: (body) =>
-        handleMigration(body).pipe(Effect.tap(() => wakeSafely)),
+        handleMigration(body).pipe(Effect.tap(() => wake)),
       handleMigrationLinks: (body) =>
-        handleMigrationLinks(body).pipe(Effect.tap(() => wakeSafely)),
+        handleMigrationLinks(body).pipe(Effect.tap(() => wake)),
       handleVectorizeSearch,
       handleProduct,
     } satisfies RestHandlers;
@@ -2258,22 +2251,11 @@ export default Cloudflare.Worker<{}>()(
       wake,
     });
     return {
+      // handleRestRequest turns every failure and defect into a response.
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         return yield* handleRestRequest(restHandlers, request);
-      }).pipe(
-        Effect.catchCause(() =>
-          Effect.succeed(
-            HttpServerResponse.jsonUnsafe(
-              encodeResponse(ErrorBodySchema, {
-                ok: false,
-                error: INTERNAL_ERROR,
-              }),
-              { status: 500 },
-            ),
-          ),
-        ),
-      ),
+      }),
     };
   }).pipe(
     Effect.provide(
