@@ -26,7 +26,7 @@ describe("Effect application boundaries", () => {
   it("preserves the existing pure memory semantics", () => {
     expect(parseIdSpec("3,1,3")).toEqual([3, 1]);
     expect(
-      normalizeSqliteRow({ certainty: "hard", refs: '["docs/a.md"]' }),
+      normalizeSqliteRow({ certainty: "verified", refs: '["docs/a.md"]' }),
     ).toMatchObject({
       certainty: "verified",
       refs: ["docs/a.md"],

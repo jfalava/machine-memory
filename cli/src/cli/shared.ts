@@ -69,32 +69,7 @@ function isCertainty(value: string): value is Certainty {
 }
 
 export function canonicalizeCertainty(raw: string): Certainty | undefined {
-  if (isCertainty(raw)) {
-    return raw;
-  }
-  switch (raw) {
-    case "hard":
-      return "verified";
-    case "soft":
-      return "inferred";
-    case "uncertain":
-      return "speculative";
-    default:
-      return undefined;
-  }
-}
-
-function certaintyStorageVariants(certainty: Certainty): string[] {
-  switch (certainty) {
-    case "verified":
-      return ["verified", "hard"];
-    case "inferred":
-      return ["inferred", "soft"];
-    case "speculative":
-      return ["speculative", "uncertain"];
-    default:
-      return [certainty];
-  }
+  return isCertainty(raw) ? raw : undefined;
 }
 
 export function normalizeCertaintyValue(
@@ -722,16 +697,8 @@ function appendCertaintyFilter(
   certainty: Certainty,
   prefix: string,
 ) {
-  const variants = certaintyStorageVariants(certainty);
-  if (variants.length === 1) {
-    clauses.push(`${prefix}certainty = ?`);
-    params.push(variants[0] ?? certainty);
-    return;
-  }
-  clauses.push(`${prefix}certainty IN (${variants.map(() => "?").join(", ")})`);
-  for (const variant of variants) {
-    params.push(variant);
-  }
+  clauses.push(`${prefix}certainty = ?`);
+  params.push(certainty);
 }
 
 function appendStatusFilter(

@@ -125,7 +125,9 @@ function normalizeSourceRow(row: JsonValue, index: number): RemoteMigrationRow {
     stringValue(normalized.certainty, "inferred"),
   );
   if (!certainty) {
-    throw sourceError(`Source row ${sourceId} has invalid certainty.`);
+    throw sourceError(
+      `Source row ${sourceId} has invalid certainty. Legacy values (hard, soft, uncertain) are rewritten by running \`machine-memory migrate --local\` first.`,
+    );
   }
 
   const updateCount = sourceInteger(
