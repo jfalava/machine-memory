@@ -215,16 +215,5 @@ export function replaceMemoryBlock(
   if (blockPattern.test(content)) {
     return content.replace(blockPattern, managedContent);
   }
-  const legacyStart = content.indexOf("# Project memory");
-  if (legacyStart === 0) {
-    const prefix = content.slice(0, legacyStart).trimEnd();
-    return (prefix ? prefix.concat("\n\n") : "").concat(managedContent, "\n");
-  }
   return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${managedContent}\n`;
 }
-
-/** Marker pair used by the public init-mcp script and CLI init --mcp. */
-export const AGENTS_MD_MARKERS = {
-  start: MEMORY_BLOCK_START,
-  end: MEMORY_BLOCK_END,
-} as const;
