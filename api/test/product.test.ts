@@ -166,6 +166,7 @@ test("add and ID update encode successful writes without embedding or optional u
     content: "decision alpha",
     memory_type: "decision",
     certainty: "verified",
+    evidence: ["observed_implementation"],
   });
   expect(added.status).toBe(200);
   const updated = await product("update", {
@@ -186,6 +187,7 @@ test("history snapshots updates without vector work and restores with optimistic
     tags: "database",
     memory_type: "decision",
     certainty: "verified",
+    evidence: ["observed_implementation"],
   });
   const id = added.result.id;
   const updated = await product("update", {
@@ -566,6 +568,7 @@ test("strong upsert preserves omitted metadata and clears expiry on type convers
     content,
     memory_type: "status",
     certainty: "verified",
+    evidence: ["observed_implementation"],
     expires_after_days: 5,
   });
   const result = await product("add", {
@@ -616,6 +619,7 @@ test("semantic hydration applies canonical status, type, certainty and literal t
     tags: "tag_a%",
     memory_type: "decision",
     certainty: "verified",
+    evidence: ["observed_implementation"],
   });
   const wrong = await product("add", {
     content: "incorrect",
@@ -628,6 +632,7 @@ test("semantic hydration applies canonical status, type, certainty and literal t
     tags: "tag_a%",
     memory_type: "decision",
     certainty: "verified",
+    evidence: ["observed_implementation"],
   });
   await product("deprecate", { ids: [inactive.result.id] });
   query.mockImplementation(() =>
@@ -963,3 +968,111 @@ test.each([
     expect((await product("get", { id })).status).toBe(200);
   },
 );
+
+test("verified writes require evidence, and evidence survives update, history, and restore", async () => {
+  const bare = await product("add", {
+    content: "shortcuts fire only in focused forms",
+    certainty: "verified",
+  });
+  expect(bare.status).toBe(400);
+  expect(bare.error).toContain("requires at least one evidence kind");
+
+  const added = await product("add", {
+    content: "shortcuts fire only in focused forms",
+    memory_type: "decision",
+    certainty: "verified",
+    evidence: ["observed_implementation"],
+    validation_gaps: ["Safari untested"],
+  });
+  expect(added.status).toBe(200);
+  expect(added.result.memory).toMatchObject({
+    evidence: ["observed_implementation"],
+    validation_gaps: ["Safari untested"],
+  });
+  const id = added.result.id;
+  expect((await product("update", { id, evidence: [] })).status).toBe(400);
+  const updated = await product("update", {
+    id,
+    content: "shortcuts fire in focused forms on macOS",
+    evidence: ["observed_implementation", "tested_behavior"],
+  });
+  expect(updated.status).toBe(200);
+  expect(updated.result.memory.evidence).toEqual([
+    "observed_implementation",
+    "tested_behavior",
+  ]);
+  const history = await product("history", { id });
+  expect(history.result.results[0]).toMatchObject({
+    evidence: ["observed_implementation"],
+  });
+  const restored = await product("restore", {
+    id,
+    revision_id: history.result.results[0].revision_id,
+    expected_update_count: history.result.current_update_count,
+  });
+  expect(restored.status).toBe(200);
+  expect(restored.result.memory).toMatchObject({
+    content: "shortcuts fire only in focused forms",
+    evidence: ["observed_implementation"],
+    validation_gaps: ["Safari untested"],
+  });
+  const invalid = await db
+    .prepare("UPDATE memories SET evidence = ? WHERE id = ?")
+    .bind('["looks_right"]', id)
+    .run()
+    .catch((cause: unknown) => cause);
+  expect(String(invalid)).toContain("evidence must be a JSON array");
+});
+
+test("updates report dropped details and review candidates; deprecate reviews dependents", async () => {
+  const premise = await product("add", {
+    content: "Keep nixpkgs-security pinned in flake.nix.",
+    memory_type: "decision",
+  });
+  const dependent = await product("add", {
+    content: "Security updates wait for nixpkgs-security bumps.",
+    memory_type: "convention",
+  });
+  const diff = await product("diff", {
+    id: premise.result.id,
+    content: "Home Manager reimports nixpkgs.",
+  });
+  expect(diff.result.dropped).toEqual({
+    identifiers: ["nixpkgs-security", "flake.nix"],
+    sentences: ["Keep nixpkgs-security pinned in flake.nix."],
+  });
+  const updated = await product("update", {
+    id: premise.result.id,
+    content: "Home Manager reimports nixpkgs.",
+  });
+  expect(updated.status).toBe(200);
+  expect(updated.result.dropped.identifiers).toEqual([
+    "nixpkgs-security",
+    "flake.nix",
+  ]);
+  expect(updated.result.review_candidates).toEqual([
+    expect.objectContaining({ id: dependent.result.id }),
+  ]);
+  const deprecated = await product("deprecate", { ids: [dependent.result.id] });
+  expect(deprecated.status).toBe(200);
+  expect(deprecated.result).not.toHaveProperty("review_candidates");
+});
+
+test("doctor reports verified rows without evidence and overlapping gotchas", async () => {
+  const legacy = await insert("legacy verified claim");
+  await db
+    .prepare("UPDATE memories SET certainty = 'verified' WHERE id = ?")
+    .bind(legacy)
+    .run();
+  for (const content of [
+    "alchemy@2.0.0-beta.83 polls Durable Objects; patch lib/cloudflare/worker.js.",
+    "alchemy@2.0.0-beta.83 precreate needs the lib/cloudflare/worker.js patch.",
+  ]) {
+    await product("add", { content, memory_type: "gotcha" });
+  }
+  const doctor = await product("doctor");
+  expect(doctor.result.counts_by_kind).toMatchObject({
+    verified_without_evidence: 1,
+    gotcha_overlap: 1,
+  });
+});
