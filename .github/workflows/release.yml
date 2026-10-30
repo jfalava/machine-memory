@@ -82,7 +82,7 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           sed -i.bak "s/\"version\": \".*\"/\"version\": \"${TAG}\"/" cli/package.json
-          rm -f package.json.bak
+          rm -f cli/package.json.bak
 
       - name: Build target
         run: bun build --compile --target=${{ matrix.target }} cli/src/app.ts --outfile ${{ matrix.outfile }}
