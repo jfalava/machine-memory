@@ -29,6 +29,7 @@ import {
   generateCSRFProtection,
   isClientApproved,
   isAllowedGithubUserId,
+  NO_STORE_HEADERS,
   OAuthError,
   renderApprovalDialog,
   validateCSRFToken,
@@ -238,6 +239,41 @@ function requireOAuthHelpers(env: OAuthEnv): OAuthHelpers {
     throw new Error("OAuth provider helpers not initialized.");
   }
   return env.OAUTH_PROVIDER;
+}
+
+/**
+ * Parse GET /authorize. Invalid requests are client errors (RFC 6749
+ * §4.1.2.1): redirect them to the client only when the provider validated its
+ * redirect_uri, otherwise answer 400. Other failures propagate as 500s.
+ */
+// The provider's AuthorizationError, matched by shape: importing the class as a
+// value loads `cloudflare:workers`, which tests outside workerd cannot resolve.
+// redirectTo is set (to undefined when absent) only after redirect_uri is validated.
+const AuthorizationErrorSchema = Schema.Struct({
+  name: Schema.Literal("AuthorizationError"),
+  code: Schema.String,
+  description: Schema.String,
+  redirectTo: Schema.optional(Schema.String),
+});
+
+async function parseAuthorizeRequest(
+  request: Request,
+  env: OAuthEnv,
+): Promise<AuthRequest | Response> {
+  try {
+    return await requireOAuthHelpers(env).parseAuthRequest(request);
+  } catch (error) {
+    if (!Schema.is(AuthorizationErrorSchema)(error)) {
+      throw error;
+    }
+    if (error.redirectTo !== undefined) {
+      return new Response(null, {
+        status: 302,
+        headers: { ...NO_STORE_HEADERS, Location: error.redirectTo },
+      });
+    }
+    return new OAuthError(error.code, error.description, 400).toResponse();
+  }
 }
 
 async function authorizeRequest(
@@ -485,11 +521,10 @@ export const githubHandler: ExportedHandler<OAuthEnv> = {
         : authorizeRequest(request, env, activation);
     }
     if (isAuthorize && isGet) {
-      return authorizeRequest(
-        request,
-        env,
-        await requireOAuthHelpers(env).parseAuthRequest(request),
-      );
+      const parsed = await parseAuthorizeRequest(request, env);
+      return parsed instanceof Response
+        ? parsed
+        : authorizeRequest(request, env, parsed);
     }
     if (isAuthorize && isPost) {
       return handleAuthorizePost(request, env);
