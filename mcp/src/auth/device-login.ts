@@ -3,6 +3,7 @@ import type {
   OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 
+import { MCP_SCOPES } from "../mcp/types";
 import {
   DEVICE_POLL_INTERVAL_SECONDS,
   DEVICE_STATE_PREFIX,
@@ -12,7 +13,9 @@ import {
   storeDeviceLogin,
 } from "./device-store";
 import {
+  AUTHORIZE_ENDPOINT,
   generateCSRFProtection,
+  NO_STORE_HEADERS,
   sanitizeText,
   validateCSRFToken,
   OAuthError,
@@ -22,7 +25,7 @@ export const ACTIVATE_PATH = "/activate";
 export const DEVICE_START_PATH = "/device/start";
 export const DEVICE_POLL_PATH = "/device/poll";
 
-const NO_STORE = { "Cache-Control": "no-store", Pragma: "no-cache" };
+const SUPPORTED_SCOPES = Object.values<string>(MCP_SCOPES);
 // 32 symbols, so each random byte maps without modulo bias.
 const USER_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -42,10 +45,7 @@ function oauthError(
   description: string,
   status = 400,
 ): Response {
-  return Response.json(
-    { error, error_description: description },
-    { status, headers: NO_STORE },
-  );
+  return new OAuthError(error, description, status).toResponse();
 }
 
 async function readForm(request: Request): Promise<FormData | Response> {
@@ -93,16 +93,16 @@ async function deviceAuthRequest(
       401,
     );
   }
-  const scope = formValue(form, "scope") || "mcp:read mcp:write";
+  const scope = formValue(form, "scope") || SUPPORTED_SCOPES.join(" ");
   if (
     scope
       .split(" ")
       .filter(Boolean)
-      .some((item) => item !== "mcp:read" && item !== "mcp:write")
+      .some((item) => !SUPPORTED_SCOPES.includes(item))
   ) {
     return oauthError("invalid_scope", "Unsupported scope.");
   }
-  const url = new URL("/authorize", request.url);
+  const url = new URL(AUTHORIZE_ENDPOINT, request.url);
   url.search = new URLSearchParams({
     client_id: clientId,
     redirect_uri: formValue(form, "redirect_uri"),
@@ -155,7 +155,7 @@ export async function startDeviceLogin(
       expires_in: DEVICE_TTL_SECONDS,
       interval: DEVICE_POLL_INTERVAL_SECONDS,
     },
-    { headers: NO_STORE },
+    { headers: NO_STORE_HEADERS },
   );
 }
 
@@ -163,7 +163,7 @@ function htmlResponse(body: string, status = 200): Response {
   return new Response(body, {
     status,
     headers: {
-      ...NO_STORE,
+      ...NO_STORE_HEADERS,
       "Content-Security-Policy":
         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
       "Content-Type": "text/html; charset=utf-8",
@@ -269,5 +269,5 @@ export async function pollDeviceLogin(
   const result = await readDevicePoll(db, deviceCode, clientId);
   const status =
     "error" in result ? (result.error === "server_error" ? 500 : 400) : 200;
-  return Response.json(result, { status, headers: NO_STORE });
+  return Response.json(result, { status, headers: NO_STORE_HEADERS });
 }

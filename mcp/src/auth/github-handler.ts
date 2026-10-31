@@ -21,6 +21,7 @@ import {
 } from "./device-store";
 import type { OAuthEnv } from "./oauth-provider";
 import {
+  AUTHORIZE_ENDPOINT,
   AuthRequestSchema,
   addApprovedClient,
   bindStateToSession,
@@ -65,21 +66,31 @@ function upstreamAuthorizeUrl(params: {
   return upstream.href;
 }
 
-async function exchangeGithubCode(params: {
-  client_id: string;
-  client_secret: string;
-  code: string | undefined;
-  redirect_uri: string;
-}): Promise<[string, null] | [null, Response]> {
-  if (params.code === undefined || params.code === "") {
-    return [null, new Response("Missing code", { status: 400 })];
+type GithubUser = {
+  id: number;
+  login: string;
+  name: string;
+  email: string;
+};
+
+/**
+ * Exchange the callback code for a GitHub access token and user. Failures
+ * become the browser-facing Response; details are logged, never echoed.
+ */
+async function exchangeCodeForUser(
+  request: Request,
+  env: OAuthEnv,
+): Promise<Response | { accessToken: string; user: GithubUser }> {
+  const code = new URL(request.url).searchParams.get("code");
+  if (code === null || code === "") {
+    return new Response("Missing code", { status: 400 });
   }
   const resp = await fetch(GITHUB_TOKEN_URL, {
     body: new URLSearchParams({
-      client_id: params.client_id,
-      client_secret: params.client_secret,
-      code: params.code,
-      redirect_uri: params.redirect_uri,
+      client_id: env.MACHINE_MEMORY_GITHUB_CLIENT_ID,
+      client_secret: env.MACHINE_MEMORY_GITHUB_CLIENT_SECRET,
+      code,
+      redirect_uri: new URL("/callback", request.url).href,
     }).toString(),
     headers: {
       Accept: "application/json",
@@ -90,10 +101,7 @@ async function exchangeGithubCode(params: {
   });
   if (!resp.ok) {
     console.error(await resp.text());
-    return [
-      null,
-      new Response("Failed to fetch access token", { status: 500 }),
-    ];
+    return new Response("Failed to fetch access token", { status: 500 });
   }
   const tokenResponse = await parseGithubTokenResponse(resp);
   if (tokenResponse.accessToken === null) {
@@ -107,12 +115,17 @@ async function exchangeGithubCode(params: {
       errorDescription: tokenResponse.errorDescription,
       status: resp.status,
     });
-    return [
-      null,
-      new Response(`GitHub token exchange failed: ${detail}`, { status: 400 }),
-    ];
+    return new Response(`GitHub token exchange failed: ${detail}`, {
+      status: 400,
+    });
   }
-  return [tokenResponse.accessToken, null];
+  const { accessToken } = tokenResponse;
+  try {
+    return { accessToken, user: await fetchGithubUser(accessToken) };
+  } catch (error) {
+    console.error("GitHub user fetch error:", error);
+    return new Response("Failed to fetch GitHub user info.", { status: 500 });
+  }
 }
 
 const GithubTokenResponseSchema = Schema.Struct({
@@ -168,12 +181,7 @@ const GitHubUserSchema = Schema.Struct({
   email: Schema.NullOr(Schema.String),
 });
 
-async function fetchGithubUser(accessToken: string): Promise<{
-  id: number;
-  login: string;
-  name: string;
-  email: string;
-}> {
+async function fetchGithubUser(accessToken: string): Promise<GithubUser> {
   const resp = await fetch(GITHUB_USER_URL, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -202,15 +210,16 @@ async function fetchGithubUser(accessToken: string): Promise<{
   }
 }
 
-function redirectToGithub(
+/** Store the auth request, bind it to this browser, and redirect to GitHub. */
+async function redirectToGithub(
   request: Request,
   env: OAuthEnv,
-  stateToken: string,
-  headers: Record<string, string> = {},
-): Response {
-  return new Response(null, {
+  oauthReqInfo: AuthRequest,
+): Promise<Response> {
+  const { stateToken } = await createOAuthState(oauthReqInfo, env.OAUTH_KV);
+  const { setCookie } = await bindStateToSession(stateToken);
+  const response = new Response(null, {
     headers: {
-      ...headers,
       location: upstreamAuthorizeUrl({
         client_id: env.MACHINE_MEMORY_GITHUB_CLIENT_ID,
         redirect_uri: new URL("/callback", request.url).href,
@@ -220,6 +229,8 @@ function redirectToGithub(
     },
     status: 302,
   });
+  response.headers.append("Set-Cookie", setCookie);
+  return response;
 }
 
 function requireOAuthHelpers(env: OAuthEnv): OAuthHelpers {
@@ -227,30 +238,6 @@ function requireOAuthHelpers(env: OAuthEnv): OAuthHelpers {
     throw new Error("OAuth provider helpers not initialized.");
   }
   return env.OAUTH_PROVIDER;
-}
-
-function redirectToGithubFromState(
-  request: Request,
-  env: OAuthEnv,
-  oauthReqInfo: AuthRequest,
-  _clientId: string,
-): Promise<Response> {
-  return createOAuthState(oauthReqInfo, env.OAUTH_KV).then(({ stateToken }) =>
-    bindStateToSession(stateToken).then(({ setCookie }) =>
-      redirectToGithub(request, env, stateToken, {
-        "Set-Cookie": setCookie,
-      }),
-    ),
-  );
-}
-
-async function handleAuthorizeGet(
-  request: Request,
-  env: OAuthEnv,
-): Promise<Response> {
-  const helpers = requireOAuthHelpers(env);
-  const oauthReqInfo = await helpers.parseAuthRequest(request);
-  return authorizeRequest(request, env, oauthReqInfo);
 }
 
 async function authorizeRequest(
@@ -271,12 +258,12 @@ async function authorizeRequest(
       env.MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY,
     )
   ) {
-    return redirectToGithubFromState(request, env, oauthReqInfo, clientId);
+    return redirectToGithub(request, env, oauthReqInfo);
   }
 
   const { token: csrfToken, setCookie } = generateCSRFProtection();
 
-  return renderApprovalDialog(request, {
+  return renderApprovalDialog({
     client: await helpers.lookupClient(clientId),
     csrfToken,
     server: {
@@ -321,50 +308,15 @@ async function handleAuthorizePost(
       env.MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY,
     );
 
-    const { stateToken } = await createOAuthState(oauthReqInfo, env.OAUTH_KV);
-    const { setCookie: sessionBindingCookie } =
-      await bindStateToSession(stateToken);
-
-    const response = redirectToGithub(request, env, stateToken);
+    const response = await redirectToGithub(request, env, oauthReqInfo);
     response.headers.append("Set-Cookie", approvedClientCookie);
-    response.headers.append("Set-Cookie", sessionBindingCookie);
     return response;
   } catch (error) {
     console.error("POST /authorize error:", error);
     if (error instanceof OAuthError) {
       return error.toResponse();
     }
-    return new Response(
-      `Internal server error: ${error instanceof Error ? error.message : "unknown"}`,
-      { status: 500 },
-    );
-  }
-}
-
-async function fetchOrError(
-  accessToken: string,
-): Promise<
-  { id: number; login: string; name: string; email: string } | Response
-> {
-  try {
-    return await fetchGithubUser(accessToken);
-  } catch (error) {
-    const detail =
-      error instanceof Error
-        ? `${error.name}: ${error.message}${
-            error.cause === undefined
-              ? ""
-              : ` (cause: ${
-                  error.cause instanceof Error
-                    ? `${error.cause.name}: ${error.cause.message}`
-                    : JSON.stringify(error.cause)
-                })`
-          }`
-        : String(error);
-    console.error("GitHub user fetch error:", detail);
-    return new Response(`Failed to fetch GitHub user info: ${detail}`, {
-      status: 500,
-    });
+    return new Response("Internal server error", { status: 500 });
   }
 }
 
@@ -380,35 +332,6 @@ async function resolveOAuthState(
     }
     return new Response("Internal server error", { status: 500 });
   }
-}
-
-async function exchangeCodeForUser(
-  request: Request,
-  env: OAuthEnv,
-): Promise<
-  | {
-      kind: "ok";
-      accessToken: string;
-      user: { id: number; login: string; name: string; email: string };
-    }
-  | { kind: "error"; response: Response }
-> {
-  const url = new URL(request.url);
-  const redirectUri = new URL("/callback", request.url).href;
-  const [accessToken, errResponse] = await exchangeGithubCode({
-    client_id: env.MACHINE_MEMORY_GITHUB_CLIENT_ID,
-    client_secret: env.MACHINE_MEMORY_GITHUB_CLIENT_SECRET,
-    code: url.searchParams.get("code") ?? undefined,
-    redirect_uri: redirectUri,
-  });
-  if (errResponse !== null) {
-    return { kind: "error", response: errResponse };
-  }
-  const userOrError = await fetchOrError(accessToken);
-  if (userOrError instanceof Response) {
-    return { kind: "error", response: userOrError };
-  }
-  return { kind: "ok", accessToken, user: userOrError };
 }
 
 async function handleCallback(
@@ -431,8 +354,8 @@ async function handleCallback(
     return new Response("Sign-in was denied.", { status: 403 });
   }
   const exchanged = await exchangeCodeForUser(request, env);
-  if (exchanged.kind === "error") {
-    return exchanged.response;
+  if (exchanged instanceof Response) {
+    return exchanged;
   }
   const { accessToken, user } = exchanged;
 
@@ -468,7 +391,7 @@ async function denyDeviceLogin(
 async function respondToCompletedGrant(
   env: OAuthEnv,
   request: AuthRequest,
-  user: { id: number; login: string; name: string; email: string },
+  user: GithubUser,
   accessToken: string,
 ): Promise<Response> {
   const device = request.state.startsWith(DEVICE_STATE_PREFIX);
@@ -511,7 +434,7 @@ async function respondToCompletedGrant(
 function completeGrant(
   helpers: OAuthHelpers,
   oauthReqInfo: AuthRequest,
-  user: { id: number; login: string; name: string; email: string },
+  user: GithubUser,
   accessToken: string,
 ): Promise<string> {
   return helpers
@@ -539,7 +462,7 @@ export const githubHandler: ExportedHandler<OAuthEnv> = {
     const url = new URL(request.url);
     const isGet = request.method === "GET";
     const isPost = request.method === "POST";
-    const isAuthorize = url.pathname === "/authorize";
+    const isAuthorize = url.pathname === AUTHORIZE_ENDPOINT;
     const isCallback = url.pathname === "/callback";
 
     if (url.pathname === DEVICE_START_PATH) {
@@ -562,7 +485,11 @@ export const githubHandler: ExportedHandler<OAuthEnv> = {
         : authorizeRequest(request, env, activation);
     }
     if (isAuthorize && isGet) {
-      return handleAuthorizeGet(request, env);
+      return authorizeRequest(
+        request,
+        env,
+        await requireOAuthHelpers(env).parseAuthRequest(request),
+      );
     }
     if (isAuthorize && isPost) {
       return handleAuthorizePost(request, env);

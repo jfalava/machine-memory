@@ -16,6 +16,15 @@ export const AuthRequestSchema = Schema.Struct({
   issuer: Schema.optional(Schema.String),
 });
 
+/** OAuth responses carry codes or grant state and must never be cached. */
+export const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store",
+  Pragma: "no-cache",
+};
+
+/** Path of the consent page; the provider and device flow redirect here. */
+export const AUTHORIZE_ENDPOINT = "/authorize";
+
 /**
  * OAuth 2.1 compliant error class with standardized error codes and
  * descriptions.
@@ -38,7 +47,7 @@ export class OAuthError extends Error {
       }),
       {
         status: this.statusCode,
-        headers: { "Content-Type": "application/json" },
+        headers: { ...NO_STORE_HEADERS, "Content-Type": "application/json" },
       },
     );
   }
@@ -98,6 +107,25 @@ const APPROVED_CLIENTS_COOKIE_NAME = "__Host-APPROVED_CLIENTS";
 const THIRTY_DAYS_IN_SECONDS = 2592000;
 const STATE_TTL_SECONDS = 600;
 
+function cookie(name: string, value: string, maxAge: number): string {
+  return `${name}=${value}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=${maxAge}`;
+}
+
+function readCookie(request: Request, name: string): string | null {
+  const prefix = `${name}=`;
+  const match = (request.headers.get("Cookie") ?? "")
+    .split(";")
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(prefix));
+  return match === undefined ? null : match.substring(prefix.length);
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 type CSRFProtection = {
   readonly token: string;
   readonly setCookie: string;
@@ -107,15 +135,11 @@ type CSRFValidation = {
   readonly clearCookie: string;
 };
 
-function csrfCookieValue(value: string): string {
-  return `${CSRF_COOKIE_NAME}=${value}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`;
-}
-
 export function generateCSRFProtection(): CSRFProtection {
   const token = crypto.randomUUID();
   return {
     token,
-    setCookie: csrfCookieValue(token),
+    setCookie: cookie(CSRF_COOKIE_NAME, token, STATE_TTL_SECONDS),
   };
 }
 
@@ -132,12 +156,7 @@ export function validateCSRFToken(
     );
   }
 
-  const cookieHeader = request.headers.get("Cookie") ?? "";
-  const cookies = cookieHeader.split(";").map((c) => c.trim());
-  const csrfCookie = cookies.find((c) => c.startsWith(`${CSRF_COOKIE_NAME}=`));
-  const tokenFromCookie = csrfCookie
-    ? csrfCookie.substring(CSRF_COOKIE_NAME.length + 1)
-    : null;
+  const tokenFromCookie = readCookie(request, CSRF_COOKIE_NAME);
 
   if (tokenFromCookie === null || tokenFromCookie === "") {
     throw new OAuthError("invalid_request", "Missing CSRF token cookie", 400);
@@ -147,8 +166,7 @@ export function validateCSRFToken(
     throw new OAuthError("invalid_request", "CSRF token mismatch", 400);
   }
 
-  const clearCookie = `${CSRF_COOKIE_NAME}=; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=0`;
-  return { clearCookie };
+  return { clearCookie: cookie(CSRF_COOKIE_NAME, "", 0) };
 }
 
 type OAuthState = {
@@ -162,11 +180,10 @@ type SessionBinding = {
 export async function createOAuthState(
   oauthReqInfo: AuthRequest,
   kv: KVNamespace,
-  stateTTL = STATE_TTL_SECONDS,
 ): Promise<OAuthState> {
   const stateToken = crypto.randomUUID();
   await kv.put(`oauth:state:${stateToken}`, JSON.stringify(oauthReqInfo), {
-    expirationTtl: stateTTL,
+    expirationTtl: STATE_TTL_SECONDS,
   });
   return { stateToken };
 }
@@ -175,8 +192,9 @@ export async function bindStateToSession(
   stateToken: string,
 ): Promise<SessionBinding> {
   const hashHex = await sha256Hex(stateToken);
-  const setCookie = `${CONSENTED_STATE_COOKIE_NAME}=${hashHex}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`;
-  return { setCookie };
+  return {
+    setCookie: cookie(CONSENTED_STATE_COOKIE_NAME, hashHex, STATE_TTL_SECONDS),
+  };
 }
 
 type ValidatedState = {
@@ -184,32 +202,16 @@ type ValidatedState = {
   readonly clearCookie: string;
 };
 
+const decodeStoredState = Schema.decodeUnknownSync(
+  Schema.fromJsonString(AuthRequestSchema),
+);
+
 function parseStoredState(value: string): AuthRequest {
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(value);
+    return decodeStoredState(value);
   } catch {
     throw new OAuthError("server_error", "Invalid state data", 500);
   }
-  // SAFETY: the payload was written to KV by this Worker's authorize step and its
-  // state hash was verified above; consumers read AuthRequest fields only.
-  return Schema.decodeUnknownSync(Schema.Any)(parsed) as AuthRequest;
-}
-
-function sessionStateHash(request: Request): string | null {
-  const cookieHeader = request.headers.get("Cookie") ?? "";
-  const cookies = cookieHeader.split(";").map((c) => c.trim());
-  const consentedStateCookie = cookies.find((c) =>
-    c.startsWith(`${CONSENTED_STATE_COOKIE_NAME}=`),
-  );
-  if (consentedStateCookie === undefined) {
-    return null;
-  }
-  return consentedStateCookie.substring(CONSENTED_STATE_COOKIE_NAME.length + 1);
-}
-
-function clearSessionCookie(): string {
-  return `${CONSENTED_STATE_COOKIE_NAME}=; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=0`;
 }
 
 export async function validateOAuthState(
@@ -227,7 +229,7 @@ export async function validateOAuthState(
     throw new OAuthError("invalid_request", "Invalid or expired state", 400);
   }
 
-  const consentedStateHash = sessionStateHash(request);
+  const consentedStateHash = readCookie(request, CONSENTED_STATE_COOKIE_NAME);
   if (consentedStateHash === null || consentedStateHash === "") {
     throw new OAuthError(
       "invalid_request",
@@ -247,7 +249,10 @@ export async function validateOAuthState(
 
   const oauthReqInfo = parseStoredState(storedDataJson);
   await kv.delete(`oauth:state:${stateFromQuery}`);
-  return { oauthReqInfo, clearCookie: clearSessionCookie() };
+  return {
+    oauthReqInfo,
+    clearCookie: cookie(CONSENTED_STATE_COOKIE_NAME, "", 0),
+  };
 }
 
 export async function isClientApproved(
@@ -275,43 +280,22 @@ export async function addApprovedClient(
 
   const payload = JSON.stringify(updatedApprovedClients);
   const signature = await signData(payload, cookieSecret);
-  const cookieValue = `${signature}.${btoa(payload)}`;
-
-  return `${APPROVED_CLIENTS_COOKIE_NAME}=${cookieValue}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=${THIRTY_DAYS_IN_SECONDS}`;
-}
-
-function approvedClientsFromCookie(request: Request): string | null {
-  const cookieHeader = request.headers.get("Cookie");
-  if (cookieHeader === null) {
-    return null;
-  }
-  const cookies = cookieHeader.split(";").map((c) => c.trim());
-  const targetCookie = cookies.find((c) =>
-    c.startsWith(`${APPROVED_CLIENTS_COOKIE_NAME}=`),
+  return cookie(
+    APPROVED_CLIENTS_COOKIE_NAME,
+    `${signature}.${btoa(payload)}`,
+    THIRTY_DAYS_IN_SECONDS,
   );
-  if (targetCookie === undefined) {
-    return null;
-  }
-  return targetCookie.substring(APPROVED_CLIENTS_COOKIE_NAME.length + 1);
 }
 
-const ApprovedClientsSchema = Schema.mutable(Schema.Array(Schema.String));
-
-function parseApprovedClients(payload: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    throw new Error("Invalid approved clients payload.");
-  }
-  return [...Schema.decodeUnknownSync(ApprovedClientsSchema)(parsed)];
-}
+const decodeApprovedClients = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.mutable(Schema.Array(Schema.String))),
+);
 
 async function getApprovedClientsFromCookie(
   request: Request,
   cookieSecret: string,
 ): Promise<string[] | null> {
-  const cookieValue = approvedClientsFromCookie(request);
+  const cookieValue = readCookie(request, APPROVED_CLIENTS_COOKIE_NAME);
   if (cookieValue === null) {
     return null;
   }
@@ -329,7 +313,7 @@ async function getApprovedClientsFromCookie(
     return null;
   }
   try {
-    return parseApprovedClients(payload);
+    return decodeApprovedClients(payload);
   } catch {
     return null;
   }
@@ -341,9 +325,7 @@ export async function sha256Hex(value: string): Promise<string> {
     "SHA-256",
     encoder.encode(value),
   );
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return toHex(hashBuffer);
 }
 
 async function importKey(secret: string): Promise<CryptoKey> {
@@ -368,9 +350,7 @@ async function signData(data: string, secret: string): Promise<string> {
     key,
     enc.encode(data),
   );
-  return Array.from(new Uint8Array(signatureBuffer))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return toHex(signatureBuffer);
 }
 
 async function verifySignature(
@@ -401,7 +381,6 @@ export interface ApprovalDialogOptions {
   client: ClientInfo | null;
   server: {
     name: string;
-    logo?: string;
     description?: string;
   };
   state: { oauthReqInfo: AuthRequest };
@@ -487,7 +466,6 @@ function approvalPage(options: ApprovalDialogOptions): string {
   const serverDescription = server.description
     ? sanitizeText(server.description)
     : "";
-  const logoUrl = server.logo ? sanitizeText(sanitizeUrl(server.logo)) : "";
   const encodedState = btoa(JSON.stringify(state));
 
   return `<!DOCTYPE html>
@@ -503,7 +481,6 @@ function approvalPage(options: ApprovalDialogOptions): string {
           .precard { padding: 2rem; text-align: center; }
           .card { background-color: #fff; border-radius: 8px; box-shadow: 0 8px 36px 8px rgba(0,0,0,0.1); padding: 2rem; }
           .header { display: flex; align-items: center; justify-content: center; margin-bottom: 1.5rem; }
-          .logo { width: 48px; height: 48px; margin-right: 1rem; border-radius: 8px; object-fit: contain; }
           .title { margin: 0; font-size: 1.3rem; font-weight: 400; }
           .description { color: #555; }
           .client-info { border: 1px solid var(--border-color); border-radius: 6px; padding: 1rem 1rem 0.5rem; margin-bottom: 1.5rem; }
@@ -521,7 +498,6 @@ function approvalPage(options: ApprovalDialogOptions): string {
         <div class="container">
           <div class="precard">
             <div class="header">
-              ${logoUrl ? `<img src="${logoUrl}" alt="${serverName} Logo" class="logo">` : ""}
               <h1 class="title"><strong>${serverName}</strong></h1>
             </div>
             ${serverDescription ? `<p class="description">${serverDescription}</p>` : ""}
@@ -532,7 +508,7 @@ function approvalPage(options: ApprovalDialogOptions): string {
               ${clientDetailRows(options)}
             </div>
             <p>This MCP Client is requesting to be authorized on ${serverName}. If you approve, you will be redirected to complete authentication.</p>
-            <form method="post" action="/authorize">
+            <form method="post" action="${AUTHORIZE_ENDPOINT}">
               <input type="hidden" name="state" value="${encodedState}">
               <input type="hidden" name="csrf_token" value="${csrfToken}">
               <div class="actions">
@@ -546,10 +522,7 @@ function approvalPage(options: ApprovalDialogOptions): string {
     </html>`;
 }
 
-export function renderApprovalDialog(
-  request: Request,
-  options: ApprovalDialogOptions,
-): Response {
+export function renderApprovalDialog(options: ApprovalDialogOptions): Response {
   return new Response(approvalPage(options), {
     headers: {
       "Content-Security-Policy": "frame-ancestors 'none'",
