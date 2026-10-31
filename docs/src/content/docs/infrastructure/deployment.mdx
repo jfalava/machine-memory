@@ -91,7 +91,9 @@ Copy [`machine-memory.deploy.example.json`](https://github.com/jfalava/machine-m
 
 `remote provision` does not create or rotate the bearer token and does not overwrite CLI keychain credentials. After deployment, configure a new CLI installation separately with `machine-memory remote setup --url <router-url> --token <value-from-secrets-store>`.
 
-**Precedence:** CLI flags → config file → `MACHINE_MEMORY_*` env → saved remote credentials → defaults.
+**Precedence:** CLI flags → `MACHINE_MEMORY_*` env → config file → defaults. The stack, database, and API names check saved remote credentials after env and before the config file.
+
+A `--config` path that does not exist stops provisioning with `Deploy config not found at <path>.` A `MACHINE_MEMORY_DEPLOY_CONFIG` path that does not exist prints a warning and continues with environment variables and defaults. Without either, `remote provision` reads `machine-memory.deploy.json` from the current directory if it exists.
 
 | Option / file field    | Environment variable               | Default                    |
 | ---------------------- | ---------------------------------- | -------------------------- |

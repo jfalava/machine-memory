@@ -14,6 +14,9 @@ machine-memory query "Cloudflare Worker Vectorize" --semantic --remote
 machine-memory query "Cloudflare Worker Vectorize" --hybrid --explain-score --remote
 ```
 
+`<search-term>` is required. Running `query` with only flags prints a usage
+error.
+
 `query` tokenizes the search term, scopes results to the current repository, and
 returns active memories by default. The default mode uses the D1 full-text
 index.
