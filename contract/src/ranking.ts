@@ -1,3 +1,4 @@
+import { SEARCH_LIMIT_MAX } from "./literals";
 import type { FactCheckResult } from "./product/results";
 
 /**
@@ -187,4 +188,39 @@ export function deriveFileNeighborhood(
     pathHints,
     terms: extractTerms([...tagHints, ...pathHints].join(" ")),
   };
+}
+
+/** Full-text candidates scored per search before tiering and limiting. */
+export const FTS_CANDIDATE_LIMIT = 100;
+/** Neighborhood (same directory or tag) candidates fetched for suggest. */
+export const SUGGEST_NEIGHBORHOOD_LIMIT = 30;
+/** Score added to a memory that sits in a suggested file's neighborhood. */
+export const SUGGEST_NEIGHBORHOOD_BOOST = 12;
+
+/**
+ * Vectorize candidates for semantic and hybrid search. Matches that fail the
+ * tag or status filters are dropped afterwards, so fetch more than the limit.
+ */
+export function semanticCandidateCount(limit: number): number {
+  return Math.min(limit * 3, SEARCH_LIMIT_MAX);
+}
+
+/**
+ * Merges suggest's full-text rows with its neighborhood rows. A neighborhood
+ * row scores its own score plus the boost, keeping the higher score when the
+ * memory was also a full-text hit. Sorted by score; callers tier by match
+ * strength before applying a limit.
+ */
+export function mergeSuggestCandidates<
+  T extends { readonly id: number; readonly score: number },
+>(primary: readonly T[], secondary: readonly T[]): T[] {
+  const byId = new Map<number, T>(primary.map((row) => [row.id, row]));
+  for (const row of secondary) {
+    const boosted = Number((row.score + SUGGEST_NEIGHBORHOOD_BOOST).toFixed(3));
+    const existing = byId.get(row.id);
+    if (existing === undefined || boosted > existing.score) {
+      byId.set(row.id, { ...(existing ?? row), score: boosted });
+    }
+  }
+  return [...byId.values()].sort((left, right) => right.score - left.score);
 }

@@ -5,7 +5,9 @@ import {
   buildFtsQuery,
   certaintyPoints,
   extractTerms,
+  mergeSuggestCandidates,
   normalizeSuggestPath,
+  SUGGEST_NEIGHBORHOOD_LIMIT,
   reciprocalRankScore,
   RRF_K,
   sqliteDateToMs,
@@ -971,7 +973,7 @@ export function queryNeighborhoodMatches(
   database: MemoryDatabaseApi,
   neighborhood: FileNeighborhood,
   filters: CommonFilters,
-  limit = 30,
+  limit = SUGGEST_NEIGHBORHOOD_LIMIT,
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const orClauses: string[] = [];
   const params: (string | number)[] = [];
@@ -1010,39 +1012,27 @@ export function queryNeighborhoodMatches(
     .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, neighborhood.terms)));
 }
 
+/** Wraps contract's suggest merge; a boosted row's score breakdown no longer adds up. */
 export function mergeSuggestionResults(
   primary: JsonObject[],
   secondary: JsonObject[],
 ): JsonObject[] {
-  const byId = new Map<number, JsonObject>();
-  for (const row of primary) {
-    byId.set(Number(row.id), row);
-  }
-  for (const row of secondary) {
-    const id = Number(row.id);
-    const existing = byId.get(id);
-    if (!existing) {
-      const boosted = {
-        ...row,
-        score: Number((Number(row.score ?? 0) + 12).toFixed(3)),
-      };
-      if ("score_breakdown" in boosted) {
-        delete boosted.score_breakdown;
+  const scored = (rows: JsonObject[]) =>
+    rows.map((row) => ({
+      id: Number(row.id),
+      score: Number(row.score ?? 0),
+      row,
+    }));
+  return mergeSuggestCandidates(scored(primary), scored(secondary)).map(
+    ({ score, row }) => {
+      if (score === Number(row.score ?? 0)) {
+        return row;
       }
-      byId.set(id, boosted);
-      continue;
-    }
-    const existingScore = Number(existing.score ?? 0);
-    const nextScore = Math.max(existingScore, Number(row.score ?? 0) + 12);
-    const merged = { ...existing, score: Number(nextScore.toFixed(3)) };
-    if (nextScore !== existingScore && "score_breakdown" in merged) {
+      const merged: JsonObject = { ...row, score };
       delete merged.score_breakdown;
-    }
-    byId.set(id, merged);
-  }
-  return [...byId.values()]
-    .sort((left, right) => Number(right.score) - Number(left.score))
-    .slice(0, 20);
+      return merged;
+    },
+  );
 }
 
 export function findStatusCascadeCandidates(

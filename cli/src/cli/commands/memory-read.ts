@@ -1,4 +1,5 @@
 import {
+  FTS_CANDIDATE_LIMIT,
   SEARCH_LIMIT_MAX,
   buildFtsQuery,
   deriveFileNeighborhood,
@@ -6,6 +7,7 @@ import {
   extractQueryIdentifiers,
   extractTerms,
   fileIdentifiers,
+  semanticCandidateCount,
   type FileNeighborhood,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
@@ -64,9 +66,6 @@ type SuggestSnapshot = {
 };
 
 type SweepSource = "suggest" | "query" | "list";
-
-/** Candidates gathered per suggest source before tiering by match strength. */
-const SUGGEST_CANDIDATE_POOL = 20;
 
 function explainScoreEnabled(args: string[]): boolean {
   return hasFlag(args, "--explain-score");
@@ -234,29 +233,19 @@ export function fetchQueryResults(
 function fetchSemanticCandidates(
   commandCtx: CommandContext,
   term: string,
-  options: {
-    limit: number;
-    topKMultiplier: number;
-    minimumTopK?: number;
-  },
+  limit: number,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const database = requireDatabase(commandCtx);
   const vectorize = database.vectorize;
   if (!vectorize) {
     usageError("Semantic search requires the remote backend: query --remote.");
   }
-  if (options.limit > SEARCH_LIMIT_MAX) {
+  if (limit > SEARCH_LIMIT_MAX) {
     usageError(
       `--limit must be an integer between 1 and ${SEARCH_LIMIT_MAX} for semantic and hybrid search.`,
     );
   }
-  const topK = Math.min(
-    SEARCH_LIMIT_MAX,
-    Math.max(
-      options.limit * options.topKMultiplier,
-      options.minimumTopK ?? options.limit,
-    ),
-  );
+  const topK = semanticCandidateCount(limit);
 
   const filters = parseCommonFilters(commandCtx.args);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
@@ -335,10 +324,7 @@ function fetchSemanticResults(
   options: FetchResultsOptions,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const limit = options.limit ?? 8;
-  return fetchSemanticCandidates(commandCtx, term, {
-    limit,
-    topKMultiplier: 3,
-  }).pipe(
+  return fetchSemanticCandidates(commandCtx, term, limit).pipe(
     Effect.map((result) => ({
       ...result,
       results: orderRowsByMatchStrength(
@@ -358,13 +344,9 @@ function fetchHybridResults(
     [
       fetchQueryResults(commandCtx, term, {
         explainScore: options.explainScore,
-        limit: 100,
+        limit: FTS_CANDIDATE_LIMIT,
       }),
-      fetchSemanticCandidates(commandCtx, term, {
-        limit,
-        topKMultiplier: 4,
-        minimumTopK: 12,
-      }),
+      fetchSemanticCandidates(commandCtx, term, limit),
     ],
     { concurrency: "unbounded" },
   ).pipe(
@@ -505,7 +487,7 @@ function fetchFtsSuggestResults(
        JOIN memories_fts ON m.id = memories_fts.rowid
        WHERE ${ftsClauses.join(" AND ")}
        ORDER BY bm25(memories_fts)
-       LIMIT 100`,
+       LIMIT ${FTS_CANDIDATE_LIMIT}`,
       ftsParams,
     )
     .pipe(
@@ -514,7 +496,7 @@ function fetchFtsSuggestResults(
           explainScore: options.explainScore,
           identifiers: fileIdentifiers(snapshot.files),
           scope: "files",
-        }).slice(0, options.limit ?? 8),
+        }),
       ),
     );
 }
@@ -526,17 +508,16 @@ export function collectSuggestResults(
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   return Effect.gen(function* () {
     const limit = options.limit ?? 8;
-    const candidateLimit = Math.max(SUGGEST_CANDIDATE_POOL, limit);
     const neighborhoodResults = yield* queryNeighborhoodMatches(
       requireDatabase(commandCtx),
       snapshot.neighborhood,
       snapshot.filters,
-      candidateLimit,
     );
-    const ftsResults = yield* fetchFtsSuggestResults(commandCtx, snapshot, {
-      ...options,
-      limit: candidateLimit,
-    });
+    const ftsResults = yield* fetchFtsSuggestResults(
+      commandCtx,
+      snapshot,
+      options,
+    );
     return orderRowsByMatchStrength(
       annotateMatches(
         mergeSuggestionResults(ftsResults, neighborhoodResults),

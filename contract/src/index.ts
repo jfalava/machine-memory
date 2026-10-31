@@ -113,7 +113,12 @@ export {
   type MatchScope,
 } from "./search";
 export {
+  FTS_CANDIDATE_LIMIT,
   RRF_K,
+  SUGGEST_NEIGHBORHOOD_BOOST,
+  SUGGEST_NEIGHBORHOOD_LIMIT,
+  mergeSuggestCandidates,
+  semanticCandidateCount,
   buildFtsQuery,
   compareMemoryFact,
   deriveFileNeighborhood,

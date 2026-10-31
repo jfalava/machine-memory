@@ -1,8 +1,9 @@
-import type {
-  Certainty,
-  EvidenceKind,
-  MemoryStatus,
-  MemoryType,
+import {
+  SUGGEST_NEIGHBORHOOD_LIMIT,
+  type Certainty,
+  type EvidenceKind,
+  type MemoryStatus,
+  type MemoryType,
 } from "@machine-memory/contract";
 
 export type ProductFilters = {
@@ -172,6 +173,8 @@ export function neighborhoodSelect(
     orParams.push(lowered);
     orClauses.push("INSTR(LOWER(m.context), ?) > 0");
     orParams.push(lowered);
+    orClauses.push("INSTR(LOWER(m.refs), ?) > 0");
+    orParams.push(lowered);
   }
   if (orClauses.length === 0) {
     return undefined;
@@ -192,7 +195,7 @@ function neighborhoodWhere(
       ? [...clauses, extra.sql].join(" AND ")
       : clauses.join(" AND ");
   return {
-    sql: `SELECT m.*, 0 AS fts_rank FROM memories m WHERE ${where} ORDER BY m.updated_at DESC, m.id DESC LIMIT 30`,
+    sql: `SELECT m.*, 0 AS fts_rank FROM memories m WHERE ${where} ORDER BY m.updated_at DESC, m.id DESC LIMIT ${SUGGEST_NEIGHBORHOOD_LIMIT}`,
     params: [...params, ...extra.params],
   };
 }

@@ -1,6 +1,5 @@
 import {
   PRODUCT_OPERATIONS,
-  SEARCH_LIMIT_MAX,
   VectorizeSearchResultSchema,
   type ProductRoute,
   type MemoryType,
@@ -45,6 +44,9 @@ import {
   QuerySuccessSchema,
   StoredMemoryRowSchema,
   UPSERT_MIN_SIMILARITY,
+  FTS_CANDIDATE_LIMIT,
+  mergeSuggestCandidates,
+  semanticCandidateCount,
   analyzeMemoryDoctor,
   buildFtsQuery,
   compareMemoryFact,
@@ -1032,7 +1034,7 @@ export const createApiHandlers = ({
           ftsQuery,
           repository,
           filters,
-          100,
+          FTS_CANDIDATE_LIMIT,
         );
         return scoreMemoryRows(rows, match)
           .slice(0, limit)
@@ -1210,7 +1212,7 @@ export const createApiHandlers = ({
       tags?: string;
     }) =>
       Effect.gen(function* () {
-        const topK = Math.min(args.limit * 3, SEARCH_LIMIT_MAX);
+        const topK = semanticCandidateCount(args.limit);
         const results = yield* fetchSemanticScored(
           args.repository,
           args.query,
@@ -1259,13 +1261,13 @@ export const createApiHandlers = ({
                   certainty: args.certainty,
                   tags: args.tags,
                 },
-                100,
+                FTS_CANDIDATE_LIMIT,
                 match,
               );
         const semantic = yield* fetchSemanticScored(
           args.repository,
           args.query,
-          args.limit,
+          semanticCandidateCount(args.limit),
           {
             status: args.status,
             memory_type: args.memory_type,
@@ -1372,7 +1374,7 @@ export const createApiHandlers = ({
                 ftsQuery,
                 args.repository,
                 filters,
-                100,
+                FTS_CANDIDATE_LIMIT,
               );
         const neighborhoodRows = yield* fetchSuggestNeighborhood(
           args.repository,
@@ -1410,7 +1412,9 @@ export const createApiHandlers = ({
         };
         const primary = scoreMemoryRows(input.ftsRows, match);
         const secondary = scoreMemoryRows(input.neighborhoodRows, match);
-        const results = mergeSuggestScored(primary, secondary)
+        const results = orderByMatchStrength(
+          mergeSuggestCandidates(primary, secondary),
+        )
           .slice(0, input.limit)
           .map(scoredResultRow);
         return yield* HttpServerResponse.json(
@@ -1431,33 +1435,6 @@ export const createApiHandlers = ({
           }),
         );
       });
-
-    const mergeSuggestScored = (
-      primary: ReturnType<typeof scoreMemoryRows>,
-      secondary: ReturnType<typeof scoreMemoryRows>,
-    ) => {
-      const byId = new Map<number, (typeof primary)[number]>();
-      for (const row of primary) {
-        byId.set(row.id, row);
-      }
-      for (const row of secondary) {
-        const existing = byId.get(row.id);
-        if (!existing) {
-          byId.set(row.id, {
-            ...row,
-            score: Number((row.score + 12).toFixed(3)),
-          });
-          continue;
-        }
-        byId.set(row.id, {
-          ...existing,
-          score: Number(Math.max(existing.score, row.score + 12).toFixed(3)),
-        });
-      }
-      return orderByMatchStrength(
-        [...byId.values()].sort((left, right) => right.score - left.score),
-      );
-    };
 
     const insertProductRow = (input: InsertInput) =>
       Effect.gen(function* () {
