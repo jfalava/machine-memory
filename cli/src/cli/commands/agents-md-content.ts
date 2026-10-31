@@ -1,3 +1,6 @@
+import { Effect } from "effect";
+import type { FileSystem } from "effect/FileSystem";
+
 const MEMORY_BLOCK_START = "<!-- machine-memory:start -->";
 const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
 
@@ -216,4 +219,21 @@ export function replaceMemoryBlock(
     return content.replace(blockPattern, managedContent);
   }
   return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${managedContent}\n`;
+}
+
+/** Reads the AGENTS.md at `path` (empty when missing) and writes it back with the managed block replaced. */
+export function writeMemoryBlock(
+  fileSystem: FileSystem,
+  path: string,
+  backend: AgentsMemoryBackend,
+) {
+  return Effect.gen(function* () {
+    const existingContent = (yield* fileSystem.exists(path))
+      ? new TextDecoder().decode(yield* fileSystem.readFile(path))
+      : "";
+    yield* fileSystem.writeFile(
+      path,
+      new TextEncoder().encode(replaceMemoryBlock(existingContent, backend)),
+    );
+  });
 }

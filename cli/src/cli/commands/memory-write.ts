@@ -5,6 +5,8 @@ import {
   hasDroppedDetails,
   type EvidenceKind,
   compareMemoryFact,
+  UPSERT_DEFAULT_MIN_SCORE,
+  UPSERT_MIN_SIMILARITY,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
@@ -42,17 +44,17 @@ import {
   measureEmbeddingFit,
 } from "../features/memory/size-report";
 import {
-  ADD_FLAGS_WITH_VALUES,
   ADD_USAGE,
-  DEPRECATE_FLAGS_WITH_VALUES,
   DEPRECATE_USAGE,
-  UPDATE_FLAGS_WITH_VALUES,
   UPDATE_USAGE,
 } from "../features/memory/usage";
 import { requireDatabase, type CommandContext } from "../runtime/context";
-import { minimalResultSummary, printCommandOutput } from "../runtime/output";
 import {
-  collectPositionalArgs,
+  contentSnippet,
+  minimalResultSummary,
+  printCommandOutput,
+} from "../runtime/output";
+import {
   detectPotentialConflicts,
   assertWritableRepository,
   findMemoryByMatch,
@@ -72,18 +74,16 @@ import {
   stringValue,
 } from "../shared";
 
-const UPSERT_MIN_SIMILARITY = 0.62;
-const UPSERT_MIN_SCORE = 32;
 const UPSERT_MIN_SCORE_ENV = "MACHINE_MEMORY_UPSERT_MIN_SCORE";
 
 function defaultUpsertMinScore(): number {
   const raw = process.env[UPSERT_MIN_SCORE_ENV];
   if (raw === undefined) {
-    return UPSERT_MIN_SCORE;
+    return UPSERT_DEFAULT_MIN_SCORE;
   }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
-    return UPSERT_MIN_SCORE;
+    return UPSERT_DEFAULT_MIN_SCORE;
   }
   return Math.min(100, Math.max(0, parsed));
 }
@@ -370,10 +370,10 @@ function assertAddEvidence(metadata: AddMetadata, existing?: JsonObject) {
 
 function resolveAddContent(
   args: string[],
+  positionals: string[],
   fileSystem: CommandContext["fileSystem"],
 ): Effect.Effect<string, unknown> {
-  const positional = collectPositionalArgs(args, ADD_FLAGS_WITH_VALUES);
-  const contentFromArg = positional[0];
+  const contentFromArg = positionals[0];
   return parseContentFromFileFlag(args, fileSystem).pipe(
     Effect.map((contentFromFile) => {
       if (contentFromArg && contentFromFile !== undefined) {
@@ -447,7 +447,7 @@ function isStrongUpsertMatch(
   matched: JsonObject,
   content: string,
   metadata: AddMetadata,
-  minScore: number = UPSERT_MIN_SCORE,
+  minScore: number = UPSERT_DEFAULT_MIN_SCORE,
 ): boolean {
   const matchedText = [
     stringValue(matched.content),
@@ -458,13 +458,6 @@ function isStrongUpsertMatch(
   const similarity = compareMemoryFact(matchedText, incomingText).similarity;
   const score = Number(matched.score ?? 0);
   return similarity >= UPSERT_MIN_SIMILARITY && score >= minScore;
-}
-
-function contentHead(text: string, maxChars = 120): string {
-  const flattened = text.replace(/\s+/g, " ").trim();
-  return flattened.length > maxChars
-    ? `${flattened.slice(0, maxChars)}…`
-    : flattened;
 }
 
 function upsertMatchInfo(
@@ -487,7 +480,8 @@ function upsertMatchInfo(
       ) / 1000,
     memory_type: stringValue(matched.memory_type, "convention"),
     status: stringValue(matched.status, "active"),
-    content_head: contentHead(stringValue(matched.content)),
+    // 120 characters plus the ellipsis.
+    content_head: contentSnippet(matched.content, 121),
   };
 }
 
@@ -1112,7 +1106,11 @@ export function handleAddCommand(commandCtx: CommandContext) {
     const { args, outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
     yield* assertWritableRepository(database, "add");
-    const content = yield* resolveAddContent(args, commandCtx.fileSystem);
+    const content = yield* resolveAddContent(
+      args,
+      commandCtx.positionals,
+      commandCtx.fileSystem,
+    );
     const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
     const tokenReportEnabled = hasFlag(args, "--token-report");
     if (
@@ -1156,9 +1154,9 @@ export function handleAddCommand(commandCtx: CommandContext) {
 
 function resolveUpdateTargets(
   args: string[],
+  positional: string[],
   database: MemoryDatabaseApi,
 ): Effect.Effect<UpdateTargets, MemoryDatabaseError> {
-  const positional = collectPositionalArgs(args, UPDATE_FLAGS_WITH_VALUES);
   const matchQuery = getFlagValue(args, "--match");
 
   if (matchQuery !== undefined) {
@@ -1529,6 +1527,7 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
     const database = requireDatabase(commandCtx);
     const { targetIds, contentFromArg } = yield* resolveUpdateTargets(
       args,
+      commandCtx.positionals,
       database,
     );
     const content = yield* resolveUpdateContent(
@@ -1598,9 +1597,9 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
 
 function resolveDeprecateTargets(
   args: string[],
+  positional: string[],
   database: MemoryDatabaseApi,
 ): Effect.Effect<number[], MemoryDatabaseError> {
-  const positional = collectPositionalArgs(args, DEPRECATE_FLAGS_WITH_VALUES);
   const matchQuery = getFlagValue(args, "--match");
 
   if (matchQuery !== undefined) {
@@ -1716,7 +1715,11 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const targetIds = yield* resolveDeprecateTargets(args, database);
+    const targetIds = yield* resolveDeprecateTargets(
+      args,
+      commandCtx.positionals,
+      database,
+    );
     const { sets, params } = deprecateSetsAndParams(args, targetIds);
     const supersededBy = parseIntegerFlag(args, "--superseded-by");
     if (

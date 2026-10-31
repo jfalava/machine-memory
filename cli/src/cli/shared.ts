@@ -3,6 +3,7 @@ import { resolve, relative, sep } from "node:path";
 import {
   assessMatch,
   buildFtsQuery,
+  CLI_LIMIT_MAX,
   certaintyPoints,
   extractTerms,
   mergeSuggestCandidates,
@@ -22,7 +23,7 @@ import {
   recencyPoints,
   REVIEW_CANDIDATES_LIMIT,
   reviewsDependents,
-  SEARCH_SCORE_WEIGHTS,
+  SEARCH_LIMIT_DEFAULT,
   tagMatchPoints,
   termCoveragePoints,
   updateCountPoints,
@@ -55,6 +56,7 @@ import {
   jsonString,
   jsonStringArray,
   parseJson,
+  storedStringArray,
   type JsonObject,
   type JsonValue,
 } from "../json";
@@ -161,13 +163,16 @@ export function parseIntegerFlag(
   return parsed;
 }
 
-export function parseResultLimit(args: string[], fallback = 8): number {
+export function parseResultLimit(
+  args: string[],
+  fallback = SEARCH_LIMIT_DEFAULT,
+): number {
   const parsed = parseIntegerFlag(args, "--limit");
   if (parsed === undefined || parsed === null) {
     return fallback;
   }
-  if (parsed < 1 || parsed > 100) {
-    usageError("--limit must be an integer between 1 and 100");
+  if (parsed < 1 || parsed > CLI_LIMIT_MAX) {
+    usageError(`--limit must be an integer between 1 and ${CLI_LIMIT_MAX}`);
   }
   return parsed;
 }
@@ -237,29 +242,6 @@ export function mergeTagValues(
   return merged.join(",");
 }
 
-export function collectPositionalArgs(
-  args: string[],
-  flagsWithValues: readonly string[],
-): string[] {
-  const flags = new Set(flagsWithValues);
-  const positional: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const token = args[i];
-    if (token === undefined) {
-      continue;
-    }
-    if (flags.has(token)) {
-      i += 1;
-      continue;
-    }
-    if (token.startsWith("--")) {
-      continue;
-    }
-    positional.push(token);
-  }
-  return positional;
-}
-
 export function parseContentFromFileFlag(
   args: string[],
   fileSystem: FileSystem,
@@ -301,7 +283,7 @@ export function stringValue(
 
 export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
   const next = jsonObject(row) ?? {};
-  next.refs = parseStoredRefs(next.refs);
+  next.refs = storedStringArray(next.refs);
   next.certainty = normalizeCertaintyValue(next.certainty);
   next.evidence = parseStoredEvidence(next.evidence);
   next.validation_gaps = parseStoredValidationGaps(next.validation_gaps);
@@ -319,24 +301,6 @@ export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
   }
   return next;
 }
-
-export function parseStoredRefs(value: JsonValue | undefined): string[] {
-  const array = jsonStringArray(value);
-  if (array !== undefined) {
-    return array;
-  }
-  const raw = jsonString(value);
-  if (raw === undefined || raw.trim() === "") {
-    return [];
-  }
-  try {
-    return jsonStringArray(parseJson(raw)) ?? [];
-  } catch {
-    return [];
-  }
-}
-
-export const SCORE_COMPONENT_WEIGHTS = SEARCH_SCORE_WEIGHTS;
 
 /** Reported as `score_weights` for `query --hybrid --explain-score`. */
 export const HYBRID_FUSION = {
@@ -380,7 +344,7 @@ export function assessRowMatch(
       stringValue(row.content),
       stringValue(row.tags),
       stringValue(row.context),
-      ...parseStoredRefs(row.refs),
+      ...storedStringArray(row.refs),
     ]),
     semanticScore,
     scope: query.scope,

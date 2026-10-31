@@ -8,8 +8,8 @@ import { getMemoryById, stringValue } from "../shared";
 
 export function handleDiffCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const idRaw = commandCtx.args[0];
-    const fact = commandCtx.args.slice(1).join(" ").trim();
+    const idRaw = commandCtx.positionals[0];
+    const fact = commandCtx.positionals.slice(1).join(" ").trim();
     if (!idRaw || !fact) {
       usageError("Usage: diff <id> <new_content>");
     }

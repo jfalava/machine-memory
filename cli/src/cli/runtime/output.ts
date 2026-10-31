@@ -81,10 +81,13 @@ function formatBriefMemoryLine(row: JsonObject): string {
 const SNIPPET_MAX_CHARS = 140;
 
 /** Content head for triage in minimal output, so relevance can be judged without a full get. */
-export function contentSnippet(content: JsonValue | undefined): string {
+export function contentSnippet(
+  content: JsonValue | undefined,
+  maxChars = SNIPPET_MAX_CHARS,
+): string {
   const flattened = stringValue(content).replace(/\s+/g, " ").trim();
-  return flattened.length > SNIPPET_MAX_CHARS
-    ? `${flattened.slice(0, SNIPPET_MAX_CHARS - 1)}…`
+  return flattened.length > maxChars
+    ? `${flattened.slice(0, maxChars - 1)}…`
     : flattened;
 }
 

@@ -13,7 +13,7 @@ import {
 import { CommandError } from "../../effect/errors";
 import type { CommandContext } from "../runtime/context";
 import {
-  replaceMemoryBlock,
+  writeMemoryBlock,
   type AgentsMemoryBackend,
 } from "./agents-md-content";
 import { remoteProvision, remoteSetup } from "./remote";
@@ -30,15 +30,7 @@ export function handleInitCommand(commandCtx: CommandContext) {
       };
       yield* offerFirstRunSetup(commandCtx, agentsExists, backendFlags);
     }
-    const existingContent = agentsExists
-      ? new TextDecoder().decode(
-          yield* commandCtx.fileSystem.readFile(agentsMdPath),
-        )
-      : "";
-    yield* commandCtx.fileSystem.writeFile(
-      agentsMdPath,
-      new TextEncoder().encode(replaceMemoryBlock(existingContent, backend)),
-    );
+    yield* writeMemoryBlock(commandCtx.fileSystem, agentsMdPath, backend);
     yield* Effect.sync(() => {
       const action = agentsExists ? "Updated" : "Created";
       const displayPath = relative(process.cwd(), agentsMdPath) || "AGENTS.md";

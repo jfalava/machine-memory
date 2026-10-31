@@ -1,6 +1,7 @@
 import {
   FTS_CANDIDATE_LIMIT,
   SEARCH_LIMIT_MAX,
+  SEARCH_SCORE_WEIGHTS,
   buildFtsQuery,
   deriveFileNeighborhood,
   extractPathTerms,
@@ -20,7 +21,6 @@ import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import {
   HYBRID_FUSION,
-  SCORE_COMPONENT_WEIGHTS,
   annotateMatches,
   applySqlFilters,
   combineHybridResults,
@@ -367,7 +367,7 @@ function fetchHybridResults(
 export function handleQueryCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { args } = commandCtx;
-    const term = args[0];
+    const term = commandCtx.positionals[0];
     if (!term) {
       usageError("Usage: query <search_term>");
     }
@@ -402,7 +402,7 @@ export function handleQueryCommand(commandCtx: CommandContext) {
           ? HYBRID_FUSION
           : semantic
             ? undefined
-            : SCORE_COMPONENT_WEIGHTS,
+            : SEARCH_SCORE_WEIGHTS,
         wrapResults: explainScore,
       });
     });
@@ -538,9 +538,7 @@ function printSuggestResults(
     printJson(
       minimalScoredPayload(results, {
         jsonMin: outputMode.jsonMin,
-        scoreWeights: options.explainScore
-          ? SCORE_COMPONENT_WEIGHTS
-          : undefined,
+        scoreWeights: options.explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
       }),
     );
     return;
@@ -563,7 +561,7 @@ function printSuggestResults(
     results,
   } satisfies JsonObject;
   if (options.explainScore) {
-    Object.assign(output, { score_weights: SCORE_COMPONENT_WEIGHTS });
+    Object.assign(output, { score_weights: SEARCH_SCORE_WEIGHTS });
   }
   printCommandOutput(commandCtx, output);
 }
@@ -752,7 +750,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         printJson(
           minimalScoredPayload(results, {
             jsonMin: outputMode.jsonMin,
-            scoreWeights: explainScore ? SCORE_COMPONENT_WEIGHTS : undefined,
+            scoreWeights: explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
             summarize: (row) => ({
               ...minimalScoredResultSummary(row),
               sources: row.sources ?? [],
@@ -776,7 +774,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         results,
       } satisfies JsonObject;
       if (explainScore) {
-        Object.assign(output, { score_weights: SCORE_COMPONENT_WEIGHTS });
+        Object.assign(output, { score_weights: SEARCH_SCORE_WEIGHTS });
       }
       printCommandOutput(commandCtx, output);
     });

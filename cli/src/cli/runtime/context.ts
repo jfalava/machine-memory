@@ -1,10 +1,14 @@
 import type { FileSystem } from "effect/FileSystem";
+
 import type { MemoryDatabaseApi } from "../../effect/database";
 import { CommandError } from "../../effect/errors";
 import type { OutputMode } from "./output";
 
 export type CommandContext = {
+  /** Flags re-serialized as argv; read with getFlagValue/hasFlag. */
   args: string[];
+  /** Positional arguments, in order. */
+  positionals: string[];
   command: string;
   outputMode: OutputMode;
   database: MemoryDatabaseApi | undefined;

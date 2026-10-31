@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+
 import { usageError } from "../../cli-utils";
 import {
   deletePathTagMapEntry,
@@ -7,9 +8,9 @@ import {
   suggestTagsForPath,
   upsertPathTagMapEntry,
 } from "../../path-tags";
-import { parseTags } from "../shared";
 import type { CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import { parseTags } from "../shared";
 
 type TagMapEffect = Effect.Effect<void, unknown, never>;
 
@@ -90,7 +91,7 @@ function suggestTagMap(
 }
 
 export function handleTagMapCommand(context: CommandContext): TagMapEffect {
-  const [action, first, second] = context.args;
+  const [action, first, second] = context.positionals;
   const handlers = new Map<string, () => TagMapEffect>([
     ["list", () => listTagMap(context)],
     ["set", () => setTagMap(context, first, second)],

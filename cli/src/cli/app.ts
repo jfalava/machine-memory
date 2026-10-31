@@ -58,14 +58,20 @@ const HUMAN_COMMANDS = new Set([
   "local export",
 ]);
 
-const formatter: CliOutput.Formatter = {
-  formatHelpDoc: () => JSON.stringify(helpPayload()),
-  formatVersion: (_name, version) => JSON.stringify({ version }),
-  formatCliError: (error) => JSON.stringify({ error: error.message }),
-  formatError: (error) => JSON.stringify({ error: error.message }),
-  formatErrors: (errors) =>
-    JSON.stringify({ error: errors.map((error) => error.message).join("\n") }),
-};
+function jsonFormatter(formatHelpDoc: () => string): CliOutput.Formatter {
+  return {
+    formatHelpDoc,
+    formatVersion: (_name, version) => JSON.stringify({ version }),
+    formatCliError: (error) => JSON.stringify({ error: error.message }),
+    formatError: (error) => JSON.stringify({ error: error.message }),
+    formatErrors: (errors) =>
+      JSON.stringify({
+        error: errors.map((error) => error.message).join("\n"),
+      }),
+  };
+}
+
+const formatter = jsonFormatter(() => JSON.stringify(helpPayload()));
 
 type RepositoryFlags = {
   readonly args: string[];
@@ -156,10 +162,7 @@ function formatterFor(
   if (!command || !HUMAN_COMMANDS.has(command)) {
     // `<command> --help` describes that command only, not the whole catalog.
     if (!pretty) {
-      return {
-        ...formatter,
-        formatHelpDoc: () => JSON.stringify(commandHelpPayload(command)),
-      };
+      return jsonFormatter(() => JSON.stringify(commandHelpPayload(command)));
     }
     return {
       formatHelpDoc: () => renderPretty("help", commandHelpPayload(command)),
@@ -320,9 +323,7 @@ export function runCli(rawArgs: ReadonlyArray<string>) {
   const command = unknownCommand(args);
   const commandPathName = commandPath(args);
   const pretty = prettyRequested(args);
-  const errorCommand =
-    commandPathName ??
-    (removePrettyFlag(args)[0] === "reindex" ? "reindex" : undefined);
+
   if (command) {
     return Effect.sync(() => {
       if (pretty) {
@@ -354,7 +355,7 @@ export function runCli(rawArgs: ReadonlyArray<string>) {
         const error = Cause.squash(cause);
         const failure =
           error instanceof Error ? error : new Error("Unexpected CLI failure.");
-        renderError(failure, errorCommand, pretty);
+        renderError(failure, commandPathName, pretty);
         if (
           !(
             CliError.isCliError(error) &&

@@ -91,6 +91,7 @@ describe("remote setup with a locked keychain", () => {
           "--token",
           "secret-token",
         ],
+        positionals: [],
         command: "setup",
         outputMode: {
           brief: false,

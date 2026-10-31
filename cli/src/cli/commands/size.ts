@@ -1,20 +1,20 @@
 import { Effect } from "effect";
+
 import { getFlagValue } from "../../cli-utils";
 import { commandError } from "../../effect/errors";
-import {
-  collectPositionalArgs,
-  parseContentFromFileFlag,
-  requireCertainty,
-  requireMemoryType,
-} from "../shared";
 import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
-import type { CommandContext } from "../runtime/context";
-import { printCommandOutput } from "../runtime/output";
 import {
   embeddingSizeReport,
   measureEmbeddingFit,
 } from "../features/memory/size-report";
-import { SIZE_FLAGS_WITH_VALUES, SIZE_USAGE } from "../features/memory/usage";
+import { SIZE_USAGE } from "../features/memory/usage";
+import type { CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
+import {
+  parseContentFromFileFlag,
+  requireCertainty,
+  requireMemoryType,
+} from "../shared";
 
 /**
  * Preflights the embedding budget for a prospective memory without touching
@@ -26,8 +26,7 @@ export function handleSizeCommand(commandCtx: CommandContext) {
     const { args } = commandCtx;
     const fail = (message: string) =>
       Effect.fail(commandError("size", message, undefined));
-    const positional = collectPositionalArgs(args, SIZE_FLAGS_WITH_VALUES);
-    const contentFromArg = positional[0];
+    const contentFromArg = commandCtx.positionals[0];
     const contentFromFile = yield* parseContentFromFileFlag(
       args,
       commandCtx.fileSystem,

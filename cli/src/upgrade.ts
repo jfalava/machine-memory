@@ -219,16 +219,18 @@ function fetchLatestRelease(
   });
 }
 
+function unsupportedPlatformError(): UpgradeError {
+  return new UpgradeError({
+    error: `Unsupported upgrade platform: ${process.platform}/${process.arch}`,
+  });
+}
+
 function selectAsset(
   release: Release,
 ): Effect.Effect<ReleaseAsset, UpgradeError> {
   const assetName = platformAssetName();
   if (!assetName) {
-    return Effect.fail(
-      new UpgradeError({
-        error: `Unsupported upgrade platform: ${process.platform}/${process.arch}`,
-      }),
-    );
+    return Effect.fail(unsupportedPlatformError());
   }
   const asset = release.assets.find(
     (candidate) => candidate.name === assetName,
@@ -552,11 +554,7 @@ function downloadToTemp(
     yield* verifyArchiveChecksum(archive, release, asset);
     const expectedBinary = binaryNameForPlatform(process.platform);
     if (!expectedBinary) {
-      return yield* Effect.fail(
-        new UpgradeError({
-          error: `Unsupported upgrade platform: ${process.platform}/${process.arch}`,
-        }),
-      );
+      return yield* Effect.fail(unsupportedPlatformError());
     }
     const binary = yield* promiseEffect("Archive extraction failed", async () =>
       extractZipBinary(archive, expectedBinary),

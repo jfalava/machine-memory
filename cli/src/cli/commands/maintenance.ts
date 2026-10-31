@@ -30,6 +30,7 @@ import {
   jsonStringArray,
   isJsonArray,
   parseJson,
+  storedStringArray,
   type JsonObject,
   type JsonValue,
 } from "../../json";
@@ -50,7 +51,6 @@ import {
   isMemoryType,
   normalizeCertaintyValue,
   normalizeSqliteRow,
-  parseStoredRefs,
   parseTags,
   sqliteDateForComparison,
   stringValue,
@@ -146,7 +146,7 @@ function parseImportRefs(entry: JsonObject): string[] {
     return refs;
   }
   const raw = jsonString(entry.refs);
-  return raw === undefined ? [] : parseStoredRefs(raw);
+  return raw === undefined ? [] : storedStringArray(raw);
 }
 
 function parseImportTimestamp(
@@ -583,7 +583,7 @@ export function handleStatsCommand(commandCtx: CommandContext) {
 export function handleImportCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const parsed = yield* parseImportFile(
-      commandCtx.args[0],
+      commandCtx.positionals[0],
       commandCtx.fileSystem,
     );
     const results: JsonObject[] = parsed.map((_, index) => ({

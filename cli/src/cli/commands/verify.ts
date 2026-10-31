@@ -6,9 +6,9 @@ import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import { getMemoryById, stringValue } from "../shared";
 
-function parseFactArgs(args: string[], usage: string) {
-  const idRaw = args[0];
-  const fact = args.slice(1).join(" ").trim();
+function parseFactArgs(positionals: string[], usage: string) {
+  const idRaw = positionals[0];
+  const fact = positionals.slice(1).join(" ").trim();
   if (!idRaw || !fact) {
     usageError(usage);
   }
@@ -22,7 +22,7 @@ function parseFactArgs(args: string[], usage: string) {
 export function handleVerifyCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { id, fact } = parseFactArgs(
-      commandCtx.args,
+      commandCtx.positionals,
       "Usage: verify <id> <fact>",
     );
     const memory = yield* getMemoryById(requireDatabase(commandCtx), id);

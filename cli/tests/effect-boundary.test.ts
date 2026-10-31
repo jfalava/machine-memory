@@ -128,6 +128,7 @@ describe("Effect application boundaries", () => {
       quiet: boolean;
     }): CommandContext => ({
       args: ["--remote"],
+      positionals: [],
       command: "reindex",
       outputMode: {
         brief: false,
@@ -192,6 +193,7 @@ describe("Effect application boundaries", () => {
       const exit = await Effect.runPromiseExit(
         handleReindexCommand({
           args: ["--remote", "--json-min"],
+          positionals: [],
           outputMode: {
             brief: false,
             jsonMin: true,

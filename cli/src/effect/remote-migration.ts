@@ -1,24 +1,17 @@
 import {
   decodeResponse,
-  ErrorBodySchema,
   MigrationBatchResultSchema,
   MigrationLinksSuccessSchema,
-  type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
-import { Effect } from "effect";
+import type { Effect } from "effect";
 
-import {
-  jsonObject,
-  jsonString,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "../json";
+import type { JsonObject, JsonValue } from "../json";
 import type {
   RemoteMigrationLink,
   RemoteMigrationRow,
 } from "../remote-migration";
-import { MemoryDatabaseError } from "./errors";
+import type { MemoryDatabaseError } from "./errors";
+import { apiUrl, postJson, toContractValue } from "./remote-http";
 
 export type RemoteMigrationItem = {
   readonly source_id: number;
@@ -33,57 +26,25 @@ export type RemoteMigrationBatchResult = {
   readonly items: RemoteMigrationItem[];
 };
 
-type RemoteMigrationResponse = JsonObject;
-
-type RequestHeaders = {
-  "content-type": string;
-  authorization?: string;
-};
-
-function migrationError(operation: string, cause: unknown) {
-  return new MemoryDatabaseError({
-    operation,
-    message:
-      cause instanceof Error ? cause.message : "Remote migration failed.",
-    cause,
+function migrationRequest<T>(options: {
+  readonly queryUrl: string;
+  readonly token: string | undefined;
+  readonly path: string;
+  readonly body: JsonValue;
+  readonly operation: string;
+  readonly parse: (payload: JsonObject) => T;
+}): Effect.Effect<T, MemoryDatabaseError> {
+  return postJson({
+    url: apiUrl(options.queryUrl, options.path),
+    token: options.token,
+    body: options.body,
+    operation: options.operation,
+    service: "Remote migration",
+    fallbackMessage: "Remote migration failed.",
+    errorLabel: "remote/migrate",
+    invalidObjectMessage: `Remote migration returned an invalid ${options.operation} response.`,
+    parse: options.parse,
   });
-}
-
-async function readResponse(
-  response: Response,
-  operation: string,
-): Promise<RemoteMigrationResponse> {
-  const text = await response.text();
-  let parsed: JsonValue;
-  try {
-    parsed = parseJson(text);
-  } catch (cause) {
-    throw new Error(
-      `Remote migration returned non-JSON HTTP ${response.status}.`,
-      { cause },
-    );
-  }
-  const responseBody = jsonObject(parsed);
-  if (responseBody === undefined) {
-    throw new Error(
-      `Remote migration returned an invalid ${operation} response.`,
-    );
-  }
-  return responseBody;
-}
-
-function migrationUrl(queryUrl: string, path: string): string {
-  const parsed = new URL(queryUrl);
-  const basePath = parsed.pathname.replace(/\/query\/?$/, "");
-  parsed.pathname = `${basePath}${path}`;
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed.toString();
-}
-
-function toContractValue(value: JsonValue): ContractJsonValue {
-  // SAFETY: parsed JSON response values carry no undefined entries.
-  return value as ContractJsonValue;
 }
 
 function parseBatchResult(value: JsonValue): RemoteMigrationBatchResult {
@@ -107,45 +68,6 @@ function parseBatchResult(value: JsonValue): RemoteMigrationBatchResult {
   };
 }
 
-function request(
-  queryUrl: string,
-  token: string | undefined,
-  path: string,
-  body: JsonValue,
-  operation: string,
-): Effect.Effect<RemoteMigrationResponse, MemoryDatabaseError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const headers: RequestHeaders = { "content-type": "application/json" };
-      if (token) {
-        headers.authorization = `Bearer ${token}`;
-      }
-      // HTTP boundary; errors are typed by tryPromise's catch.
-      // @effect-diagnostics-next-line globalFetchInEffect:off
-      const response = await fetch(migrationUrl(queryUrl, path), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-      });
-      const parsed = await readResponse(response, operation);
-      if (!response.ok || parsed.ok !== true) {
-        const failure = decodeResponse(
-          ErrorBodySchema,
-          toContractValue(parsed),
-          "remote/migrate",
-        );
-        const message =
-          failure?.error ??
-          jsonString(parsed.error) ??
-          `Remote migration returned HTTP ${response.status}.`;
-        throw new Error(message);
-      }
-      return parsed;
-    },
-    catch: (cause) => migrationError(operation, cause),
-  });
-}
-
 export function migrateRemoteRows(
   queryUrl: string,
   token: string | undefined,
@@ -153,20 +75,14 @@ export function migrateRemoteRows(
   source: string,
   rows: RemoteMigrationRow[],
 ): Effect.Effect<RemoteMigrationBatchResult, MemoryDatabaseError> {
-  return request(
+  return migrationRequest({
     queryUrl,
     token,
-    "/migrate",
-    { repository, source, rows },
-    "remote/migrate",
-  ).pipe(
-    Effect.flatMap((response) =>
-      Effect.try({
-        try: () => parseBatchResult(response.result),
-        catch: (cause) => migrationError("remote/migrate", cause),
-      }),
-    ),
-  );
+    path: "/migrate",
+    body: { repository, source, rows },
+    operation: "remote/migrate",
+    parse: (payload) => parseBatchResult(payload.result),
+  });
 }
 
 export function migrateRemoteLinks(
@@ -175,29 +91,21 @@ export function migrateRemoteLinks(
   repository: string,
   links: RemoteMigrationLink[],
 ): Effect.Effect<void, MemoryDatabaseError> {
-  return request(
+  return migrationRequest({
     queryUrl,
     token,
-    "/migrate/links",
-    { repository, links },
-    "remote/migrate-links",
-  ).pipe(
-    Effect.flatMap((response) =>
-      Effect.try({
-        try: () => {
-          const decoded = decodeResponse(
-            MigrationLinksSuccessSchema,
-            toContractValue(response),
-            "remote/migrate-links",
-          );
-          if (decoded === undefined) {
-            throw new Error(
-              "Remote migration returned an invalid links result.",
-            );
-          }
-        },
-        catch: (cause) => migrationError("remote/migrate-links", cause),
-      }),
-    ),
-  );
+    path: "/migrate/links",
+    body: { repository, links },
+    operation: "remote/migrate-links",
+    parse: (payload) => {
+      const decoded = decodeResponse(
+        MigrationLinksSuccessSchema,
+        toContractValue(payload),
+        "remote/migrate-links",
+      );
+      if (decoded === undefined) {
+        throw new Error("Remote migration returned an invalid links result.");
+      }
+    },
+  });
 }

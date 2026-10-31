@@ -9,9 +9,9 @@ import {
 
 import { getFlagValue, usageError } from "../../../cli-utils";
 import {
-  jsonString,
   jsonStringArray,
   parseJson,
+  storedStringArray,
   type JsonValue,
 } from "../../../json";
 
@@ -19,22 +19,6 @@ const CLEAR_VALUES = new Set(["", "[]", "none"]);
 
 function isEvidenceKind(value: string): value is EvidenceKind {
   return EVIDENCE_KINDS.some((kind) => kind === value);
-}
-
-function storedStringArray(value: JsonValue | undefined): string[] {
-  const array = jsonStringArray(value);
-  if (array !== undefined) {
-    return [...array];
-  }
-  const raw = jsonString(value);
-  if (raw === undefined || raw.trim() === "") {
-    return [];
-  }
-  try {
-    return [...(jsonStringArray(parseJson(raw)) ?? [])];
-  } catch {
-    return [];
-  }
 }
 
 /** Rows from a pre-migration remote schema have no column: [] means unspecified. */

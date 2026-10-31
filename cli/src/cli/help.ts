@@ -21,7 +21,7 @@ export function helpPayload() {
     name: "machine-memory",
     version: VERSION,
     description:
-      "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a local SQLite database so future agent sessions can recall them.",
+      "Persistent project-scoped memory for LLM agents. Stores facts, decisions, references, status snapshots, and other project context in a remote Cloudflare D1 database (--remote) or a local SQLite database (--local) so future agent sessions can recall them.",
     database:
       "Every database-backed command requires exactly one of --local or --remote. Remote credentials come from MACHINE_MEMORY_DB_URL/MACHINE_MEMORY_DB_TOKEN or the OS keychain.",
     embedding_budget: {
@@ -183,7 +183,7 @@ export function helpPayload() {
       "Project references/docs (e.g. 'API fields for run status: running, errored, finished')",
       "Point-in-time status snapshots (e.g. 'coverage audit: 82%, missing sdk/')",
       "Non-obvious gotchas (e.g. 'the users table uses UUIDs, not auto-increment')",
-      "Environment/tooling notes (e.g. 'run machine-memory migrate --local after pulling main')",
+      "Environment/tooling notes (e.g. 'run bun run db:migrate after pulling main')",
       "User preferences (e.g. 'user prefers explicit error handling over try/catch')",
     ],
   };

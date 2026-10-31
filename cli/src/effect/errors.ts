@@ -1,3 +1,4 @@
+import { databaseFailureGuidance } from "@machine-memory/contract";
 import { Schema } from "effect";
 
 export class CommandError extends Schema.TaggedError<CommandError>()(
@@ -29,4 +30,19 @@ export function commandError(
     return new CommandError({ message, command, cause, hint });
   }
   return new CommandError({ message, command, cause });
+}
+
+/** Maps a database failure to MemoryDatabaseError, preferring contract guidance text. */
+export function databaseOperationError(
+  operation: string,
+  cause: unknown,
+): MemoryDatabaseError {
+  const guidance = databaseFailureGuidance(cause);
+  return new MemoryDatabaseError({
+    operation,
+    message:
+      guidance?.error ??
+      (cause instanceof Error ? cause.message : "Database operation failed."),
+    cause,
+  });
 }

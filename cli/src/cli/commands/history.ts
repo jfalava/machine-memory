@@ -27,8 +27,8 @@ import {
   parseResultLimit,
 } from "../shared";
 
-function positionalId(args: string[], usage: string): number {
-  const raw = args[0];
+function positionalId(positionals: string[], usage: string): number {
+  const raw = positionals[0];
   const id = raw === undefined ? undefined : Number(raw);
   if (id === undefined || !Number.isInteger(id) || id <= 0) {
     usageError(usage);
@@ -50,7 +50,7 @@ export function handleHistoryCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const database = requireDatabase(commandCtx);
     const id = positionalId(
-      commandCtx.args,
+      commandCtx.positionals,
       "Usage: history <id> [--limit <n>] [--offset <n>]",
     );
     const limit = parseResultLimit(commandCtx.args);
@@ -101,7 +101,7 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const database = requireDatabase(commandCtx);
     const id = positionalId(
-      commandCtx.args,
+      commandCtx.positionals,
       "Usage: restore <id> --revision <revision_id> --expected-update-count <n>",
     );
     const revision = parseIntegerFlag(commandCtx.args, "--revision");

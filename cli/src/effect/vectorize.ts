@@ -1,21 +1,14 @@
 import {
   decodeResponse,
-  ErrorBodySchema,
   VectorizeSearchResultSchema,
   type VectorizeSearchRequestInput,
-  type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
-import { Effect } from "effect";
+import type { Effect } from "effect";
 
-import {
-  jsonObject,
-  jsonString,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "../json";
+import type { JsonObject, JsonValue } from "../json";
 import type { EmbeddingTextPart } from "./bge-tokenizer";
-import { MemoryDatabaseError } from "./errors";
+import type { MemoryDatabaseError } from "./errors";
+import { apiUrl, postJson, toContractValue } from "./remote-http";
 
 export type MemoryVectorDocument = {
   readonly id: string;
@@ -63,57 +56,6 @@ export function memoryVectorEmbeddingParts(
   ];
 }
 
-type RemoteVectorResponse = JsonObject;
-
-type RequestHeaders = {
-  "content-type": string;
-  authorization?: string;
-};
-
-async function readRemoteResponse(
-  response: Response,
-): Promise<RemoteVectorResponse> {
-  const text = await response.text();
-  try {
-    const parsed = jsonObject(parseJson(text));
-    if (parsed === undefined) {
-      throw new Error("response was not a JSON object");
-    }
-    return parsed;
-  } catch (cause) {
-    const contentType = response.headers.get("content-type") ?? "unknown";
-    throw new Error(
-      `Remote vector API returned non-JSON HTTP ${response.status} (${contentType}).`,
-      { cause },
-    );
-  }
-}
-
-function vectorError(operation: string, cause: unknown): MemoryDatabaseError {
-  return new MemoryDatabaseError({
-    operation,
-    message:
-      cause instanceof Error
-        ? cause.message
-        : "Remote vector operation failed.",
-    cause,
-  });
-}
-
-function vectorUrl(queryUrl: string, path: string): string {
-  const parsed = new URL(queryUrl);
-  const basePath = parsed.pathname.replace(/\/query\/?$/, "");
-  parsed.pathname = `${basePath}${path}`;
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed.toString();
-}
-
-function toContractValue(value: JsonValue): ContractJsonValue {
-  // SAFETY: parsed JSON response values carry no undefined entries.
-  return value as ContractJsonValue;
-}
-
 function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
   const result = decodeResponse(
     VectorizeSearchResultSchema,
@@ -133,63 +75,21 @@ function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
   };
 }
 
-type RequestOptions<T> = {
-  readonly queryUrl: string;
-  readonly token: string | undefined;
-  readonly operation: string;
-  readonly path: string;
-  readonly body: JsonValue;
-  readonly parse: (value: JsonValue) => T;
-};
-
-function request<T>(
-  options: RequestOptions<T>,
-): Effect.Effect<T, MemoryDatabaseError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const headers: RequestHeaders = { "content-type": "application/json" };
-      if (options.token) {
-        headers.authorization = `Bearer ${options.token}`;
-      }
-      // HTTP boundary; errors are typed by tryPromise's catch.
-      // @effect-diagnostics-next-line globalFetchInEffect:off
-      const response = await fetch(vectorUrl(options.queryUrl, options.path), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(options.body),
-      });
-      const payload = await readRemoteResponse(response);
-      if (!response.ok || payload.ok !== true) {
-        const failure = decodeResponse(
-          ErrorBodySchema,
-          toContractValue(payload),
-          "vectorize/error",
-        );
-        const message =
-          failure?.error ??
-          jsonString(payload.error) ??
-          `Remote vector API returned HTTP ${response.status}.`;
-        throw new Error(message);
-      }
-      return options.parse(payload.result);
-    },
-    catch: (cause) => vectorError(options.operation, cause),
-  });
-}
-
 export function remoteVectorApi(
   queryUrl: string,
   token: string | undefined,
 ): MemoryVectorApi {
   return {
     search: (searchRequest) =>
-      request({
-        queryUrl,
+      postJson({
+        url: apiUrl(queryUrl, "/vectorize/search"),
         token,
-        operation: "vectorize/search",
-        path: "/vectorize/search",
         body: searchRequest,
-        parse: parseSearchResult,
+        operation: "vectorize/search",
+        service: "Remote vector API",
+        fallbackMessage: "Remote vector operation failed.",
+        errorLabel: "vectorize/error",
+        parse: (payload) => parseSearchResult(payload.result),
       }),
   };
 }

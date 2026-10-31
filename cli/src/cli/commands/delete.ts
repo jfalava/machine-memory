@@ -4,13 +4,12 @@ import { usageError } from "../../cli-utils";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
-import { collectPositionalArgs, parseIdSpec } from "../shared";
+import { parseIdSpec } from "../shared";
 
 export function handleDeleteCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const idSpec = collectPositionalArgs(args, []).join(",");
+    const idSpec = commandCtx.positionals.join(",");
     if (!idSpec.trim()) {
       usageError("Usage: delete <id|id,id,...>");
     }

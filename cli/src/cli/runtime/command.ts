@@ -56,16 +56,20 @@ const databaseBackendSpecs: readonly FlagSpec[] = [
   booleanSpec("remote"),
 ];
 
-function argvFromInput(
-  input: CommandInput,
-  specs: readonly FlagSpec[],
-): string[] {
-  const args = Array.isArray(input.args)
+function positionalsFromInput(input: CommandInput): string[] {
+  return Array.isArray(input.args)
     ? input.args.flatMap((value) => {
         const parsed = jsonString(value);
         return parsed === undefined ? [] : [parsed];
       })
     : [];
+}
+
+function argvFromInput(
+  input: CommandInput,
+  specs: readonly FlagSpec[],
+): string[] {
+  const args = positionalsFromInput(input);
   for (const spec of specs) {
     const value = input[spec.name];
     if (spec.kind === "boolean") {
@@ -92,6 +96,7 @@ function commandContext(options: {
   const args = argvFromInput(options.input, options.specs);
   return {
     args,
+    positionals: positionalsFromInput(options.input),
     command: options.command,
     outputMode: parseOutputMode(args, options.pretty),
     database: options.database,
