@@ -10,7 +10,7 @@
     "deploy": "wrangler deploy",
     "dev": "astro dev --host",
     "format": "prettier --write src && oxfmt",
-    "format:check": "prettier --check src",
+    "format:check": "prettier --check src && oxfmt --check",
     "lint": "bun run lint:oxlint && bun run lint:astro && bun run lint:docs",
     "lint:astro": "eslint \"src/**/*.astro\"",
     "lint:astro:fix": "eslint \"src/**/*.astro\" --fix",

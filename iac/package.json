@@ -11,6 +11,7 @@
     "destroy": "alchemy destroy",
     "dev": "alchemy dev",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "plan": "alchemy deploy --dry-run",
     "test": "bun test test/",

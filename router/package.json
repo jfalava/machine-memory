@@ -5,6 +5,7 @@
   "scripts": {
     "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
     "test:watch": "vitest",

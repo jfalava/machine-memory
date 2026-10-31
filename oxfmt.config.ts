@@ -34,5 +34,7 @@ export default defineConfig({
     "mcp/**",
     "router/**",
     "iac/**",
+    // machine-memory init owns the managed block in this file.
+    "AGENTS.md",
   ],
 });

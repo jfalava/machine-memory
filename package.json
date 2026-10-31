@@ -42,6 +42,7 @@
     "check:global": "bun run --workspaces --if-present check",
     "lint:global": "bun run --workspaces --if-present lint",
     "format:global": "bun run --workspaces --if-present format",
+    "format:check:global": "bunx oxfmt --check && bun run --workspaces --if-present format:check",
     "test:global": "bun run --workspaces --if-present test",
     "typecheck:global": "bun run --workspaces --if-present typecheck"
   },

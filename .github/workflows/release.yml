@@ -31,6 +31,9 @@ jobs:
 
       # Oxlint runs with typeCheck off; type errors are reported only by the
       # typecheck step below.
+      - name: Check formatting
+        run: bun run format:check:global
+
       - name: Lint all workspaces
         run: bun run lint:global
 
