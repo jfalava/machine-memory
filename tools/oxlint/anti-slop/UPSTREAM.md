@@ -17,6 +17,5 @@
   `no-array-filter-map`, `no-reduce-accumulator-copy`, and the Effect rules
   `no-manual-effect-error-tag`, `no-manual-tag-comparison`,
   `no-manual-tagged-construction` and `prefer-effect-match`.
-- Not enabled: `require-readable-spacing`. It is autofixable but reported
-  about 2,850 blank-line findings; enabling it is a separate, repo-wide
-  whitespace change.
+- Deliberately off: `require-readable-spacing`. It reported about 2,850
+  blank-line findings, is whitespace-only, and overlaps oxfmt.
