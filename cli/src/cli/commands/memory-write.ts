@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 
 import {
+  canonicalTags,
   droppedDetails,
   hasDroppedDetails,
   type EvidenceKind,
@@ -309,7 +310,7 @@ function prospectiveUpdateDocuments(
   content: string,
 ): Effect.Effect<ProspectiveUpdate[], MemoryDatabaseError> {
   const overrides = {
-    tags: getFlagValue(flags, "--tags"),
+    tags: optionalCanonicalTags(getFlagValue(flags, "--tags")),
     context: getFlagValue(flags, "--context"),
     memory_type: requireMemoryType(flags),
     certainty: requireCertainty(flags),
@@ -1208,11 +1209,15 @@ function resolveUpdateContent(
   );
 }
 
+function optionalCanonicalTags(value: string | undefined) {
+  return value === undefined ? undefined : canonicalTags(value);
+}
+
 function optionalUpdateSpecs(flags: CommandFlags): UpdateSpec[] {
   const specs: UpdateSpec[] = [];
   const maybeSpecs: (UpdateSpec | undefined)[] = [
     (() => {
-      const value = getFlagValue(flags, "--tags");
+      const value = optionalCanonicalTags(getFlagValue(flags, "--tags"));
       return value === undefined ? undefined : { clause: "tags = ?", value };
     })(),
     (() => {

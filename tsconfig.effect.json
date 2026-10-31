@@ -30,10 +30,9 @@
           "@effect/platform-bun/BunServices"
         ],
         "diagnosticSeverity": {
-          // Correctness: everything fails, with two exceptions. anyUnknownInErrorContext
-          // is off: CLI command handlers keep an unknown error channel by design
-          // (cli/src/cli/runtime/command.ts). schemaClassMissingBrand stays a suggestion:
-          // its hits are Schema.TaggedError classes, already discriminated by _tag.
+          // Correctness: everything fails, with two exceptions, both off. anyUnknownInErrorContext:
+          // CLI command handlers keep an unknown error channel by design
+          // (cli/src/cli/runtime/command.ts). schemaClassMissingBrand: see below.
           "anyUnknownInErrorContext": "off",
           "classSelfMismatch": "error",
           "duplicatePackage": "error",

@@ -362,7 +362,7 @@ describe("mcp gateway to api product routes", () => {
           `https://product.internal${productRoutePath(route)}`,
         );
         expect(seen[0]?.authorization).toBe("Bearer test-token");
-        expect(seen[0]?.body).toMatchObject(args);
+        expect(seen[0]?.body).toEqual(args);
       } finally {
         await client.close();
       }

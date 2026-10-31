@@ -99,6 +99,7 @@ export {
 export {
   DEFAULT_STATUS_EXPIRY_DAYS,
   analyzeMemoryDoctor,
+  canonicalTags,
   normalizeTags,
 } from "./doctor";
 export {

@@ -115,7 +115,7 @@ export const MigrationLinksSuccessSchema = okResponseSchema(
 /** Vectorize matches requested without vector values. Metadata may be absent. */
 export const VectorizeMatchSchema = Schema.Struct({
   id: Schema.NonEmptyString,
-  score: Schema.Finite.check(Schema.isFinite()),
+  score: Schema.Finite,
   namespace: Schema.optionalKey(Schema.String),
   metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 });

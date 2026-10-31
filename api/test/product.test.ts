@@ -1144,3 +1144,47 @@ test("doctor reports verified rows without evidence and overlapping gotchas", as
     gotcha_overlap: 1,
   });
 });
+
+test.each([
+  ["an unmatched upsert", { upsert_match: "nothing stored mentions this" }],
+  ["a forced weak upsert", { upsert_match: "alpha", force: true }],
+])(
+  "add rejects expires_after_days on non-status memories through %s",
+  async (_path, upsert) => {
+    await product("add", { content: "alpha beta gamma delta" });
+    const result = await productError("add", {
+      content: "alpha unrelated note",
+      memory_type: "decision",
+      expires_after_days: 3,
+      ...upsert,
+    });
+    expect(result.status).toBe(400);
+    expect(
+      await db.prepare("SELECT count(*) AS n FROM memories").first("n"),
+    ).toBe(1);
+  },
+);
+
+test("writes store canonical tags, so doctor reports no invalid_tags", async () => {
+  const added = await product("add", {
+    content: "tags arrive in mixed case",
+    tags: " Area:CLI, topic:Search ,area:cli",
+  });
+  expect(added.result.memory.tags).toBe("area:cli,topic:search");
+  const updated = await product("update", {
+    id: added.result.id,
+    tags: "Area:API,Kind:Decision",
+  });
+  expect(updated.result.memory.tags).toBe("area:api,kind:decision");
+  const doctor = await product("doctor");
+  expect(doctor.result.counts_by_kind).not.toHaveProperty("invalid_tags");
+});
+
+test("doctor ignores path segments when pairing near duplicates", async () => {
+  await insert("fix api worker src/test/lib/app/tests alpha");
+  await insert("fix api worker src/test/lib/app/tests beta");
+  await insert("router retries d1 writes on busy errors");
+  await insert("router retries d1 writes on busy errors twice");
+  const doctor = await product("doctor");
+  expect(doctor.result.counts_by_kind).toMatchObject({ near_duplicate: 1 });
+});
