@@ -5,7 +5,7 @@ import {
   type ProductRoute,
   type JsonValue,
 } from "@machine-memory/contract";
-import { Effect, Redacted } from "effect";
+import { Effect, Predicate, Redacted } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Schema from "effect/Schema";
@@ -27,7 +27,7 @@ const decodeErrorBody = Schema.decodeUnknownSync(
 
 function responseErrorBody(response: HttpServerResponse.HttpServerResponse) {
   const body = response.body;
-  if (body._tag !== "Uint8Array") {
+  if (!Predicate.isTagged(body, "Uint8Array")) {
     throw new Error(`Expected a JSON byte body, got ${body._tag}.`);
   }
   return decodeErrorBody(new TextDecoder().decode(body.body));

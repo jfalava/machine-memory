@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Schema } from "effect";
+import { Cause, Effect, Predicate, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 import * as Layer from "effect/Layer";
 import pc from "picocolors";
@@ -282,7 +282,7 @@ function renderError(
   command: string | undefined,
   pretty: boolean,
 ): void {
-  if (CliError.isCliError(error) && error._tag === "ShowHelp") {
+  if (CliError.isCliError(error) && Predicate.isTagged(error, "ShowHelp")) {
     return;
   }
   if (isReindexSummaryFailure(command, error)) {
@@ -359,7 +359,7 @@ export function runCli(rawArgs: ReadonlyArray<string>) {
         if (
           !(
             CliError.isCliError(error) &&
-            error._tag === "ShowHelp" &&
+            Predicate.isTagged(error, "ShowHelp") &&
             error.errors.length === 0
           )
         ) {

@@ -2,7 +2,7 @@ import {
   compareMemoryFact,
   deriveFileNeighborhood,
 } from "@machine-memory/contract";
-import { Cause, Effect, Schema } from "effect";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import { handleReindexCommand } from "@/cli/commands/reindex";
@@ -93,8 +93,8 @@ describe("Effect application boundaries", () => {
           Effect.provide(remoteLayer("https://memory.test/query", "token")),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(guidance);
       }
     } finally {

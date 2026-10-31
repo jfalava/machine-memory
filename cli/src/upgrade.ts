@@ -3,7 +3,7 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { inflateRawSync } from "node:zlib";
 
-import { Effect, FileSystem, PlatformError } from "effect";
+import { Effect, FileSystem, Match, PlatformError } from "effect";
 
 import { REPO, VERSION } from "./constants";
 import { jsonString, type JsonObject } from "./json";
@@ -117,19 +117,20 @@ export function assetNameForPlatform(
   platform: string,
   arch: string,
 ): string | undefined {
-  const platformName =
-    platform === "darwin"
-      ? "darwin"
-      : platform === "linux"
-        ? "linux"
-        : platform === "win32"
-          ? "windows"
-          : undefined;
+  const platformName = Match.value(platform).pipe(
+    Match.when("darwin", () => "darwin"),
+    Match.when("linux", () => "linux"),
+    Match.when("win32", () => "windows"),
+    Match.orElse(() => undefined),
+  );
   if (!platformName) {
     return undefined;
   }
-  const architecture =
-    arch === "arm64" ? "arm64" : arch === "x64" ? "x64" : undefined;
+  const architecture = Match.value(arch).pipe(
+    Match.when("arm64", () => "arm64"),
+    Match.when("x64", () => "x64"),
+    Match.orElse(() => undefined),
+  );
   if (!architecture) {
     return undefined;
   }
@@ -460,12 +461,11 @@ function extractZipEntry(
   }
 
   const compressed = archive.subarray(dataStart, dataEnd);
-  const binary =
-    entry.compressionMethod === 0
-      ? compressed
-      : entry.compressionMethod === 8
-        ? new Uint8Array(inflateRawSync(compressed))
-        : undefined;
+  const binary = Match.value(entry.compressionMethod).pipe(
+    Match.when(0, () => compressed),
+    Match.when(8, () => new Uint8Array(inflateRawSync(compressed))),
+    Match.orElse(() => undefined),
+  );
   if (!binary) {
     throw new Error(
       `Downloaded release uses unsupported ZIP compression method ${entry.compressionMethod}.`,

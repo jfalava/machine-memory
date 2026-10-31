@@ -259,6 +259,7 @@ function statusExpiryFindings(
   rows: readonly DoctorRow[],
 ): MemoryDoctorFinding[] {
   return rows
+    .values()
     .filter(
       (row) => row.memoryType === "status" && row.expiresAfterDays === null,
     )
@@ -266,7 +267,8 @@ function statusExpiryFindings(
       finding("status_missing_expiry", [row.id], {
         suggested_days: DEFAULT_STATUS_EXPIRY_DAYS,
       }),
-    );
+    )
+    .toArray();
 }
 
 type TagScopes = {
@@ -378,8 +380,10 @@ function typeBoundaryFindings(row: DoctorRow): MemoryDoctorFinding[] {
 
 function taxonomyIssues(scopes: TagScopes, memoryType: string): string[] {
   const issues = (["area", "topic", "kind"] as const)
+    .values()
     .filter((scope) => scopes[scope] === undefined)
-    .map((scope) => `missing_${scope}`);
+    .map((scope) => `missing_${scope}`)
+    .toArray();
   const type = memoryType.toLowerCase();
   if (scopes.kind !== undefined && scopes.kind !== type) {
     issues.push(`kind_mismatch:${scopes.kind}->${type}`);

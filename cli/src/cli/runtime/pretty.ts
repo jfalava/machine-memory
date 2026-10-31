@@ -291,6 +291,7 @@ function renderMemoryDetail(row: JsonObject): string[] {
   ];
   const present = Object.fromEntries(
     preferredKeys
+      .values()
       .filter((key) => Object.hasOwn(row, key))
       .map((key) => [key, row[key]]),
   );
