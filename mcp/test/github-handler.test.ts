@@ -204,3 +204,72 @@ describe("MCP GitHub user allowlist", () => {
     expect(result.completeAuthorization).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /authorize request errors", () => {
+  // Same fields workers-oauth-provider 1.2.1 sets on its AuthorizationError.
+  function authorizationError(
+    code: string,
+    description: string,
+    redirectTo?: string,
+  ): Error {
+    return Object.assign(new Error(description), {
+      name: "AuthorizationError",
+      code,
+      description,
+      redirectTo,
+    });
+  }
+
+  async function authorizeResponse(error: Error): Promise<Response> {
+    const fetchHandler = githubHandler.fetch;
+    if (fetchHandler === undefined) {
+      throw new Error("GitHub handler does not expose fetch");
+    }
+    const env = testEnv(testKv(new Map()), vi.fn());
+    const parseAuthRequest: OAuthHelpers["parseAuthRequest"] = async () => {
+      throw error;
+    };
+    // SAFETY: GET /authorize only calls parseAuthRequest before failing.
+    const provider = { parseAuthRequest } as OAuthHelpers;
+    // SAFETY: the authorize handler does not read Cloudflare request properties.
+    const request = new Request(
+      "https://mcp.test/authorize?client_id=unknown",
+    ) as Parameters<typeof fetchHandler>[0];
+    // SAFETY: the authorize handler does not inspect the execution context.
+    const executionContext = {} as ExecutionContext;
+    return fetchHandler(
+      request,
+      { ...env, OAUTH_PROVIDER: provider },
+      executionContext,
+    );
+  }
+
+  test("answers an unknown client with a 400 OAuth error", async () => {
+    const response = await authorizeResponse(
+      authorizationError("invalid_request", "Invalid client_id"),
+    );
+    expect(response.status).toBe(400);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      error: "invalid_request",
+      error_description: "Invalid client_id",
+    });
+  });
+
+  test("redirects errors to the provider-validated redirect_uri", async () => {
+    const redirectTo =
+      "https://client.test/callback?error=invalid_scope&state=client-state";
+    const response = await authorizeResponse(
+      authorizationError("invalid_scope", "Unsupported scope", redirectTo),
+    );
+    expect(response.status).toBe(302);
+    expect(response.headers.get("Location")).toBe(redirectTo);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  test("keeps internal failures out of the client error path", async () => {
+    await expect(
+      authorizeResponse(new Error("KV unavailable")),
+    ).rejects.toThrow("KV unavailable");
+  });
+});
