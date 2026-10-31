@@ -104,6 +104,11 @@ type DeployOverrides = Partial<{
   workers: Partial<DeployWorkers>;
 }>;
 
+/** Values read from a deploy config file; unset fields fall through to env and defaults. */
+type DeployFile = DeployOverrides & {
+  readonly secretsStore?: SecretsStoreConfig;
+};
+
 function optionalNonEmpty(
   candidate: JsonObject,
   field: string,
@@ -133,7 +138,7 @@ function optionalBoolean(
   }
 }
 
-function parseDeployFile(raw: string, path: string): Partial<DeployConfig> {
+function parseDeployFile(raw: string, path: string): DeployFile {
   let root: JsonValue;
   try {
     root = Schema.decodeUnknownSync(Schema.Json)(JSON.parse(raw));
@@ -159,18 +164,10 @@ function parseDeployFile(raw: string, path: string): Partial<DeployConfig> {
         ? undefined
         : Schema.decodeUnknownSync(SecretsStoreConfigSchema)(file.secretsStore),
     workers: {
-      router:
-        optionalNonEmpty(workersObject, "router") ??
-        DEFAULT_DEPLOY_CONFIG.workers.router,
-      api:
-        optionalNonEmpty(workersObject, "api") ??
-        DEFAULT_DEPLOY_CONFIG.workers.api,
-      mcp:
-        optionalNonEmpty(workersObject, "mcp") ??
-        DEFAULT_DEPLOY_CONFIG.workers.mcp,
-      docs:
-        optionalNonEmpty(workersObject, "docs") ??
-        DEFAULT_DEPLOY_CONFIG.workers.docs,
+      router: optionalNonEmpty(workersObject, "router"),
+      api: optionalNonEmpty(workersObject, "api"),
+      mcp: optionalNonEmpty(workersObject, "mcp"),
+      docs: optionalNonEmpty(workersObject, "docs"),
     },
   };
 }
@@ -197,21 +194,26 @@ function resolveConfigPath(path: string): string {
 
 function discoverConfigPath(explicit: string | undefined): string | undefined {
   if (explicit) {
-    return resolveConfigPath(explicit);
+    const path = resolveConfigPath(explicit);
+    if (!existsSync(path)) {
+      throw new Error(`Deploy config not found at ${path}.`);
+    }
+    return path;
   }
   const envPath = envMap()["MACHINE_MEMORY_DEPLOY_CONFIG"]?.trim();
   if (envPath) {
-    return resolveConfigPath(envPath);
+    const path = resolveConfigPath(envPath);
+    if (!existsSync(path)) {
+      console.warn(
+        `MACHINE_MEMORY_DEPLOY_CONFIG points to ${path}, which does not exist; using env and defaults.`,
+      );
+      return undefined;
+    }
+    return path;
   }
   const cwdFile = join(cwd(), "machine-memory.deploy.json");
   if (existsSync(cwdFile)) {
     return cwdFile;
-  }
-  if (existsSync(join(cwd(), "alchemy.run.ts"))) {
-    const sibling = join(cwd(), "machine-memory.deploy.json");
-    if (existsSync(sibling)) {
-      return sibling;
-    }
   }
   return undefined;
 }
@@ -227,7 +229,7 @@ function pickString(
 
 function resolveDomain(
   overrides: DeployOverrides | undefined,
-  fromFile: Partial<DeployConfig> | undefined,
+  fromFile: DeployFile | undefined,
 ): string | undefined {
   if (overrides?.domain !== undefined) {
     return overrides.domain.trim() || undefined;
@@ -241,7 +243,7 @@ function resolveDomain(
 
 function resolveDocs(
   overrides: DeployOverrides | undefined,
-  fromFile: Partial<DeployConfig> | undefined,
+  fromFile: DeployFile | undefined,
 ): boolean {
   return (
     overrides?.docs ??
@@ -253,7 +255,7 @@ function resolveDocs(
 
 function resolveWorkers(
   overrides: DeployOverrides | undefined,
-  fromFile: Partial<DeployConfig> | undefined,
+  fromFile: DeployFile | undefined,
 ): DeployWorkers {
   const fileWorkers = fromFile?.workers;
   const overrideWorkers = overrides?.workers;
@@ -287,7 +289,9 @@ function resolveWorkers(
 
 /**
  * Resolve deploy naming, domain, and docs toggle.
- * Precedence: overrides → config file → env → defaults.
+ * Precedence: overrides → env → config file → defaults. A missing explicit
+ * `configPath` throws; a missing `MACHINE_MEMORY_DEPLOY_CONFIG` file warns and
+ * falls back to env and defaults.
  */
 // Config merge is intentionally branchy (override/env/file/default per field).
 // oxlint-disable-next-line complexity -- field-wise precedence matrix
@@ -297,7 +301,7 @@ export function loadDeployConfig(options?: {
 }): DeployConfig {
   const configPath = discoverConfigPath(options?.configPath);
   const fromFile =
-    configPath === undefined || !existsSync(configPath)
+    configPath === undefined
       ? undefined
       : parseDeployFile(readFileSync(configPath, "utf8"), configPath);
   const overrides = options?.overrides;

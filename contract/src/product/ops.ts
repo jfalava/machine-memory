@@ -131,7 +131,6 @@ export const MemoryGetArgsSchema = Schema.Struct({
   repository: RepositorySchema,
   id: memoryId,
 });
-export type MemoryGetArgs = typeof MemoryGetArgsSchema.Type;
 
 export const MemoryHistoryArgsSchema = Schema.Struct({
   repository: RepositorySchema,
@@ -229,7 +228,6 @@ export const MemoryVerifyArgsSchema = Schema.Struct({
     description: "The inferred fact to verify against the stored memory.",
   }),
 });
-export type MemoryVerifyArgs = typeof MemoryVerifyArgsSchema.Type;
 
 export const MemoryDiffArgsSchema = Schema.Struct({
   repository: RepositorySchema,
@@ -239,7 +237,6 @@ export const MemoryDiffArgsSchema = Schema.Struct({
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),
 });
-export type MemoryDiffArgs = typeof MemoryDiffArgsSchema.Type;
 
 export const MemoryAddArgsInputSchema = Schema.Struct({
   repository: RepositorySchema,
@@ -336,7 +333,6 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
     description: "Id of the memory that supersedes this one.",
   }),
 });
-export type MemoryUpdateArgs = typeof MemoryUpdateArgsSchema.Type;
 
 export const MemoryRestoreArgsSchema = Schema.Struct({
   repository: RepositorySchema,
@@ -352,7 +348,6 @@ export const MemoryRestoreArgsSchema = Schema.Struct({
       "Use current_update_count from memory_history. A stale count refuses the restore; do not use the historical row's update_count.",
   }),
 });
-export type MemoryRestoreArgs = typeof MemoryRestoreArgsSchema.Type;
 
 export const MemorySizeArgsInputSchema = Schema.Struct({
   content: Schema.NonEmptyString.annotateKey({
@@ -395,13 +390,11 @@ export const MemoryDeleteArgsSchema = Schema.Struct({
   repository: RepositorySchema,
   id: memoryId,
 });
-export type MemoryDeleteArgs = typeof MemoryDeleteArgsSchema.Type;
 
 export const MemoryDeleteManyArgsSchema = Schema.Struct({
   repository: RepositorySchema,
   ids: memoryIds,
 });
-export type MemoryDeleteManyArgs = typeof MemoryDeleteManyArgsSchema.Type;
 
 export const MemoryDeprecateArgsSchema = Schema.Struct({
   repository: RepositorySchema,
@@ -411,27 +404,15 @@ export const MemoryDeprecateArgsSchema = Schema.Struct({
       "Id of the canonical memory replacing every target. Omit to mark targets deprecated without a replacement.",
   }),
 });
-export type MemoryDeprecateArgs = typeof MemoryDeprecateArgsSchema.Type;
 
 export const MemoryDoctorArgsSchema = Schema.Struct({
   repository: RepositorySchema,
 });
-export type MemoryDoctorArgs = typeof MemoryDoctorArgsSchema.Type;
 
 export const MemoryStatsArgsSchema = Schema.Struct({
   repository: RepositorySchema,
 });
-export type MemoryStatsArgs = typeof MemoryStatsArgsSchema.Type;
 
 export const MemoryGcArgsSchema = Schema.Struct({
   repository: RepositorySchema,
 });
-export type MemoryGcArgs = typeof MemoryGcArgsSchema.Type;
-
-/** Aliases for the catalog entrypoints. */
-export const ListRepositoriesArgsSchema = ListRepositoriesArgsInputSchema;
-export const MemoryQueryArgsSchema = MemoryQueryArgsInputSchema;
-export const MemoryListArgsSchema = MemoryListArgsInputSchema;
-export const MemorySuggestArgsSchema = MemorySuggestArgsInputSchema;
-export const MemoryAddArgsSchema = MemoryAddArgsInputSchema;
-export const MemorySizeArgsSchema = MemorySizeArgsInputSchema;

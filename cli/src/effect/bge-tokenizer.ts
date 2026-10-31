@@ -209,13 +209,15 @@ function largestPartOf(
   parts: readonly EmbeddingTextPart[],
 ): BgeLargestPart | undefined {
   const measured = parts
+    .values()
     .filter((entry) => entry.text.length > 0)
     .map((entry) => ({
       part: entry.part,
       amount: tokenizer
         ? tokenizer(entry.text)
         : new TextEncoder().encode(entry.text).byteLength,
-    }));
+    }))
+    .toArray();
   if (measured.length === 0) {
     return undefined;
   }
@@ -235,8 +237,10 @@ export function composeEmbeddingText(
   parts: readonly EmbeddingTextPart[],
 ): string {
   return parts
+    .values()
     .filter((entry) => entry.text.length > 0)
     .map((entry) => entry.text)
+    .toArray()
     .join("\n");
 }
 
@@ -294,11 +298,13 @@ export function analyzeBgeEmbeddingWith(
   const bytesEstimate = estimateEmbeddingBytes(composed);
   const total = countTokens(tokenizer, composed);
   const counted = parts
+    .values()
     .filter((entry) => entry.text.length > 0)
     .map((entry) => ({
       part: entry.part,
       tokens: countTokens(tokenizer, entry.text),
-    }));
+    }))
+    .toArray();
   const partTotal = counted.reduce((sum, entry) => sum + entry.tokens, 0);
   // The token rule is "below 512", so the deficit is measured against 511.
   const overByTokens =

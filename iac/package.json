@@ -4,13 +4,14 @@
   "type": "module",
   "scripts": {
     "build": "bun run --filter @machine-memory/iac typecheck && bun run --filter @machine-memory/docs build",
-    "check": "oxlint --type-aware --fix && bun run typecheck",
+    "check": "oxlint --type-aware && bun test test/ && bun run typecheck",
     "ci:build": "bun run build",
     "ci:deploy": "alchemy deploy --yes --adopt",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
     "dev": "alchemy dev",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "plan": "alchemy deploy --dry-run",
     "test": "bun test test/",
@@ -20,7 +21,6 @@
     "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
-    "@effect/sql-d1": "catalog:effect",
     "@machine-memory/contract": "workspace:*",
     "alchemy": "catalog:iac",
     "effect": "catalog:effect"

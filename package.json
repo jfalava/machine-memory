@@ -14,7 +14,6 @@
       "effect": {
         "@effect/platform-node": "4.0.5",
         "@effect/platform-bun": "4.0.5",
-        "@effect/sql-d1": "4.0.5",
         "effect": "4.0.5"
       },
       "types": {
@@ -25,7 +24,6 @@
         "alchemy": "2.0.0-beta.83"
       },
       "build": {
-        "oxlint": "1.90.0",
         "oxlint-tsgolint": "7.0.2005",
         "tsrs": "0.20.1-ts7.1.0-beta",
         "typescript": "7.0.2",
@@ -41,20 +39,20 @@
   "type": "module",
   "scripts": {
     "format": "bunx oxfmt",
-    "check:global": "bun run --filter @machine-memory/contract --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac check",
-    "lint:global": "bun run --filter @machine-memory/contract --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac lint",
-    "format:global": "bun run --filter @machine-memory/contract --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac format",
-    "test:global": "bun run --filter @machine-memory/cli --filter @machine-memory/contract --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac test",
-    "typecheck:global": "bun run --filter @machine-memory/contract --filter @machine-memory/cli --filter @machine-memory/docs --filter @machine-memory/api --filter @machine-memory/mcp --filter @machine-memory/router --filter @machine-memory/iac typecheck"
+    "check:global": "bun run --workspaces --if-present check",
+    "lint:global": "bun run --workspaces --if-present lint",
+    "format:global": "bun run --workspaces --if-present format",
+    "format:check:global": "bunx oxfmt --check && bun run --workspaces --if-present format:check",
+    "test:global": "bun run --workspaces --if-present test",
+    "typecheck:global": "bun run --workspaces --if-present typecheck"
   },
   "devDependencies": {
     "@effect/tsgo": "0.63.0",
     "@oxlint/plugins": "1.90.0",
     "oxfmt": "catalog:maintenance",
-    "oxlint": "catalog:build",
+    "oxlint": "catalog:maintenance",
     "tsrs": "catalog:build",
-    "typescript": "catalog:build",
-    "vite-tsconfig-paths": "6.1.1"
+    "typescript": "catalog:build"
   },
   "patchedDependencies": {
     "alchemy@2.0.0-beta.83": "patches/alchemy@2.0.0-beta.83.patch"

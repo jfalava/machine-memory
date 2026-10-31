@@ -25,7 +25,7 @@ import {
 
 const SqlParamSchema = Schema.Union([
   Schema.String,
-  Schema.Number,
+  Schema.Finite,
   Schema.Null,
 ]);
 
@@ -36,7 +36,6 @@ export const QueryRequestSchema = Schema.Struct({
   params: Schema.Array(SqlParamSchema),
   repository: RepositorySchema,
 });
-export type QueryRequest = typeof QueryRequestSchema.Type;
 
 const PositiveIntSchema = Schema.Int.check(Schema.isGreaterThan(0));
 const NonNegativeIntSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -161,9 +160,9 @@ export function normalizeMigrationRequest(
     }
     sourceIds.add(row.source_id);
     try {
-      Schema.decodeUnknownSync(
-        Schema.fromJsonString(Schema.Array(Schema.String)),
-      )(row.refs);
+      Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.String)))(
+        row.refs,
+      );
       if (
         row.expires_after_days !== null &&
         (row.memory_type !== "status" || row.expires_after_days <= 0)
@@ -194,7 +193,6 @@ export const MigrationLinkSchema = Schema.Struct({
   target_id: PositiveIntSchema,
   superseded_by_target_id: PositiveIntSchema,
 });
-export type MigrationLink = typeof MigrationLinkSchema.Type;
 
 /** POST /migrate/links */
 export const MigrationLinksRequestSchema = Schema.Struct({
@@ -203,7 +201,6 @@ export const MigrationLinksRequestSchema = Schema.Struct({
     Schema.isMaxLength(MAX_MIGRATION_LINKS),
   ),
 });
-export type MigrationLinksRequest = typeof MigrationLinksRequestSchema.Type;
 
 /**
  * POST /vectorize/search

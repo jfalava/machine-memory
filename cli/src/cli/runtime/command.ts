@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option } from "effect";
 import { Argument, Command, Flag } from "effect/cli";
 
+import type { CommandFlags } from "../../cli-utils";
 import type { DatabaseBackendFlags } from "../../database-config";
 import type { DbAccessMode } from "../../db";
 import { MemoryDatabase, layer as databaseLayer } from "../../effect/database";
@@ -56,29 +57,33 @@ const databaseBackendSpecs: readonly FlagSpec[] = [
   booleanSpec("remote"),
 ];
 
-function argvFromInput(
-  input: CommandInput,
-  specs: readonly FlagSpec[],
-): string[] {
-  const args = Array.isArray(input.args)
+function positionalsFromInput(input: CommandInput): string[] {
+  return Array.isArray(input.args)
     ? input.args.flatMap((value) => {
         const parsed = jsonString(value);
         return parsed === undefined ? [] : [parsed];
       })
     : [];
+}
+
+function flagsFromInput(
+  input: CommandInput,
+  specs: readonly FlagSpec[],
+): CommandFlags {
+  const flags = new Map<string, string | true>();
   for (const spec of specs) {
     const value = input[spec.name];
     if (spec.kind === "boolean") {
       if (value === true) {
-        args.push(`--${spec.name}`);
+        flags.set(`--${spec.name}`, true);
       }
       continue;
     }
     if (Option.isOption(value) && Option.isSome(value)) {
-      args.push(`--${spec.name}`, String(value.value));
+      flags.set(`--${spec.name}`, String(value.value));
     }
   }
-  return args;
+  return flags;
 }
 
 function commandContext(options: {
@@ -89,11 +94,12 @@ function commandContext(options: {
   fileSystem: CommandContext["fileSystem"];
   pretty: boolean;
 }): CommandContext {
-  const args = argvFromInput(options.input, options.specs);
+  const flags = flagsFromInput(options.input, options.specs);
   return {
-    args,
+    flags,
+    positionals: positionalsFromInput(options.input),
     command: options.command,
-    outputMode: parseOutputMode(args, options.pretty),
+    outputMode: parseOutputMode(flags, options.pretty),
     database: options.database,
     fileSystem: options.fileSystem,
   };

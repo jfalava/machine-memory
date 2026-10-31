@@ -2,6 +2,8 @@ name: CLI - Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
   pull_request:
@@ -22,8 +24,16 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # nimbus-docs lint checks links against .nimbus/routes.json, which only
+      # `astro build` writes.
+      - name: Build docs
+        run: bun run --cwd docs build
+
       # Oxlint runs with typeCheck off; type errors are reported only by the
       # typecheck step below.
+      - name: Check formatting
+        run: bun run format:check:global
+
       - name: Lint all workspaces
         run: bun run lint:global
 

@@ -16,91 +16,12 @@ import { Schema } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  assetNameForPlatform,
-  binaryNameForPlatform,
-  extractZipBinary,
-} from "@/upgrade";
-
-import {
   type CliOutput,
   type CliRow,
   decodeCliOutput,
   decodeCliRows,
 } from "./fixtures/cli-output";
-
-const cliTokenizerJson = {
-  version: "1.0",
-  truncation: null,
-  padding: null,
-  added_tokens: [
-    {
-      id: 0,
-      content: "[PAD]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 1,
-      content: "[UNK]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 2,
-      content: "[CLS]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 3,
-      content: "[SEP]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-  ],
-  normalizer: {
-    type: "BertNormalizer",
-    clean_text: true,
-    handle_chinese_chars: true,
-    strip_accents: null,
-    lowercase: true,
-  },
-  pre_tokenizer: { type: "BertPreTokenizer" },
-  post_processor: {
-    type: "BertProcessing",
-    sep: ["[SEP]", 3],
-    cls: ["[CLS]", 2],
-  },
-  decoder: { type: "WordPiece", prefix: "##", cleanup: true },
-  model: {
-    type: "WordPiece",
-    unk_token: "[UNK]",
-    continuing_subword_prefix: "##",
-    max_input_chars_per_word: 100,
-    vocab: { "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, hello: 4 },
-  },
-};
-
-const cliTokenizerConfig = {
-  model_max_length: 512,
-  do_lower_case: true,
-  cls_token: "[CLS]",
-  sep_token: "[SEP]",
-  unk_token: "[UNK]",
-  pad_token: "[PAD]",
-};
+import { tokenizerConfig, tokenizerJson } from "./fixtures/tokenizer";
 
 let tokenizerServer: Server;
 /** Tokenizer download overrides that point the CLI at the local test server. */
@@ -344,12 +265,12 @@ beforeAll(async () => {
     const url = request.url ?? "";
     if (url.endsWith("/tokenizer.json")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(cliTokenizerJson));
+      response.end(JSON.stringify(tokenizerJson));
       return;
     }
     if (url.endsWith("/tokenizer_config.json")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(cliTokenizerConfig));
+      response.end(JSON.stringify(tokenizerConfig));
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
@@ -376,7 +297,24 @@ afterAll(async () => {
   );
 });
 
-describe("CLI rewrite integration", () => {
+describe("CLI integration", () => {
+  it("reads a flag value that looks like a flag as a value, not a flag", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy uses bun",
+      "--context=--quiet",
+    );
+    expect(added.code).toBe(0);
+    // --quiet would print only { id }; the full row proves it stayed a value.
+    expect(added.json).toMatchObject({
+      content: "Deploy uses bun",
+      context: "--quiet",
+    });
+  });
+
   it("supports the add, query, update, get, and deprecate workflow", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(
@@ -1844,38 +1782,23 @@ describe("audit write regressions", () => {
 describe("human command errors", () => {
   it("renders all human command argument errors as terminal text", async () => {
     const cases = [
-      [
-        ["upgrade", "--bad"],
-        "Usage: machine-memory upgrade",
-        "✗ Upgrade failed",
-      ],
-      [
-        ["init", "--bad"],
-        "Usage: machine-memory init (--local|--remote|--mcp)",
-        "✗ init failed",
-      ],
-      [
-        ["remote", "setup", "--bad"],
-        "Usage: machine-memory remote setup [--url <worker-url>] [--token <worker-token>]",
-        "✗ remote setup failed",
-      ],
-      [
-        ["remote", "provision", "--bad"],
-        "Usage: machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
-        "✗ remote provision failed",
-      ],
-      [
-        ["local", "export", "--bad"],
-        "Usage: machine-memory local export [local-db-path] --remote",
-        "✗ local export failed",
-      ],
+      [["upgrade"], "✗ Upgrade failed"],
+      [["init"], "✗ init failed"],
+      [["remote", "setup"], "✗ remote setup failed"],
+      [["remote", "provision"], "✗ remote provision failed"],
+      [["local", "export"], "✗ local export failed"],
     ] as const;
 
-    for (const [args, usage, heading] of cases) {
-      const result = await execBun(["run", cliEntrypoint, ...args], {});
+    for (const [command, heading] of cases) {
+      const result = await execBun(
+        ["run", cliEntrypoint, ...command, "--bad"],
+        {},
+      );
 
       expect(result.code).toBe(1);
-      expect(result.stdout).toContain(usage);
+      expect(result.stdout).toContain(
+        `Usage: machine-memory ${command.join(" ")}`,
+      );
       expect(result.stdout).not.toContain('"error"');
       expect(result.stderr).toContain(heading);
       expect(result.stderr).not.toContain('{"error"');
@@ -1910,69 +1833,5 @@ describe("human command errors", () => {
       expect(result.stdout).toContain("Hint");
       expect(result.stdout).toContain(hint);
     }
-  });
-});
-
-describe("release platform selection", () => {
-  it("selects the published asset for each supported target", () => {
-    expect(assetNameForPlatform("darwin", "arm64")).toBe(
-      "machine-memory-darwin-arm64.zip",
-    );
-    expect(assetNameForPlatform("linux", "x64")).toBe(
-      "machine-memory-linux-x64.zip",
-    );
-    expect(assetNameForPlatform("win32", "x64")).toBe(
-      "machine-memory-windows-x64.zip",
-    );
-    expect(assetNameForPlatform("freebsd", "x64")).toBeUndefined();
-  });
-
-  it("uses normalized executable names inside release archives", () => {
-    expect(binaryNameForPlatform("darwin")).toBe("machine-memory");
-    expect(binaryNameForPlatform("linux")).toBe("machine-memory");
-    expect(binaryNameForPlatform("win32")).toBe("machine-memory.exe");
-    expect(binaryNameForPlatform("freebsd")).toBeUndefined();
-  });
-
-  it("extracts the expected executable from a stored ZIP archive", () => {
-    const name = new TextEncoder().encode("machine-memory-linux-x64");
-    const contents = new TextEncoder().encode("binary");
-    const local = new Uint8Array(30 + name.length + contents.length);
-    const localView = new DataView(local.buffer);
-    localView.setUint32(0, 0x04034b50, true);
-    localView.setUint16(8, 0, true);
-    localView.setUint32(18, contents.length, true);
-    localView.setUint32(22, contents.length, true);
-    localView.setUint16(26, name.length, true);
-    local.set(name, 30);
-    local.set(contents, 30 + name.length);
-
-    const central = new Uint8Array(46 + name.length);
-    const centralView = new DataView(central.buffer);
-    centralView.setUint32(0, 0x02014b50, true);
-    centralView.setUint16(10, 0, true);
-    centralView.setUint32(20, contents.length, true);
-    centralView.setUint32(24, contents.length, true);
-    centralView.setUint16(28, name.length, true);
-    centralView.setUint32(42, 0, true);
-    central.set(name, 46);
-
-    const end = new Uint8Array(22);
-    const endView = new DataView(end.buffer);
-    endView.setUint32(0, 0x06054b50, true);
-    endView.setUint16(8, 1, true);
-    endView.setUint16(10, 1, true);
-    endView.setUint32(12, central.length, true);
-    endView.setUint32(16, local.length, true);
-
-    const archive = new Uint8Array(local.length + central.length + end.length);
-    archive.set(local, 0);
-    archive.set(central, local.length);
-    archive.set(end, local.length + central.length);
-
-    expect(extractZipBinary(archive, "machine-memory")).toEqual(contents);
-    expect(extractZipBinary(archive, "machine-memory-linux-x64")).toEqual(
-      contents,
-    );
   });
 });

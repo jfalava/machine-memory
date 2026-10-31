@@ -17,16 +17,16 @@ export function estimateEmbeddingTokens(text: string): number {
 
 export const EmbeddingSizeReportSchema = Schema.Struct({
   source: Schema.Literal("bytes"),
-  bytes_estimate: Schema.Number,
-  max_bytes_estimate: Schema.Number,
+  bytes_estimate: Schema.Finite,
+  max_bytes_estimate: Schema.Finite,
   within_budget: Schema.Boolean,
   binding_limit: Schema.NullOr(Schema.Literal("bytes")),
-  over_by_bytes: Schema.Number,
-  remaining: Schema.Number,
+  over_by_bytes: Schema.Finite,
+  remaining: Schema.Finite,
   limits: Schema.Struct({
     bytes_estimate: Schema.Struct({
-      value: Schema.Number,
-      limit: Schema.Number,
+      value: Schema.Finite,
+      limit: Schema.Finite,
       pass: Schema.Boolean,
     }),
   }),

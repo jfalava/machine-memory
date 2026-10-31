@@ -112,11 +112,13 @@ export function gotchaOverlaps(
   }>,
 ): GotchaOverlap[] {
   const gotchas = rows
+    .values()
     .filter((row) => row.memory_type === "gotcha")
     .map((row) => ({
       id: row.id,
       identifiers: new Set(extractQueryIdentifiers(row.content)),
-    }));
+    }))
+    .toArray();
   const overlaps: GotchaOverlap[] = [];
   for (const [index, left] of gotchas.entries()) {
     for (const right of gotchas.slice(index + 1)) {

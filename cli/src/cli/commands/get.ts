@@ -29,9 +29,9 @@ function minimalGetSummary(row: JsonObject): JsonObject {
 
 export function handleGetCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
+    const { outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const idSpec = args[0];
+    const idSpec = commandCtx.positionals[0];
     if (!idSpec) {
       usageError("Usage: get <id>");
     }

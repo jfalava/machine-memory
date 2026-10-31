@@ -76,9 +76,14 @@ async function bundle(entry: string) {
 }
 
 beforeAll(async () => {
-  challenge = new Uint8Array(
+  const digest = new Uint8Array(
     await crypto.subtle.digest("SHA-256", new TextEncoder().encode(VERIFIER)),
-  ).toBase64({ alphabet: "base64url", omitPadding: true });
+  );
+  // Uint8Array.prototype.toBase64 is missing from the Node used in CI.
+  challenge = btoa(String.fromCodePoint(...digest))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
   const [router, oauth] = await Promise.all([
     bundle("../router/src/index.ts"),
     bundle("test/fixtures/oauth-worker.ts"),

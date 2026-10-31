@@ -1,8 +1,7 @@
-import { hasStrongMatch } from "@machine-memory/contract";
+import { extractTerms, hasStrongMatch } from "@machine-memory/contract";
 import { describe, expect, it } from "vitest";
 
 import {
-  extractTerms,
   scoreMemoryRows,
   scoredResultRow,
   strongerMatch,

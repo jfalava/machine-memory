@@ -1,960 +1,190 @@
-import { gotchaOverlaps } from "@machine-memory/contract";
-import { Effect } from "effect";
+import {
+  analyzeMemoryDoctor,
+  DEFAULT_STATUS_EXPIRY_DAYS,
+  jsonNumber,
+  jsonString,
+  type MemoryDoctorFinding,
+} from "@machine-memory/contract";
+import { Effect, Schema } from "effect";
 
 import { printJson } from "../../cli-utils";
-import type { MemoryDatabaseError } from "../../effect/database";
-import {
-  jsonNumber,
-  jsonObject,
-  jsonString,
-  jsonStringArray,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "../../json";
+import type { JsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
-import { parseStoredEvidence } from "../features/memory/evidence";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
-import { parseTags, stringValue, uniqueLowerPreserveOrder } from "../shared";
+import { uniqueLowerPreserveOrder } from "../shared";
 
-type MemorySnapshot = {
-  id: number;
-  content: string;
-  tagsRaw: string;
-  memoContext: string;
-  memoryType: string;
-  certainty: string;
-  evidenceCount: number;
-  refsRaw: JsonValue;
-  expiresAfterDays: number | null;
-  termSet: Set<string>;
-};
+/** Output group, in print order, for each finding kind contract reports. */
+const FINDING_GROUPS = {
+  exact_duplicate: "exact_duplicates",
+  near_duplicate: "near_duplicates",
+  stale_status_overlap: "stale_status_overlaps",
+  canonical_thread_overlap: "canonical_thread_overlaps",
+  status_missing_expiry: "status_expiry",
+  transient_non_status: "type_boundary",
+  status_looks_decision: "type_boundary",
+  empty_tags: "tag_hygiene",
+  invalid_tags: "tag_hygiene",
+  taxonomy_mismatch: "tag_hygiene",
+  malformed_refs: "malformed_refs",
+  verified_without_evidence: "verified_without_evidence",
+  gotcha_overlap: "gotcha_overlaps",
+} as const;
+type FindingKind = keyof typeof FINDING_GROUPS;
+type FindingGroup = (typeof FINDING_GROUPS)[FindingKind];
 
-type ExactDuplicateFinding = {
-  kind: "exact_duplicate";
-  keep_id: number;
-  duplicate_ids: number[];
-  suggested_command: string;
-};
-
-type NearDuplicateFinding = {
-  kind: "near_duplicate";
-  keep_id: number;
-  duplicate_id: number;
-  similarity: number;
-  suggested_command: string;
-};
-
-type StaleStatusFinding = {
-  kind: "stale_status_overlap";
-  stale_id: number;
-  superseded_by: number;
-  shared_tags: string[];
-  suggested_command: string;
-};
-
-type TagFinding = {
-  kind: "empty_tags" | "invalid_tags" | "taxonomy_mismatch";
-  id: number;
-  tags: string;
-  normalized_tags: string;
-  taxonomy_issues?: string[];
-  suggested_tags?: string;
-  suggested_command: string;
-};
-
-type RefsFinding = {
-  kind: "malformed_refs";
-  id: number;
-  refs: JsonValue;
-  suggested_refs: string[];
-  suggested_command: string;
-};
-
-type CanonicalThreadFinding = {
-  kind: "canonical_thread_overlap";
-  stale_id: number;
-  canonical_id: number;
-  thread_key: string;
-  suggested_command: string;
-};
-
-type StatusExpiryFinding = {
-  kind: "status_missing_expiry";
-  id: number;
-  expires_after_days: null;
-  suggested_days: number;
-  suggested_command: string;
-};
-
-type TypeBoundaryFinding = {
-  kind: "transient_non_status" | "status_looks_decision";
-  id: number;
-  memory_type: string;
-  matched_terms: string[];
-  suggested_type: string;
-  suggested_command: string;
-};
-
-type UnevidencedVerifiedFinding = {
-  kind: "verified_without_evidence";
-  id: number;
-  hint: string;
-};
-
-type GotchaOverlapFinding = {
-  kind: "gotcha_overlap";
-  ids: number[];
-  shared_identifiers: string[];
-  hint: string;
-};
-
-type DoctorFindings = {
-  exact_duplicates: ExactDuplicateFinding[];
-  near_duplicates: NearDuplicateFinding[];
-  stale_status_overlaps: StaleStatusFinding[];
-  canonical_thread_overlaps: CanonicalThreadFinding[];
-  status_expiry: StatusExpiryFinding[];
-  type_boundary: TypeBoundaryFinding[];
-  tag_hygiene: TagFinding[];
-  malformed_refs: RefsFinding[];
-  verified_without_evidence: UnevidencedVerifiedFinding[];
-  gotcha_overlaps: GotchaOverlapFinding[];
-};
-
-type ExactDuplicateResult = {
-  findings: ExactDuplicateFinding[];
-  duplicateKeyById: Map<number, string>;
-};
-
-type TagHygieneResult = {
-  findings: TagFinding[];
-  skipTaxonomy: boolean;
-};
-
-type MalformedRefsDiagnosis = {
-  malformed: boolean;
-  suggested: string[];
-};
-
-const NEAR_DUPLICATE_THRESHOLD = 0.78;
-const NEAR_DUPLICATE_MAX_CANDIDATES = 120;
-const MAX_POSTINGS_PER_TOKEN = 200;
-const DEFAULT_STATUS_EXPIRY_DAYS = 14;
-const TRANSIENT_INDICATORS = [
-  "currently",
-  "current",
-  "today",
-  "now",
-  "phase",
-  "progress",
-  "blocked",
-  "blocking",
-  "wip",
-  "in progress",
-  "todo",
-  "failing",
-  "failed",
-  "broken",
-  "fixing",
-  "fixed",
-  "resolved",
-  "pass",
-  "passed",
-  "snapshot",
-  "temporary",
-  "for now",
-];
-const DURABLE_INDICATORS = [
-  "decision",
-  "decided",
-  "we chose",
-  "always",
-  "must",
-  "policy",
-  "architecture",
-  "standard",
-  "convention",
-  "rule",
-  "design",
-  "contract",
-];
+function isFindingKind(kind: string): kind is FindingKind {
+  return Object.hasOwn(FINDING_GROUPS, kind);
+}
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function refsSuggestedPayload(refs: string[]): string {
-  return shellQuote(JSON.stringify(refs));
+type CommandInput = { finding: MemoryDoctorFinding; update: string };
+
+/** Ready-to-review CLI commands for the findings that have a mechanical fix. */
+const SUGGESTED_COMMANDS = {
+  exact_duplicate: ({ finding }) =>
+    `machine-memory delete ${finding.ids.slice(1).join(",")}`,
+  near_duplicate: ({ finding }) =>
+    `machine-memory deprecate ${finding.ids[1]} --superseded-by ${finding.ids[0]}`,
+  stale_status_overlap: ({ finding }) =>
+    `machine-memory deprecate ${finding.ids[0]} --superseded-by ${finding.ids[1]}`,
+  canonical_thread_overlap: ({ finding }) =>
+    `machine-memory deprecate ${finding.ids[0]} --superseded-by ${finding.ids[1]}`,
+  status_missing_expiry: ({ update }) =>
+    `${update} --expires-after-days ${DEFAULT_STATUS_EXPIRY_DAYS}`,
+  transient_non_status: ({ update }) =>
+    `${update} --type status --expires-after-days ${DEFAULT_STATUS_EXPIRY_DAYS}`,
+  status_looks_decision: ({ update }) =>
+    `${update} --type decision --expires-after-days null`,
+  empty_tags: ({ update }) => `${update} --tags "<tag1,tag2>"`,
+  invalid_tags: ({ finding, update }) =>
+    `${update} --tags ${shellQuote(jsonString(finding.details.normalized_tags) ?? "")}`,
+  taxonomy_mismatch: ({ finding, update }) =>
+    `${update} --tags ${shellQuote(jsonString(finding.details.suggested_tags) ?? "")}`,
+  malformed_refs: ({ finding, update }) =>
+    `${update} --refs ${shellQuote(JSON.stringify(finding.details.suggested_refs ?? []))}`,
+} satisfies Partial<Record<FindingKind, (input: CommandInput) => string>>;
+
+type CommandKind = keyof typeof SUGGESTED_COMMANDS;
+
+function hasSuggestedCommand(kind: FindingKind): kind is CommandKind {
+  return Object.hasOwn(SUGGESTED_COMMANDS, kind);
 }
 
-function maybeInteger(value: JsonValue | undefined): number | null {
-  const numberValue = jsonNumber(value);
-  if (numberValue !== undefined && Number.isInteger(numberValue)) {
-    return numberValue;
+function suggestedCommand(
+  kind: FindingKind,
+  finding: MemoryDoctorFinding,
+  content: string,
+): string | undefined {
+  if (!hasSuggestedCommand(kind)) {
+    return undefined;
   }
-  const textValue = jsonString(value);
-  if (textValue !== undefined && textValue.trim() !== "") {
-    const parsed = Number(textValue);
-    if (Number.isInteger(parsed)) {
-      return parsed;
-    }
+  const build: (input: CommandInput) => string = SUGGESTED_COMMANDS[kind];
+  const update = `machine-memory update ${finding.ids[0]} ${shellQuote(content)}`;
+  return build({ finding, update });
+}
+
+function outputFinding(
+  finding: MemoryDoctorFinding,
+  command: string | undefined,
+): JsonObject {
+  const item: JsonObject = { kind: finding.kind };
+  if (finding.ids.length === 1) {
+    item.id = finding.ids[0];
   }
-  return null;
-}
-
-function loadActiveMemories(
-  commandCtx: CommandContext,
-): Effect.Effect<MemorySnapshot[], MemoryDatabaseError> {
-  return requireDatabase(commandCtx)
-    .all(
-      `SELECT * FROM memories
-       WHERE repository = ?
-         AND status = 'active'
-       ORDER BY updated_at DESC, id DESC`,
-      [repositoryForCurrentDirectory()],
-    )
-    .pipe(
-      Effect.map((rows) =>
-        rows.map((rawRow) => {
-          const row = jsonObject(rawRow) ?? {};
-          const id = Number(row.id ?? 0);
-          const content = stringValue(row.content);
-          const tagsRaw = stringValue(row.tags);
-          const memoContext = stringValue(row.context);
-          return {
-            id,
-            content,
-            tagsRaw,
-            memoContext,
-            memoryType: stringValue(row.memory_type),
-            certainty: stringValue(row.certainty),
-            evidenceCount: parseStoredEvidence(row.evidence).length,
-            refsRaw: row.refs,
-            expiresAfterDays: maybeInteger(row.expires_after_days),
-            termSet: setFromTerms([content, tagsRaw, memoContext].join(" ")),
-          };
-        }),
-      ),
-    );
-}
-
-function exactDuplicateMap(
-  rows: MemorySnapshot[],
-): Map<string, MemorySnapshot[]> {
-  const groups = new Map<string, MemorySnapshot[]>();
-  for (const row of rows) {
-    const key = [row.content, row.tagsRaw, row.memoContext].join("\u0001");
-    const existing = groups.get(key) ?? [];
-    existing.push(row);
-    groups.set(key, existing);
+  if (finding.kind === "gotcha_overlap") {
+    item.ids = [...finding.ids];
   }
-  return groups;
-}
-
-function detectExactDuplicates(rows: MemorySnapshot[]): ExactDuplicateResult {
-  const findings: ExactDuplicateFinding[] = [];
-  const duplicateKeyById = new Map<number, string>();
-  for (const [key, group] of exactDuplicateMap(rows)) {
-    if (group.length <= 1) {
-      continue;
-    }
-    const keep = group[0];
-    if (!keep) {
-      continue;
-    }
-    for (const entry of group) {
-      duplicateKeyById.set(entry.id, key);
-    }
-    const duplicateIds = group.slice(1).map((entry) => entry.id);
-    findings.push({
-      kind: "exact_duplicate",
-      keep_id: keep.id,
-      duplicate_ids: duplicateIds,
-      suggested_command: `machine-memory delete ${duplicateIds.join(",")}`,
-    });
+  Object.assign(item, finding.details);
+  if (command !== undefined) {
+    item.suggested_command = command;
   }
-  return { findings, duplicateKeyById };
+  return item;
 }
 
-function candidateIndexes(
-  termSet: Set<string>,
-  postings: Map<string, number[]>,
-): number[] {
-  const candidate = new Set<number>();
-  const tokens = [...termSet].slice(0, 12);
-  for (const token of tokens) {
-    const indexes = postings.get(token);
-    if (!indexes) {
-      continue;
-    }
-    for (const index of indexes) {
-      candidate.add(index);
-      if (candidate.size >= NEAR_DUPLICATE_MAX_CANDIDATES) {
-        return [...candidate];
-      }
-    }
-  }
-  return [...candidate];
-}
+const GROUP_ORDER = [...new Set(Object.values(FINDING_GROUPS))];
 
-function upsertPostings(
-  postings: Map<string, number[]>,
-  termSet: Set<string>,
-  rowIndex: number,
+function groupFindings(
+  findings: readonly MemoryDoctorFinding[],
+  contentById: ReadonlyMap<number, string>,
 ) {
-  for (const token of termSet) {
-    const existing = postings.get(token) ?? [];
-    if (existing.length < MAX_POSTINGS_PER_TOKEN) {
-      existing.push(rowIndex);
-      postings.set(token, existing);
-    }
-  }
-}
-
-function isComparableNearDuplicate(
-  row: MemorySnapshot,
-  candidate: MemorySnapshot | undefined,
-  duplicateKeyById: Map<number, string>,
-): candidate is MemorySnapshot {
-  if (!candidate || candidate.id === row.id) {
-    return false;
-  }
-  const leftKey = duplicateKeyById.get(row.id);
-  const rightKey = duplicateKeyById.get(candidate.id);
-  return !(leftKey && rightKey && leftKey === rightKey);
-}
-
-function bestNearDuplicateForRow(
-  row: MemorySnapshot,
-  rows: MemorySnapshot[],
-  candidates: number[],
-  duplicateKeyById: Map<number, string>,
-): { id: number; similarity: number } | null {
-  let best: { id: number; similarity: number } | null = null;
-  for (const candidateIndex of candidates) {
-    const candidate = rows[candidateIndex];
-    if (!isComparableNearDuplicate(row, candidate, duplicateKeyById)) {
+  const groups = new Map<FindingGroup, JsonObject[]>(
+    GROUP_ORDER.map((group) => [group, []]),
+  );
+  const commandsByGroup = new Map<FindingGroup, string[]>(
+    GROUP_ORDER.map((group) => [group, []]),
+  );
+  for (const finding of findings) {
+    if (!isFindingKind(finding.kind)) {
       continue;
     }
-    const similarity = jaccardSimilarity(row.termSet, candidate.termSet);
-    if (similarity < NEAR_DUPLICATE_THRESHOLD) {
-      continue;
-    }
-    if (!best || similarity > best.similarity) {
-      best = { id: candidate.id, similarity };
-    }
-  }
-  return best;
-}
-
-function detectNearDuplicates(
-  rows: MemorySnapshot[],
-  duplicateKeyById: Map<number, string>,
-): NearDuplicateFinding[] {
-  const findings: NearDuplicateFinding[] = [];
-  const postings = new Map<string, number[]>();
-
-  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex];
-    if (!row || row.termSet.size === 0) {
-      continue;
-    }
-
-    const best = bestNearDuplicateForRow(
-      row,
-      rows,
-      candidateIndexes(row.termSet, postings),
-      duplicateKeyById,
+    const group = FINDING_GROUPS[finding.kind];
+    const command = suggestedCommand(
+      finding.kind,
+      finding,
+      contentById.get(finding.ids[0] ?? 0) ?? "",
     );
-
-    if (best) {
-      findings.push({
-        kind: "near_duplicate",
-        keep_id: best.id,
-        duplicate_id: row.id,
-        similarity: best.similarity,
-        suggested_command: `machine-memory deprecate ${row.id} --superseded-by ${best.id}`,
-      });
-    }
-
-    upsertPostings(postings, row.termSet, rowIndex);
-  }
-
-  return findings;
-}
-
-function selectStatusMatch(tags: string[], latestByTag: Map<string, number>) {
-  for (const tag of tags) {
-    const match = latestByTag.get(tag);
-    if (match !== undefined) {
-      return match;
+    groups.get(group)?.push(outputFinding(finding, command));
+    if (command !== undefined) {
+      commandsByGroup.get(group)?.push(command);
     }
   }
-  return undefined;
-}
-
-function detectStaleStatusOverlaps(
-  rows: MemorySnapshot[],
-): StaleStatusFinding[] {
-  const findings: StaleStatusFinding[] = [];
-  const latestByTag = new Map<string, number>();
-
-  for (const row of rows) {
-    if (row.memoryType !== "status") {
-      continue;
-    }
-    const normalizedTags = uniqueLowerPreserveOrder(
-      parseTags(row.tagsRaw).map((tag) => tag.toLowerCase()),
-    );
-    if (normalizedTags.length === 0) {
-      continue;
-    }
-    const newerId = selectStatusMatch(normalizedTags, latestByTag);
-    if (newerId !== undefined) {
-      const sharedTags = normalizedTags.filter(
-        (tag) => latestByTag.get(tag) === newerId,
-      );
-      findings.push({
-        kind: "stale_status_overlap",
-        stale_id: row.id,
-        superseded_by: newerId,
-        shared_tags: sharedTags,
-        suggested_command: `machine-memory deprecate ${row.id} --superseded-by ${newerId}`,
-      });
-    }
-    for (const tag of normalizedTags) {
-      if (!latestByTag.has(tag)) {
-        latestByTag.set(tag, row.id);
-      }
-    }
-  }
-
-  return findings;
-}
-
-function normalizedTagValue(raw: string): string {
-  return uniqueLowerPreserveOrder(parseTags(raw)).join(",");
-}
-
-type TagScopes = {
-  area: string | undefined;
-  topic: string | undefined;
-  kind: string | undefined;
-  extraScoped: string[];
-  unscoped: string[];
-};
-
-function parseTagScopes(tags: string[]): TagScopes {
-  const scopes: TagScopes = {
-    area: undefined,
-    topic: undefined,
-    kind: undefined,
-    extraScoped: [],
-    unscoped: [],
-  };
-
-  for (const tag of tags) {
-    const index = tag.indexOf(":");
-    if (index <= 0 || index === tag.length - 1) {
-      scopes.unscoped.push(tag);
-      continue;
-    }
-    const namespace = tag.slice(0, index);
-    const value = tag.slice(index + 1);
-    switch (namespace) {
-      case "area":
-        if (!scopes.area) {
-          scopes.area = value;
-        } else {
-          scopes.extraScoped.push(tag);
-        }
-        break;
-      case "topic":
-        if (!scopes.topic) {
-          scopes.topic = value;
-        } else {
-          scopes.extraScoped.push(tag);
-        }
-        break;
-      case "kind":
-        if (!scopes.kind) {
-          scopes.kind = value;
-        } else {
-          scopes.extraScoped.push(tag);
-        }
-        break;
-      default:
-        scopes.extraScoped.push(tag);
-        break;
-    }
-  }
-
-  return scopes;
-}
-
-function normalizeTagSegment(value: string, fallback: string): string {
-  const cleaned = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return cleaned || fallback;
-}
-
-function taxonomySuggestionTags(row: MemorySnapshot): string {
-  const normalizedTags = parseTags(normalizedTagValue(row.tagsRaw)).map((tag) =>
-    tag.toLowerCase(),
+  const commands = GROUP_ORDER.flatMap(
+    (group) => commandsByGroup.get(group) ?? [],
   );
-  const scopes = parseTagScopes(normalizedTags);
-  const seed = scopes.unscoped[0] ?? row.memoryType.toLowerCase();
-  const secondary = scopes.unscoped[1] ?? seed;
-  const area = normalizeTagSegment(scopes.area ?? seed, "memory");
-  const topic = normalizeTagSegment(
-    scopes.topic ?? secondary,
-    row.memoryType.toLowerCase(),
-  );
-  const kind = normalizeTagSegment(
-    row.memoryType.toLowerCase(),
-    row.memoryType.toLowerCase(),
-  );
-  return uniqueLowerPreserveOrder([
-    `area:${area}`,
-    `topic:${topic}`,
-    `kind:${kind}`,
-    ...scopes.extraScoped,
-  ]).join(",");
+  return { groups, commands: uniqueLowerPreserveOrder(commands) };
 }
 
-function basicTagHygieneFindings(
-  row: MemorySnapshot,
-  normalized: string,
-  contentArg: string,
-): TagHygieneResult {
-  if (normalized.length === 0) {
-    return {
-      findings: [
-        {
-          kind: "empty_tags",
-          id: row.id,
-          tags: row.tagsRaw,
-          normalized_tags: normalized,
-          suggested_command: `machine-memory update ${row.id} ${contentArg} --tags "<tag1,tag2>"`,
-        },
-      ],
-      skipTaxonomy: true,
-    };
-  }
-  if (row.tagsRaw !== normalized) {
-    return {
-      findings: [
-        {
-          kind: "invalid_tags",
-          id: row.id,
-          tags: row.tagsRaw,
-          normalized_tags: normalized,
-          suggested_command: `machine-memory update ${row.id} ${contentArg} --tags ${shellQuote(normalized)}`,
-        },
-      ],
-      skipTaxonomy: false,
-    };
-  }
-  return { findings: [], skipTaxonomy: false };
-}
-
-function taxonomyIssuesForRow(
-  row: MemorySnapshot,
-  normalized: string,
-): string[] {
-  const normalizedTags = parseTags(normalized).map((tag) => tag.toLowerCase());
-  const scopes = parseTagScopes(normalizedTags);
-  const taxonomyIssues: string[] = [];
-  if (!scopes.area) {
-    taxonomyIssues.push("missing_area");
-  }
-  if (!scopes.topic) {
-    taxonomyIssues.push("missing_topic");
-  }
-  if (!scopes.kind) {
-    taxonomyIssues.push("missing_kind");
-  }
-  const lowerType = row.memoryType.toLowerCase();
-  if (scopes.kind && scopes.kind !== lowerType) {
-    taxonomyIssues.push(`kind_mismatch:${scopes.kind}->${lowerType}`);
-  }
-  return taxonomyIssues;
-}
-
-function taxonomyFinding(
-  row: MemorySnapshot,
-  normalized: string,
-  contentArg: string,
-): TagFinding | null {
-  const taxonomyIssues = taxonomyIssuesForRow(row, normalized);
-  if (taxonomyIssues.length === 0) {
-    return null;
-  }
-  const suggestedTags = taxonomySuggestionTags(row);
-  return {
-    kind: "taxonomy_mismatch",
-    id: row.id,
-    tags: row.tagsRaw,
-    normalized_tags: normalized,
-    taxonomy_issues: taxonomyIssues,
-    suggested_tags: suggestedTags,
-    suggested_command: `machine-memory update ${row.id} ${contentArg} --tags ${shellQuote(suggestedTags)}`,
-  };
-}
-
-function detectTagHygiene(rows: MemorySnapshot[]): TagFinding[] {
-  const findings: TagFinding[] = [];
-
-  for (const row of rows) {
-    const normalized = normalizedTagValue(row.tagsRaw);
-    const contentArg = shellQuote(row.content);
-    const basic = basicTagHygieneFindings(row, normalized, contentArg);
-    findings.push(...basic.findings);
-    if (basic.skipTaxonomy) {
-      continue;
-    }
-    const taxonomy = taxonomyFinding(row, normalized, contentArg);
-    if (taxonomy) {
-      findings.push(taxonomy);
-    }
-  }
-
-  return findings;
-}
-
-function canonicalThreadKey(row: MemorySnapshot): string | null {
-  const normalizedTags = parseTags(normalizedTagValue(row.tagsRaw)).map((tag) =>
-    tag.toLowerCase(),
-  );
-  const scopes = parseTagScopes(normalizedTags);
-  if (!scopes.topic) {
-    return null;
-  }
-  const kind = normalizeTagSegment(
-    scopes.kind ?? row.memoryType.toLowerCase(),
-    row.memoryType.toLowerCase(),
-  );
-  const area = normalizeTagSegment(scopes.area ?? "global", "global");
-  const topic = normalizeTagSegment(scopes.topic, "topic");
-  return `${kind}|${area}|${topic}`;
-}
-
-function detectCanonicalThreadOverlaps(
-  rows: MemorySnapshot[],
-): CanonicalThreadFinding[] {
-  const findings: CanonicalThreadFinding[] = [];
-  const latestByThread = new Map<string, number>();
-
-  for (const row of rows) {
-    const threadKey = canonicalThreadKey(row);
-    if (!threadKey) {
-      continue;
-    }
-    const canonicalId = latestByThread.get(threadKey);
-    if (canonicalId !== undefined) {
-      findings.push({
-        kind: "canonical_thread_overlap",
-        stale_id: row.id,
-        canonical_id: canonicalId,
-        thread_key: threadKey,
-        suggested_command: `machine-memory deprecate ${row.id} --superseded-by ${canonicalId}`,
-      });
-      continue;
-    }
-    latestByThread.set(threadKey, row.id);
-  }
-
-  return findings;
-}
-
-function detectStatusExpiry(rows: MemorySnapshot[]): StatusExpiryFinding[] {
-  const findings: StatusExpiryFinding[] = [];
-  for (const row of rows) {
-    if (row.memoryType !== "status" || row.expiresAfterDays !== null) {
-      continue;
-    }
-    findings.push({
-      kind: "status_missing_expiry",
-      id: row.id,
-      expires_after_days: null,
-      suggested_days: DEFAULT_STATUS_EXPIRY_DAYS,
-      suggested_command: `machine-memory update ${row.id} ${shellQuote(row.content)} --expires-after-days ${DEFAULT_STATUS_EXPIRY_DAYS}`,
-    });
-  }
-  return findings;
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function indicatorMatches(
-  text: string,
-  indicators: readonly string[],
-): string[] {
-  const matches: string[] = [];
-  for (const indicator of indicators) {
-    const matched = indicator.includes(" ")
-      ? text.includes(indicator)
-      : new RegExp(`\\b${escapeRegex(indicator)}\\b`).test(text);
-    if (matched) {
-      matches.push(indicator);
-    }
-  }
-  return matches;
-}
-
-function detectTypeBoundary(rows: MemorySnapshot[]): TypeBoundaryFinding[] {
-  const findings: TypeBoundaryFinding[] = [];
-  for (const row of rows) {
-    const text = [row.content, row.memoContext].join(" ").toLowerCase();
-    const transientMatches = indicatorMatches(text, TRANSIENT_INDICATORS);
-    const durableMatches = indicatorMatches(text, DURABLE_INDICATORS);
-    const memoryType = row.memoryType.toLowerCase();
-    if (memoryType !== "status" && transientMatches.length > 0) {
-      findings.push({
-        kind: "transient_non_status",
-        id: row.id,
-        memory_type: row.memoryType,
-        matched_terms: transientMatches,
-        suggested_type: "status",
-        suggested_command: `machine-memory update ${row.id} ${shellQuote(row.content)} --type status --expires-after-days ${DEFAULT_STATUS_EXPIRY_DAYS}`,
-      });
-      continue;
-    }
-    if (
-      memoryType === "status" &&
-      durableMatches.length > 0 &&
-      transientMatches.length === 0
-    ) {
-      findings.push({
-        kind: "status_looks_decision",
-        id: row.id,
-        memory_type: row.memoryType,
-        matched_terms: durableMatches,
-        suggested_type: "decision",
-        suggested_command: `machine-memory update ${row.id} ${shellQuote(row.content)} --type decision --expires-after-days null`,
-      });
-    }
-  }
-  return findings;
-}
-
-function parseMalformedRefs(raw: JsonValue): MalformedRefsDiagnosis {
-  if (Array.isArray(raw)) {
-    const valid = raw.flatMap((item) => {
-      const value = jsonString(item);
-      return value === undefined ? [] : [value];
-    });
-    return { malformed: valid.length !== raw.length, suggested: valid };
-  }
-  const rawText = jsonString(raw);
-  if (rawText === undefined) {
-    return { malformed: true, suggested: [] };
-  }
-  if (rawText.trim() === "") {
-    return { malformed: true, suggested: [] };
-  }
-  try {
-    const parsed = parseJson(rawText);
-    const valid = jsonStringArray(parsed);
-    if (valid !== undefined) {
-      return { malformed: false, suggested: valid };
-    }
-    if (Array.isArray(parsed)) {
-      const normalized = parsed.flatMap((item) => {
-        const value = jsonString(item);
-        return value === undefined ? [] : [value];
-      });
-      return { malformed: true, suggested: normalized };
-    }
-    return { malformed: true, suggested: [] };
-  } catch {
-    const split = rawText
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean);
-    return { malformed: true, suggested: split };
-  }
-}
-
-function detectMalformedRefs(rows: MemorySnapshot[]): RefsFinding[] {
-  const findings: RefsFinding[] = [];
-
-  for (const row of rows) {
-    const diagnosis = parseMalformedRefs(row.refsRaw);
-    if (!diagnosis.malformed) {
-      continue;
-    }
-    findings.push({
-      kind: "malformed_refs",
-      id: row.id,
-      refs: row.refsRaw,
-      suggested_refs: diagnosis.suggested,
-      suggested_command: `machine-memory update ${row.id} ${shellQuote(row.content)} --refs ${refsSuggestedPayload(
-        diagnosis.suggested,
-      )}`,
-    });
-  }
-
-  return findings;
-}
-
-/** Legacy rows predate evidence; only a reviewer knows which kind applies. */
-function detectUnevidencedVerified(
-  rows: MemorySnapshot[],
-): UnevidencedVerifiedFinding[] {
-  return rows
-    .filter((row) => row.certainty === "verified" && row.evidenceCount === 0)
-    .map((row) => ({
-      kind: "verified_without_evidence",
-      id: row.id,
-      hint: `Review, then run: machine-memory update ${row.id} <content> --evidence <kinds>, or lower it with --certainty inferred.`,
-    }));
-}
-
-function detectGotchaOverlaps(rows: MemorySnapshot[]): GotchaOverlapFinding[] {
-  return gotchaOverlaps(
-    rows.map((row) => ({
-      id: row.id,
-      content: row.content,
-      memory_type: row.memoryType,
-    })),
-  ).map((overlap) => ({
-    kind: "gotcha_overlap",
-    ids: [...overlap.ids],
-    shared_identifiers: overlap.shared_identifiers,
-    hint: `Review together (machine-memory get ${overlap.ids.join(",")}); consolidate the shared workaround and deprecate the redundant record with --superseded-by.`,
-  }));
-}
-
-function summarizeFindings(rows: MemorySnapshot[], findings: DoctorFindings) {
-  const commandCount = collectSuggestedCommands(findings).length;
-  return {
-    checked: rows.length,
-    exact_duplicates: findings.exact_duplicates.length,
-    near_duplicates: findings.near_duplicates.length,
-    stale_status_overlaps: findings.stale_status_overlaps.length,
-    canonical_thread_overlaps: findings.canonical_thread_overlaps.length,
-    status_missing_expiry: findings.status_expiry.length,
-    type_boundary: findings.type_boundary.length,
-    tag_hygiene: findings.tag_hygiene.length,
-    malformed_refs: findings.malformed_refs.length,
-    verified_without_evidence: findings.verified_without_evidence.length,
-    gotcha_overlaps: findings.gotcha_overlaps.length,
-    suggested_commands: commandCount,
-  };
-}
-
-function collectSuggestedCommands(findings: DoctorFindings): string[] {
-  const commands = [
-    ...findings.exact_duplicates.map((item) => item.suggested_command),
-    ...findings.near_duplicates.map((item) => item.suggested_command),
-    ...findings.stale_status_overlaps.map((item) => item.suggested_command),
-    ...findings.canonical_thread_overlaps.map((item) => item.suggested_command),
-    ...findings.status_expiry.map((item) => item.suggested_command),
-    ...findings.type_boundary.map((item) => item.suggested_command),
-    ...findings.tag_hygiene.map((item) => item.suggested_command),
-    ...findings.malformed_refs.map((item) => item.suggested_command),
-  ];
-  return uniqueLowerPreserveOrder(commands);
-}
-
-function printDoctorBrief(commands: string[]) {
-  console.info(commands.join("\n"));
-}
+const StoredRowsSchema = Schema.Array(
+  Schema.Record(Schema.String, Schema.Json),
+);
 
 export function handleDoctorCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const rows = yield* loadActiveMemories(commandCtx);
-    const exact = detectExactDuplicates(rows);
-    const near = detectNearDuplicates(rows, exact.duplicateKeyById);
-    const staleStatus = detectStaleStatusOverlaps(rows);
-    const canonicalThread = detectCanonicalThreadOverlaps(rows);
-    const statusExpiry = detectStatusExpiry(rows);
-    const typeBoundary = detectTypeBoundary(rows);
-    const tags = detectTagHygiene(rows);
-    const refs = detectMalformedRefs(rows);
-    const unevidenced = detectUnevidencedVerified(rows);
-    const gotchas = detectGotchaOverlaps(rows);
-    const findings: DoctorFindings = {
-      exact_duplicates: exact.findings,
-      near_duplicates: near,
-      stale_status_overlaps: staleStatus,
-      canonical_thread_overlaps: canonicalThread,
-      status_expiry: statusExpiry,
-      type_boundary: typeBoundary,
-      tag_hygiene: tags,
-      malformed_refs: refs,
-      verified_without_evidence: unevidenced,
-      gotcha_overlaps: gotchas,
-    };
-    const suggestedCommands = collectSuggestedCommands(findings);
-    const summary = summarizeFindings(rows, findings);
-    const findingsOutput = {
-      exact_duplicates: findings.exact_duplicates.map(
-        (item) => ({ ...item }) satisfies JsonObject,
+    const repository = repositoryForCurrentDirectory();
+    // Stored rows are JSON values by construction; a mismatch is a defect.
+    const rows = yield* Schema.decodeUnknownEffect(StoredRowsSchema)(
+      yield* requireDatabase(commandCtx).all(
+        `SELECT * FROM memories
+         WHERE repository = ?
+           AND status = 'active'
+         ORDER BY updated_at DESC, id DESC`,
+        [repository],
       ),
-      near_duplicates: findings.near_duplicates.map(
-        (item) => ({ ...item }) satisfies JsonObject,
+    ).pipe(Effect.orDie);
+    const result = analyzeMemoryDoctor(repository, rows);
+    const contentById = new Map(
+      rows.map(
+        (row) =>
+          [jsonNumber(row.id) ?? 0, jsonString(row.content) ?? ""] as const,
       ),
-      stale_status_overlaps: findings.stale_status_overlaps.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      canonical_thread_overlaps: findings.canonical_thread_overlaps.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      status_expiry: findings.status_expiry.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      type_boundary: findings.type_boundary.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      tag_hygiene: findings.tag_hygiene.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      malformed_refs: findings.malformed_refs.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      verified_without_evidence: findings.verified_without_evidence.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-      gotcha_overlaps: findings.gotcha_overlaps.map(
-        (item) => ({ ...item }) satisfies JsonObject,
-      ),
-    } satisfies JsonObject;
+    );
+    const { groups, commands } = groupFindings(result.findings, contentById);
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
         printJson({
-          count:
-            summary.exact_duplicates +
-            summary.near_duplicates +
-            summary.stale_status_overlaps +
-            summary.canonical_thread_overlaps +
-            summary.status_missing_expiry +
-            summary.type_boundary +
-            summary.tag_hygiene +
-            summary.malformed_refs +
-            summary.verified_without_evidence +
-            summary.gotcha_overlaps,
-          suggested_commands_count: suggestedCommands.length,
+          count: result.count,
+          suggested_commands_count: commands.length,
         });
         return;
       }
       if (commandCtx.outputMode.brief) {
-        printDoctorBrief(suggestedCommands);
+        console.info(commands.join("\n"));
         return;
       }
+      const summary: JsonObject = { checked: result.checked };
+      for (const [group, items] of groups) {
+        summary[group === "status_expiry" ? "status_missing_expiry" : group] =
+          items.length;
+      }
+      summary.suggested_commands = commands.length;
       printCommandOutput(commandCtx, {
         summary,
-        findings: findingsOutput,
-        suggested_commands: suggestedCommands,
+        findings: Object.fromEntries(groups),
+        suggested_commands: commands,
       });
     });
   });

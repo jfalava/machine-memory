@@ -1,15 +1,15 @@
-import { databaseFailureGuidance } from "@machine-memory/contract";
 import { Context, Effect, Layer } from "effect";
-import type { DbAccessMode, SqlQueryBinding } from "../db";
+
 import {
   loadDatabaseConfig,
   validateDatabaseBackendFlags,
   type DatabaseBackendFlags,
 } from "../database-config";
-import { MemoryDatabaseError } from "./errors";
+import type { DbAccessMode, SqlQueryBinding } from "../db";
+import type { JsonValue } from "../json";
+import { databaseOperationError, MemoryDatabaseError } from "./errors";
 import { remoteLayer } from "./remote-database";
 import type { MemoryVectorApi } from "./vectorize";
-import type { JsonValue } from "../json";
 
 export { MemoryDatabaseError } from "./errors";
 
@@ -34,20 +34,6 @@ export class MemoryDatabase extends Context.Service<
   MemoryDatabaseApi
 >()("machine-memory/MemoryDatabase") {}
 
-function operationError(
-  operation: string,
-  cause: unknown,
-): MemoryDatabaseError {
-  const guidance = databaseFailureGuidance(cause);
-  return new MemoryDatabaseError({
-    operation,
-    message:
-      guidance?.error ??
-      (cause instanceof Error ? cause.message : "Database operation failed."),
-    cause,
-  });
-}
-
 function loadLocalLayer(
   mode: DbAccessMode,
 ): Effect.Effect<
@@ -56,7 +42,7 @@ function loadLocalLayer(
 > {
   return Effect.tryPromise({
     try: async () => (await import("./local-database")).localLayer(mode),
-    catch: (cause) => operationError("load", cause),
+    catch: (cause) => databaseOperationError("load", cause),
   });
 }
 

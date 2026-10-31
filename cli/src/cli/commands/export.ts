@@ -1,5 +1,8 @@
 import { Effect } from "effect";
+
 import { printJson } from "../../cli-utils";
+import { requireDatabase, type CommandContext } from "../runtime/context";
+import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 import {
   applySqlFilters,
   normalizeSqliteRow,
@@ -7,15 +10,13 @@ import {
   parseSinceDate,
   sqliteDateForComparison,
 } from "../shared";
-import { requireDatabase, type CommandContext } from "../runtime/context";
-import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 
 export function handleExportCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const filters = parseCommonFilters(args);
-    const since = parseSinceDate(args);
+    const filters = parseCommonFilters(flags);
+    const since = parseSinceDate(flags);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });

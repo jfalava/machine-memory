@@ -82,4 +82,3 @@ export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
 export type SearchMode = (typeof SEARCH_MODES)[number];
 export type MatchStrength = (typeof MATCH_STRENGTHS)[number];
-export type QueryOperation = (typeof QUERY_OPERATIONS)[number];

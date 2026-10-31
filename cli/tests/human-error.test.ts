@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { CommandError } from "@/effect/errors";
+
 import {
   commandErrorForRender,
   humanCommandFailureOutput,
   storedRemoteCredentialsError,
 } from "@/cli/human-error";
+import { CommandError } from "@/effect/errors";
 
 describe("human command failure output", () => {
   it("keeps the heading on stderr and the hint on stdout", () => {
     const output = humanCommandFailureOutput(
       new CommandError({
         command: "remote setup",
-        message: "Could not read stored remote credentials from the OS keychain.",
+        message:
+          "Could not read stored remote credentials from the OS keychain.",
         cause: undefined,
         hint: "Unlock the OS keychain, pass --url and --token, or set MACHINE_MEMORY_DB_URL and MACHINE_MEMORY_DB_TOKEN.",
       }),
@@ -53,7 +55,9 @@ describe("stored remote credential errors", () => {
     );
 
     expect(error.message).toBe("Stored remote credentials are invalid.");
-    expect(error.hint).toContain("overwrite them with machine-memory remote setup");
+    expect(error.hint).toContain(
+      "overwrite them with machine-memory remote setup",
+    );
   });
 
   it("hints at the keychain when the secret store cannot be read", () => {

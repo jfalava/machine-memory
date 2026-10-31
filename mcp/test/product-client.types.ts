@@ -3,6 +3,7 @@ import type {
   MemoryGetSuccess,
   MemoryStatsSuccess,
 } from "@machine-memory/contract";
+
 import { postProduct, type ApiFetcher } from "../src/mcp/product-client";
 
 // Checked by tsc, never executed. A route determines both its body and result.

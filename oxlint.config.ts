@@ -32,6 +32,13 @@ export const agentIgnores = [
 ];
 
 export const antiSlopRules: DummyRuleMap = {
+  "oxc/no-accumulating-spread": "error",
+  "anti-slop/no-array-filter-map": "error",
+  "anti-slop/no-reduce-accumulator-copy": "error",
+  "anti-slop-effect/no-manual-effect-error-tag": "error",
+  "anti-slop-effect/no-manual-tag-comparison": "error",
+  "anti-slop-effect/no-manual-tagged-construction": "error",
+  "anti-slop-effect/prefer-effect-match": "error",
   "anti-slop/no-chained-type-assertions": "error",
   "anti-slop/no-conditional-empty-object-spread": "error",
   "anti-slop/no-known-value-widening": "error",
@@ -184,5 +191,13 @@ const base = defineConfig({
 // via the `--type-aware` CLI flag instead.
 const { options: _options, ...workspaceBase } = base;
 export { workspaceBase };
+
+// Default config for the one-level-deep TypeScript workspaces. Object spread
+// instead of oxlint `extends`, which drops env/globals/overrides.
+export const workspaceConfig = defineConfig({
+  ...workspaceBase,
+  jsPlugins: antiSlopJsPlugins(".."),
+  ignorePatterns: [...agentIgnores, "*.d.ts", "**/*.d.ts"],
+});
 
 export default base;

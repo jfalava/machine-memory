@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 
 import {
   decodeRequest,
+  MAX_MIGRATION_LINKS,
+  MAX_MIGRATION_ROWS,
   MigrationRequestInputSchema,
   normalizeMigrationRequest,
 } from "@machine-memory/contract";
@@ -28,11 +30,7 @@ import {
 } from "../../remote-migration";
 import { repositoryForCurrentDirectory } from "../../repository";
 import type { CommandContext } from "../runtime/context";
-import { collectPositionalArgs } from "../shared";
-import { replaceMemoryBlock } from "./agents-md-content";
-
-const ROW_BATCH_SIZE = 50;
-const LINK_BATCH_SIZE = 100;
+import { writeMemoryBlock } from "./agents-md-content";
 
 function migrationCommandError(
   message: string,
@@ -40,10 +38,6 @@ function migrationCommandError(
   hint?: string,
 ) {
   return commandError("local export", message, cause, hint);
-}
-
-function positionalSourcePath(args: string[]): string | undefined {
-  return collectPositionalArgs(args, ["--source-id"])[0];
 }
 
 function chunks<A>(values: A[], size: number): A[][] {
@@ -59,19 +53,11 @@ function emptyBatchResult(): RemoteMigrationBatchResult {
 }
 
 function updateAgentsMdForRemote(context: CommandContext) {
-  const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
-  return Effect.gen(function* () {
-    const agentsMdExists = yield* context.fileSystem.exists(agentsMdPath);
-    const existingContent = agentsMdExists
-      ? new TextDecoder().decode(
-          yield* context.fileSystem.readFile(agentsMdPath),
-        )
-      : "";
-    yield* context.fileSystem.writeFile(
-      agentsMdPath,
-      new TextEncoder().encode(replaceMemoryBlock(existingContent, "remote")),
-    );
-  }).pipe(
+  return writeMemoryBlock(
+    context.fileSystem,
+    resolve(process.cwd(), "AGENTS.md"),
+    "remote",
+  ).pipe(
     Effect.mapError((cause) =>
       migrationCommandError(
         "Could not update AGENTS.md for --remote.",
@@ -85,8 +71,8 @@ function updateAgentsMdForRemote(context: CommandContext) {
 export function handleLocalExport(context: CommandContext) {
   return Effect.gen(function* () {
     const backendFlags = {
-      local: context.args.includes("--local"),
-      remote: context.args.includes("--remote"),
+      local: context.flags.has("--local"),
+      remote: context.flags.has("--remote"),
     };
     yield* Effect.try({
       try: () => {
@@ -107,9 +93,7 @@ export function handleLocalExport(context: CommandContext) {
         ),
     });
 
-    const sourcePath = resolveMigrationSourcePath(
-      positionalSourcePath(context.args),
-    );
+    const sourcePath = resolveMigrationSourcePath(context.positionals[0]);
     const repository = yield* Effect.try({
       try: () => repositoryForCurrentDirectory(),
       catch: (cause) =>
@@ -123,12 +107,12 @@ export function handleLocalExport(context: CommandContext) {
       try: () => {
         const sourceRows = readLocalMigrationRows(sourcePath, repository);
         const sourceId =
-          getFlagValue(context.args, "--source-id") ??
+          getFlagValue(context.flags, "--source-id") ??
           createHash("sha256")
             .update(`${hostname()}:${realpathSync(sourcePath)}`)
             .digest("hex");
         // Validate every batch before starting any remote writes.
-        for (const batch of chunks(sourceRows, ROW_BATCH_SIZE)) {
+        for (const batch of chunks(sourceRows, MAX_MIGRATION_ROWS)) {
           const input = decodeRequest(MigrationRequestInputSchema, {
             repository,
             source: sourceId,
@@ -186,7 +170,7 @@ export function handleLocalExport(context: CommandContext) {
 
     const targetIds = new Map<number, number>();
     let summary = emptyBatchResult();
-    for (const batch of chunks(rows, ROW_BATCH_SIZE)) {
+    for (const batch of chunks(rows, MAX_MIGRATION_ROWS)) {
       const result = yield* migrateRemoteRows(
         remote.url,
         remote.token,
@@ -228,7 +212,7 @@ export function handleLocalExport(context: CommandContext) {
             },
           ];
     });
-    for (const batch of chunks(links, LINK_BATCH_SIZE)) {
+    for (const batch of chunks(links, MAX_MIGRATION_LINKS)) {
       yield* migrateRemoteLinks(
         remote.url,
         remote.token,

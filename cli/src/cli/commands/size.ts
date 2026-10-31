@@ -1,20 +1,20 @@
 import { Effect } from "effect";
+
 import { getFlagValue } from "../../cli-utils";
 import { commandError } from "../../effect/errors";
-import {
-  collectPositionalArgs,
-  parseContentFromFileFlag,
-  requireCertainty,
-  requireMemoryType,
-} from "../shared";
 import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
-import type { CommandContext } from "../runtime/context";
-import { printCommandOutput } from "../runtime/output";
 import {
   embeddingSizeReport,
   measureEmbeddingFit,
 } from "../features/memory/size-report";
-import { SIZE_FLAGS_WITH_VALUES, SIZE_USAGE } from "../features/memory/usage";
+import { SIZE_USAGE } from "../features/memory/usage";
+import type { CommandContext } from "../runtime/context";
+import { printCommandOutput } from "../runtime/output";
+import {
+  parseContentFromFileFlag,
+  requireCertainty,
+  requireMemoryType,
+} from "../shared";
 
 /**
  * Preflights the embedding budget for a prospective memory without touching
@@ -23,13 +23,12 @@ import { SIZE_FLAGS_WITH_VALUES, SIZE_USAGE } from "../features/memory/usage";
  */
 export function handleSizeCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const fail = (message: string) =>
       Effect.fail(commandError("size", message, undefined));
-    const positional = collectPositionalArgs(args, SIZE_FLAGS_WITH_VALUES);
-    const contentFromArg = positional[0];
+    const contentFromArg = commandCtx.positionals[0];
     const contentFromFile = yield* parseContentFromFileFlag(
-      args,
+      flags,
       commandCtx.fileSystem,
     );
     if (contentFromArg && contentFromFile !== undefined) {
@@ -44,11 +43,11 @@ export function handleSizeCommand(commandCtx: CommandContext) {
         id: "0",
         repository: "",
         content,
-        tags: getFlagValue(args, "--tags") ?? "",
-        context: getFlagValue(args, "--context") ?? "",
-        memory_type: requireMemoryType(args) ?? "convention",
+        tags: getFlagValue(flags, "--tags") ?? "",
+        context: getFlagValue(flags, "--context") ?? "",
+        memory_type: requireMemoryType(flags) ?? "convention",
         status: "active",
-        certainty: requireCertainty(args) ?? "inferred",
+        certainty: requireCertainty(flags) ?? "inferred",
       }),
     );
     yield* Effect.sync(() => {

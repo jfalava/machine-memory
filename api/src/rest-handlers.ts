@@ -130,7 +130,7 @@ export function handleRestRequest<R>(
     const bodyResult = yield* request.json.pipe(
       Effect.map((body) => ({
         ok: true as const,
-        body: Schema.decodeUnknownSync(Schema.Json)(body),
+        body: Schema.decodeSync(Schema.Json)(body),
       })),
       Effect.catchCause(() => Effect.succeed({ ok: false as const })),
     );

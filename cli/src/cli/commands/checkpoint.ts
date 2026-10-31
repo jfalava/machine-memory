@@ -2,7 +2,12 @@ import { execFileSync } from "node:child_process";
 
 import { Effect } from "effect";
 
-import { getFlagValue, hasFlag, printJson } from "../../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  hasFlag,
+  printJson,
+} from "../../cli-utils";
 import type { JsonObject } from "../../json";
 import {
   activeRepositoryOverride,
@@ -69,27 +74,29 @@ function touchedFiles(): string[] {
  * Explicit --files win. Without them, a --repo target is another checkout, so
  * this directory's Git changes say nothing about it.
  */
-function checkpointArgs(args: string[]): string[] {
-  if (hasFlag(args, "--files") || hasFlag(args, "--files-json")) {
-    return args;
+function checkpointFlags(flags: CommandFlags): CommandFlags {
+  if (hasFlag(flags, "--files") || hasFlag(flags, "--files-json")) {
+    return flags;
   }
   if (activeRepositoryOverride() !== undefined) {
-    return args;
+    return flags;
   }
   const files = touchedFiles();
-  return files.length > 0 ? [...args, "--files", files.join(",")] : args;
+  return files.length > 0
+    ? new Map([...flags, ["--files", files.join(",")]])
+    : flags;
 }
 
-function sinceTimestamp(args: string[]): string {
-  const explicit = parseSinceDate(args);
+function sinceTimestamp(flags: CommandFlags): string {
+  const explicit = parseSinceDate(flags);
   return sqliteDateForComparison(
     explicit ??
       new Date(Date.now() - DEFAULT_SINCE_HOURS * 3_600_000).toISOString(),
   );
 }
 
-function backendFlag(args: string[]): string {
-  return args.includes("--local") ? "--local" : "--remote";
+function backendFlag(flags: CommandFlags): string {
+  return flags.has("--local") ? "--local" : "--remote";
 }
 
 function classification(flag: string): JsonObject[] {
@@ -161,26 +168,27 @@ function recentSummary(row: JsonObject): JsonObject {
 
 export function handleCheckpointCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const args = checkpointArgs(commandCtx.args);
+    const flags = checkpointFlags(commandCtx.flags);
     const database = requireDatabase(commandCtx);
-    const since = sinceTimestamp(args);
-    const limit = parseResultLimit(args);
+    const since = sinceTimestamp(flags);
+    const limit = parseResultLimit(flags);
     const recent = (yield* database.all(
       `SELECT * FROM memories WHERE repository = ? AND updated_at >= ?
        ORDER BY updated_at DESC, id DESC LIMIT ${RECENT_LIMIT}`,
       [repositoryForCurrentDirectory(), since],
     )).map((row) => normalizeSqliteRow(row));
-    const hasFiles = hasFlag(args, "--files") || hasFlag(args, "--files-json");
-    const snapshot = hasFiles ? buildSuggestSnapshot(args) : undefined;
+    const hasFiles =
+      hasFlag(flags, "--files") || hasFlag(flags, "--files-json");
+    const snapshot = hasFiles ? buildSuggestSnapshot(flags) : undefined;
     const related = snapshot
-      ? yield* collectSuggestResults({ ...commandCtx, args }, snapshot, {
+      ? yield* collectSuggestResults({ ...commandCtx, flags }, snapshot, {
           explainScore: false,
           limit,
         })
       : [];
-    const query = getFlagValue(args, "--query");
+    const query = getFlagValue(flags, "--query");
     const queried = query
-      ? (yield* fetchQueryResults({ ...commandCtx, args }, query, {
+      ? (yield* fetchQueryResults({ ...commandCtx, flags }, query, {
           explainScore: false,
           limit,
         })).results
@@ -206,7 +214,7 @@ export function handleCheckpointCommand(commandCtx: CommandContext) {
         recent: outputMode.jsonMin ? recent.map(recentSummary) : recent,
         related: related.map(minimalResultSummary),
         review: reviewFlags(recent, relatedRows),
-        classification: classification(backendFlag(args)),
+        classification: classification(backendFlag(flags)),
       };
       if (query) {
         payload.query = query;

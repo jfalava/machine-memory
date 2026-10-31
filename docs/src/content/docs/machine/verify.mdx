@@ -11,6 +11,9 @@ sidebar:
 machine-memory verify <id> <fact> (--local|--remote)
 ```
 
+`<fact>` is a single argument; quote it when it contains spaces. Flags after
+it are options, not part of the fact.
+
 `verify` compares the proposed fact with the stored content. A consistent
 comparison returns `{ "ok": true, "result": "consistent" }`; a conflict
 returns `{ "ok": false, "result": "conflict" }`. Both include a similarity

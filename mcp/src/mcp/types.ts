@@ -11,6 +11,10 @@ export type McpBindings = {
   readonly apiToken: string;
 };
 
+/** OAuth scopes guarding MCP tools: reads need `read`, mutations need `write`. */
+export const MCP_SCOPES = { read: "mcp:read", write: "mcp:write" } as const;
+export type McpScope = (typeof MCP_SCOPES)[keyof typeof MCP_SCOPES];
+
 export type TextToolResult = {
   readonly content: Array<{ readonly type: "text"; readonly text: string }>;
 };

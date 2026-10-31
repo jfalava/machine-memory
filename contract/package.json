@@ -9,6 +9,7 @@
   "scripts": {
     "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"

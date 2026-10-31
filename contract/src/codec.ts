@@ -23,7 +23,7 @@ export function decodeResponse<S extends Schema.ConstraintDecoder<unknown>>(
   label: string,
 ): S["Type"] | undefined {
   try {
-    return Schema.decodeUnknownSync(schema)(body);
+    return Schema.decodeSync(schema)(body);
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : String(cause);
     console.error(
@@ -57,7 +57,7 @@ export function decodeRequest<S extends Schema.ConstraintDecoder<unknown>>(
   body: JsonValue,
 ): DecodeResult<S["Type"]> {
   try {
-    const value = Schema.decodeUnknownSync(schema)(body);
+    const value = Schema.decodeSync(schema)(body);
     return { ok: true, value };
   } catch (cause) {
     return { ok: false, error: schemaErrorMessage(cause) };

@@ -4,25 +4,9 @@ import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
-import {
-  ACTIVATE_PATH,
-  DEVICE_START_PATH,
-  DEVICE_POLL_PATH,
-} from "./auth/device-login";
 import { createOauthProvider, type OAuthEnv } from "./auth/oauth-provider";
 
 const INTERNAL_ERROR = "Internal server error.";
-
-const OAUTH_PATHS = [
-  "/mcp",
-  "/authorize",
-  ACTIVATE_PATH,
-  "/callback",
-  DEVICE_START_PATH,
-  DEVICE_POLL_PATH,
-  "/token",
-  "/register",
-];
 
 export type OAuthResources = {
   readonly api: Fetcher;
@@ -39,63 +23,48 @@ export type OAuthResources = {
   readonly cookieEncryptionKey: string | undefined;
 };
 
-export function isOAuthPath(url: string): boolean {
-  const pathname = url.split("?")[0];
-  return (
-    OAUTH_PATHS.some(
-      (path) => pathname === path || pathname.startsWith(`${path}/`),
-    ) || pathname.startsWith("/.well-known/oauth-")
-  );
-}
-
-type OAuthConfig = {
-  readonly githubClientId: string;
-  readonly githubClientSecret: string;
-  readonly githubAllowedUserId: string;
-  readonly cookieEncryptionKey: string;
-};
+type OAuthConfig = Pick<
+  OAuthEnv,
+  | "MACHINE_MEMORY_GITHUB_CLIENT_ID"
+  | "MACHINE_MEMORY_GITHUB_CLIENT_SECRET"
+  | "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID"
+  | "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY"
+>;
 
 type OAuthConfigResolution =
   | { readonly config: OAuthConfig; readonly missing: [] }
   | { readonly config: undefined; readonly missing: string[] };
 
 function resolveOAuthConfig(resources: OAuthResources): OAuthConfigResolution {
-  const {
-    githubClientId,
-    githubClientSecret,
-    githubAllowedUserId,
-    cookieEncryptionKey,
-  } = resources;
-  if (
-    githubClientId === undefined ||
-    githubClientSecret === undefined ||
-    githubAllowedUserId === undefined ||
-    githubAllowedUserId.trim() === "" ||
-    cookieEncryptionKey === undefined
-  ) {
-    const missing = [
-      githubClientId === undefined ? "MACHINE_MEMORY_GITHUB_CLIENT_ID" : "",
-      githubClientSecret === undefined
-        ? "MACHINE_MEMORY_GITHUB_CLIENT_SECRET"
-        : "",
-      githubAllowedUserId === undefined || githubAllowedUserId.trim() === ""
-        ? "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID"
-        : "",
-      cookieEncryptionKey === undefined
-        ? "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY"
-        : "",
-    ].filter((name) => name !== "");
-    return { config: undefined, missing };
-  }
-  return {
-    config: {
-      githubAllowedUserId,
-      githubClientId,
-      githubClientSecret,
-      cookieEncryptionKey,
-    },
-    missing: [],
+  const missing: string[] = [];
+  const required = (name: string, value: string | undefined): string => {
+    if (value === undefined) {
+      missing.push(name);
+    }
+    return value ?? "";
   };
+  const allowedUserId = resources.githubAllowedUserId;
+  const config = {
+    MACHINE_MEMORY_GITHUB_CLIENT_ID: required(
+      "MACHINE_MEMORY_GITHUB_CLIENT_ID",
+      resources.githubClientId,
+    ),
+    MACHINE_MEMORY_GITHUB_CLIENT_SECRET: required(
+      "MACHINE_MEMORY_GITHUB_CLIENT_SECRET",
+      resources.githubClientSecret,
+    ),
+    MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: required(
+      "MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID",
+      allowedUserId?.trim() === "" ? undefined : allowedUserId,
+    ),
+    MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: required(
+      "MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY",
+      resources.cookieEncryptionKey,
+    ),
+  };
+  return missing.length === 0
+    ? { config, missing: [] }
+    : { config: undefined, missing };
 }
 
 export function handleOAuthPath(
@@ -128,10 +97,7 @@ export function handleOAuthPath(
       OAUTH_KV: rawKv as KVNamespace,
       // SAFETY: worker.ts supplies the dedicated D1 binding through Alchemy.
       OAUTH_DEVICES: rawDevices as D1Database,
-      MACHINE_MEMORY_GITHUB_CLIENT_ID: config.githubClientId,
-      MACHINE_MEMORY_GITHUB_CLIENT_SECRET: config.githubClientSecret,
-      MACHINE_MEMORY_GITHUB_ALLOWED_USER_ID: config.githubAllowedUserId,
-      MACHINE_MEMORY_COOKIE_ENCRYPTION_KEY: config.cookieEncryptionKey,
+      ...config,
     } satisfies OAuthEnv;
   });
 

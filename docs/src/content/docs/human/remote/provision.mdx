@@ -62,7 +62,9 @@ The config must include `secretsStore.storeId` and `secretsStore.dbToken`. These
 | `--api-name`           | `MACHINE_MEMORY_API_NAME`      | `machine-memory-api`       |
 | `--mcp-name`           | `MACHINE_MEMORY_MCP_NAME`      | `machine-memory-mcp`       |
 
-Flags take precedence over the config file, then environment variables, then stored remote credentials, then defaults.
+Each value comes from the first source that sets it: flags, then environment variables, then the config file, then defaults. For the stack, database, and API names, stored remote credentials are checked after environment variables and before the config file.
+
+A `--config` path that does not exist stops provisioning with `Deploy config not found at <path>.` A `MACHINE_MEMORY_DEPLOY_CONFIG` path that does not exist prints a warning and continues with environment variables and defaults. Without either, `remote provision` reads `machine-memory.deploy.json` from the current directory if it exists.
 
 ```sh
 machine-memory list --remote

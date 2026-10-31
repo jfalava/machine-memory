@@ -4,10 +4,19 @@ import {
   droppedDetails,
   hasDroppedDetails,
   type EvidenceKind,
+  compareMemoryFact,
+  UPSERT_DEFAULT_MIN_SCORE,
+  UPSERT_MIN_SIMILARITY,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
-import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  hasFlag,
+  printJson,
+  usageError,
+} from "../../cli-utils";
 import {
   assertBgeBreakdown,
   type BgeTokenBreakdown,
@@ -30,7 +39,6 @@ import {
 } from "../../json";
 import { suggestTagsForPath } from "../../path-tags";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { compareFact } from "../features/memory/compare";
 import {
   assertEvidenceWrite,
   parseEvidenceFlag,
@@ -42,17 +50,17 @@ import {
   measureEmbeddingFit,
 } from "../features/memory/size-report";
 import {
-  ADD_FLAGS_WITH_VALUES,
   ADD_USAGE,
-  DEPRECATE_FLAGS_WITH_VALUES,
   DEPRECATE_USAGE,
-  UPDATE_FLAGS_WITH_VALUES,
   UPDATE_USAGE,
 } from "../features/memory/usage";
 import { requireDatabase, type CommandContext } from "../runtime/context";
-import { minimalResultSummary, printCommandOutput } from "../runtime/output";
 import {
-  collectPositionalArgs,
+  contentSnippet,
+  minimalResultSummary,
+  printCommandOutput,
+} from "../runtime/output";
+import {
   detectPotentialConflicts,
   assertWritableRepository,
   findMemoryByMatch,
@@ -72,26 +80,24 @@ import {
   stringValue,
 } from "../shared";
 
-const UPSERT_MIN_SIMILARITY = 0.62;
-const UPSERT_MIN_SCORE = 32;
 const UPSERT_MIN_SCORE_ENV = "MACHINE_MEMORY_UPSERT_MIN_SCORE";
 
 function defaultUpsertMinScore(): number {
   const raw = process.env[UPSERT_MIN_SCORE_ENV];
   if (raw === undefined) {
-    return UPSERT_MIN_SCORE;
+    return UPSERT_DEFAULT_MIN_SCORE;
   }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
-    return UPSERT_MIN_SCORE;
+    return UPSERT_DEFAULT_MIN_SCORE;
   }
   return Math.min(100, Math.max(0, parsed));
 }
 
 function resolveUpsertMinScore(
-  args: string[],
+  flags: CommandFlags,
 ): Effect.Effect<number, CommandError> {
-  const raw = getFlagValue(args, "--upsert-threshold");
+  const raw = getFlagValue(flags, "--upsert-threshold");
   if (raw === undefined) {
     return Effect.succeed(defaultUpsertMinScore());
   }
@@ -297,18 +303,18 @@ function addUpsertEmbeddingDocument(
 }
 
 function prospectiveUpdateDocuments(
-  args: string[],
+  flags: CommandFlags,
   database: MemoryDatabaseApi,
   targetIds: number[],
   content: string,
 ): Effect.Effect<ProspectiveUpdate[], MemoryDatabaseError> {
   const overrides = {
-    tags: getFlagValue(args, "--tags"),
-    context: getFlagValue(args, "--context"),
-    memory_type: requireMemoryType(args),
-    certainty: requireCertainty(args),
+    tags: getFlagValue(flags, "--tags"),
+    context: getFlagValue(flags, "--context"),
+    memory_type: requireMemoryType(flags),
+    certainty: requireCertainty(flags),
   };
-  const evidence = parseEvidenceFlag(args);
+  const evidence = parseEvidenceFlag(flags);
   return Effect.forEach(targetIds, (id) =>
     getMemoryById(database, id).pipe(
       Effect.map((row) => {
@@ -369,12 +375,12 @@ function assertAddEvidence(metadata: AddMetadata, existing?: JsonObject) {
 }
 
 function resolveAddContent(
-  args: string[],
+  flags: CommandFlags,
+  positionals: string[],
   fileSystem: CommandContext["fileSystem"],
 ): Effect.Effect<string, unknown> {
-  const positional = collectPositionalArgs(args, ADD_FLAGS_WITH_VALUES);
-  const contentFromArg = positional[0];
-  return parseContentFromFileFlag(args, fileSystem).pipe(
+  const contentFromArg = positionals[0];
+  return parseContentFromFileFlag(flags, fileSystem).pipe(
     Effect.map((contentFromFile) => {
       if (contentFromArg && contentFromFile !== undefined) {
         usageError(`Usage: ${ADD_USAGE}`);
@@ -389,21 +395,21 @@ function resolveAddContent(
 }
 
 function resolveAddMetadata(
-  args: string[],
+  flags: CommandFlags,
   fileSystem: CommandContext["fileSystem"],
 ): Effect.Effect<AddMetadata, unknown> {
-  const explicitTags = getFlagValue(args, "--tags");
-  const pathContext = getFlagValue(args, "--path");
-  const sourceAgent = getFlagValue(args, "--source-agent") ?? "";
+  const explicitTags = getFlagValue(flags, "--tags");
+  const pathContext = getFlagValue(flags, "--path");
+  const sourceAgent = getFlagValue(flags, "--source-agent") ?? "";
   const explicitFlags: AddExplicitFlags = {
     tags: explicitTags !== undefined,
-    context: getFlagValue(args, "--context") !== undefined,
-    memoryType: getFlagValue(args, "--type") !== undefined,
-    certainty: getFlagValue(args, "--certainty") !== undefined,
-    sourceAgent: getFlagValue(args, "--source-agent") !== undefined,
-    updatedBy: getFlagValue(args, "--updated-by") !== undefined,
-    refs: getFlagValue(args, "--refs") !== undefined,
-    expiresAfterDays: getFlagValue(args, "--expires-after-days") !== undefined,
+    context: getFlagValue(flags, "--context") !== undefined,
+    memoryType: getFlagValue(flags, "--type") !== undefined,
+    certainty: getFlagValue(flags, "--certainty") !== undefined,
+    sourceAgent: getFlagValue(flags, "--source-agent") !== undefined,
+    updatedBy: getFlagValue(flags, "--updated-by") !== undefined,
+    refs: getFlagValue(flags, "--refs") !== undefined,
+    expiresAfterDays: getFlagValue(flags, "--expires-after-days") !== undefined,
   };
   return (
     pathContext
@@ -413,23 +419,23 @@ function resolveAddMetadata(
     Effect.map((mappedTags) => ({
       mappedTags,
       tags: mergeTagValues(explicitTags, mappedTags),
-      memo: getFlagValue(args, "--context") ?? "",
-      memoryType: requireMemoryType(args) ?? "convention",
-      certainty: requireCertainty(args) ?? "inferred",
+      memo: getFlagValue(flags, "--context") ?? "",
+      memoryType: requireMemoryType(flags) ?? "convention",
+      certainty: requireCertainty(flags) ?? "inferred",
       sourceAgent,
-      updatedBy: getFlagValue(args, "--updated-by") ?? sourceAgent,
-      refs: parseRefsFlag(args) ?? [],
-      evidence: parseEvidenceFlag(args),
-      validationGaps: parseValidationGapsFlag(args),
-      expiresAfterDays: parseIntegerFlag(args, "--expires-after-days"),
+      updatedBy: getFlagValue(flags, "--updated-by") ?? sourceAgent,
+      refs: parseRefsFlag(flags) ?? [],
+      evidence: parseEvidenceFlag(flags),
+      validationGaps: parseValidationGapsFlag(flags),
+      expiresAfterDays: parseIntegerFlag(flags, "--expires-after-days"),
       explicit: explicitFlags,
     })),
   );
 }
 
-function parseAddUpsertQuery(args: string[]): string | undefined {
-  const value = getFlagValue(args, "--upsert-match");
-  if (hasFlag(args, "--upsert-match") && value === undefined) {
+function parseAddUpsertQuery(flags: CommandFlags): string | undefined {
+  const value = getFlagValue(flags, "--upsert-match");
+  if (hasFlag(flags, "--upsert-match") && value === undefined) {
     usageError(`Usage: ${ADD_USAGE}`);
   }
   return value;
@@ -447,7 +453,7 @@ function isStrongUpsertMatch(
   matched: JsonObject,
   content: string,
   metadata: AddMetadata,
-  minScore: number = UPSERT_MIN_SCORE,
+  minScore: number = UPSERT_DEFAULT_MIN_SCORE,
 ): boolean {
   const matchedText = [
     stringValue(matched.content),
@@ -455,16 +461,9 @@ function isStrongUpsertMatch(
     stringValue(matched.context),
   ].join(" ");
   const incomingText = upsertComparableText(content, metadata);
-  const similarity = compareFact(matchedText, incomingText).similarity;
+  const similarity = compareMemoryFact(matchedText, incomingText).similarity;
   const score = Number(matched.score ?? 0);
   return similarity >= UPSERT_MIN_SIMILARITY && score >= minScore;
-}
-
-function contentHead(text: string, maxChars = 120): string {
-  const flattened = text.replace(/\s+/g, " ").trim();
-  return flattened.length > maxChars
-    ? `${flattened.slice(0, maxChars)}…`
-    : flattened;
 }
 
 function upsertMatchInfo(
@@ -482,12 +481,13 @@ function upsertMatchInfo(
     score: Number(matched.score ?? 0),
     similarity:
       Math.round(
-        compareFact(matchedText, upsertComparableText(content, metadata))
+        compareMemoryFact(matchedText, upsertComparableText(content, metadata))
           .similarity * 1000,
       ) / 1000,
     memory_type: stringValue(matched.memory_type, "convention"),
     status: stringValue(matched.status, "active"),
-    content_head: contentHead(stringValue(matched.content)),
+    // 120 characters plus the ellipsis.
+    content_head: contentSnippet(matched.content, 121),
   };
 }
 
@@ -638,22 +638,22 @@ function confirmWeakMatchCreate(summary: UpsertMatchSummary): Promise<boolean> {
 function maybeHandleAddUpsert(
   database: MemoryDatabaseApi,
   options: {
-    args: string[];
+    flags: CommandFlags;
     content: string;
     metadata: AddMetadata;
     outputMode: CommandContext["outputMode"];
     tokenReportEnabled: boolean;
   },
 ) {
-  const { args, content, metadata, outputMode, tokenReportEnabled } = options;
-  const upsertQuery = parseAddUpsertQuery(args);
+  const { flags, content, metadata, outputMode, tokenReportEnabled } = options;
+  const upsertQuery = parseAddUpsertQuery(flags);
   if (upsertQuery === undefined) {
     return Effect.succeed(false);
   }
-  const dryRun = hasFlag(args, "--dry-run");
-  const force = hasFlag(args, "--force");
+  const dryRun = hasFlag(flags, "--dry-run");
+  const force = hasFlag(flags, "--force");
   return Effect.gen(function* () {
-    const minScore = yield* resolveUpsertMinScore(args);
+    const minScore = yield* resolveUpsertMinScore(flags);
     const matched = yield* findMemoryByMatch(database, upsertQuery);
     const strong =
       matched !== null &&
@@ -1109,15 +1109,19 @@ function runPlainAddInsert(params: {
 
 export function handleAddCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
+    const { flags, outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
     yield* assertWritableRepository(database, "add");
-    const content = yield* resolveAddContent(args, commandCtx.fileSystem);
-    const metadata = yield* resolveAddMetadata(args, commandCtx.fileSystem);
-    const tokenReportEnabled = hasFlag(args, "--token-report");
+    const content = yield* resolveAddContent(
+      flags,
+      commandCtx.positionals,
+      commandCtx.fileSystem,
+    );
+    const metadata = yield* resolveAddMetadata(flags, commandCtx.fileSystem);
+    const tokenReportEnabled = hasFlag(flags, "--token-report");
     if (
       yield* maybeHandleAddUpsert(database, {
-        args,
+        flags,
         content,
         metadata,
         outputMode,
@@ -1127,7 +1131,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
       return;
     }
     assertAddEvidence(metadata);
-    if (hasFlag(args, "--dry-run")) {
+    if (hasFlag(flags, "--dry-run")) {
       yield* runAddDryRun(commandCtx, content, metadata);
       return;
     }
@@ -1155,11 +1159,11 @@ export function handleAddCommand(commandCtx: CommandContext) {
 }
 
 function resolveUpdateTargets(
-  args: string[],
+  flags: CommandFlags,
+  positional: string[],
   database: MemoryDatabaseApi,
 ): Effect.Effect<UpdateTargets, MemoryDatabaseError> {
-  const positional = collectPositionalArgs(args, UPDATE_FLAGS_WITH_VALUES);
-  const matchQuery = getFlagValue(args, "--match");
+  const matchQuery = getFlagValue(flags, "--match");
 
   if (matchQuery !== undefined) {
     if (positional.length > 1) {
@@ -1186,11 +1190,11 @@ function resolveUpdateTargets(
 }
 
 function resolveUpdateContent(
-  args: string[],
+  flags: CommandFlags,
   contentFromArg: string | undefined,
   fileSystem: CommandContext["fileSystem"],
 ): Effect.Effect<string, unknown> {
-  return parseContentFromFileFlag(args, fileSystem).pipe(
+  return parseContentFromFileFlag(flags, fileSystem).pipe(
     Effect.map((contentFromFile) => {
       if (contentFromArg && contentFromFile !== undefined) {
         usageError(`Usage: ${UPDATE_USAGE}`);
@@ -1204,44 +1208,44 @@ function resolveUpdateContent(
   );
 }
 
-function optionalUpdateSpecs(args: string[]): UpdateSpec[] {
+function optionalUpdateSpecs(flags: CommandFlags): UpdateSpec[] {
   const specs: UpdateSpec[] = [];
   const maybeSpecs: (UpdateSpec | undefined)[] = [
     (() => {
-      const value = getFlagValue(args, "--tags");
+      const value = getFlagValue(flags, "--tags");
       return value === undefined ? undefined : { clause: "tags = ?", value };
     })(),
     (() => {
-      const value = getFlagValue(args, "--context");
+      const value = getFlagValue(flags, "--context");
       return value === undefined ? undefined : { clause: "context = ?", value };
     })(),
     (() => {
-      const value = requireMemoryType(args);
+      const value = requireMemoryType(flags);
       return value === undefined
         ? undefined
         : { clause: "memory_type = ?", value };
     })(),
     (() => {
-      const value = requireCertainty(args);
+      const value = requireCertainty(flags);
       return value === undefined
         ? undefined
         : { clause: "certainty = ?", value };
     })(),
     (() => {
-      const value = getFlagValue(args, "--updated-by");
+      const value = getFlagValue(flags, "--updated-by");
       return value === undefined
         ? undefined
         : { clause: "last_updated_by = ?", value };
     })(),
     (() => {
-      const value = parseRefsFlag(args);
+      const value = parseRefsFlag(flags);
       return value === undefined
         ? undefined
         : { clause: "refs = ?", value: JSON.stringify(value) };
     })(),
 
     (() => {
-      const value = parseIntegerFlag(args, "--expires-after-days", {
+      const value = parseIntegerFlag(flags, "--expires-after-days", {
         allowNullLiteral: true,
       });
       return value === undefined
@@ -1257,29 +1261,29 @@ function optionalUpdateSpecs(args: string[]): UpdateSpec[] {
   }
   specs.push(
     ...evidenceUpdateSpecs(
-      parseEvidenceFlag(args),
-      parseValidationGapsFlag(args),
+      parseEvidenceFlag(flags),
+      parseValidationGapsFlag(flags),
     ),
   );
   return specs;
 }
 
-function updateSetsAndParams(args: string[], content: string) {
+function updateSetsAndParams(flags: CommandFlags, content: string) {
   const sets = [
     "content = ?",
     "updated_at = datetime('now')",
     "update_count = COALESCE(update_count, 0) + 1",
   ];
   const params: (string | number | null)[] = [content];
-  for (const spec of optionalUpdateSpecs(args)) {
+  for (const spec of optionalUpdateSpecs(flags)) {
     sets.push(spec.clause);
     params.push(spec.value);
   }
-  const requestedType = requireMemoryType(args);
+  const requestedType = requireMemoryType(flags);
   if (
     requestedType !== undefined &&
     requestedType !== "status" &&
-    !hasFlag(args, "--expires-after-days")
+    !hasFlag(flags, "--expires-after-days")
   ) {
     sets.push("expires_after_days = NULL");
   }
@@ -1525,28 +1529,29 @@ function validateProspectiveUpdates(
 
 export function handleUpdateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
     const { targetIds, contentFromArg } = yield* resolveUpdateTargets(
-      args,
+      flags,
+      commandCtx.positionals,
       database,
     );
     const content = yield* resolveUpdateContent(
-      args,
+      flags,
       contentFromArg,
       commandCtx.fileSystem,
     );
     if (targetIds.length === 0) {
       usageError(`Usage: ${UPDATE_USAGE}`);
     }
-    const tokenReportEnabled = hasFlag(args, "--token-report");
+    const tokenReportEnabled = hasFlag(flags, "--token-report");
     const prospective = yield* prospectiveUpdateDocuments(
-      args,
+      flags,
       database,
       targetIds,
       content,
     );
-    if (hasFlag(args, "--dry-run")) {
+    if (hasFlag(flags, "--dry-run")) {
       yield* runUpdateDryRun(commandCtx, prospective);
       return;
     }
@@ -1554,13 +1559,13 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       prospective,
       tokenReportEnabled,
     );
-    const { sets, params } = updateSetsAndParams(args, content);
+    const { sets, params } = updateSetsAndParams(flags, content);
     const result = yield* runBatchMemoryUpdate(
       database,
       targetIds,
       { sets, params },
       new Map(prospective.map((entry) => [entry.id, entry.updateCount])),
-      hasFlag(args, "--match"),
+      hasFlag(flags, "--match"),
     );
     const { rows, missingIds } = result;
     const updatedIds = new Set(rows.map((row) => Number(row.id)));
@@ -1597,11 +1602,11 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
 }
 
 function resolveDeprecateTargets(
-  args: string[],
+  flags: CommandFlags,
+  positional: string[],
   database: MemoryDatabaseApi,
 ): Effect.Effect<number[], MemoryDatabaseError> {
-  const positional = collectPositionalArgs(args, DEPRECATE_FLAGS_WITH_VALUES);
-  const matchQuery = getFlagValue(args, "--match");
+  const matchQuery = getFlagValue(flags, "--match");
 
   if (matchQuery !== undefined) {
     if (positional.length > 0) {
@@ -1625,15 +1630,15 @@ function resolveDeprecateTargets(
   return Effect.succeed(parseIdSpec(idRaw));
 }
 
-function deprecateSetsAndParams(args: string[], targetIds: number[]) {
-  const supersededBy = parseIntegerFlag(args, "--superseded-by");
+function deprecateSetsAndParams(flags: CommandFlags, targetIds: number[]) {
+  const supersededBy = parseIntegerFlag(flags, "--superseded-by");
   if (
     supersededBy !== undefined &&
     targetIds.some((targetId) => supersededBy === targetId)
   ) {
     usageError("A memory cannot supersede itself.");
   }
-  const updatedBy = getFlagValue(args, "--updated-by");
+  const updatedBy = getFlagValue(flags, "--updated-by");
   const sets = [
     "status = ?",
     "superseded_by = ?",
@@ -1714,11 +1719,15 @@ function printDeprecateResults(params: {
 
 export function handleDeprecateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const targetIds = yield* resolveDeprecateTargets(args, database);
-    const { sets, params } = deprecateSetsAndParams(args, targetIds);
-    const supersededBy = parseIntegerFlag(args, "--superseded-by");
+    const targetIds = yield* resolveDeprecateTargets(
+      flags,
+      commandCtx.positionals,
+      database,
+    );
+    const { sets, params } = deprecateSetsAndParams(flags, targetIds);
+    const supersededBy = parseIntegerFlag(flags, "--superseded-by");
     if (
       supersededBy !== undefined &&
       (supersededBy === null ||
@@ -1742,7 +1751,7 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
       targetIds,
       { sets, params },
       snapshots,
-      hasFlag(args, "--match"),
+      hasFlag(flags, "--match"),
     );
     const { rows, missingIds } = result;
     const reviewCandidates = yield* findReviewCandidates(
@@ -1767,7 +1776,7 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
       }
       printDeprecateResults({
         commandCtx,
-        supersededByRequested: hasFlag(args, "--superseded-by"),
+        supersededByRequested: hasFlag(flags, "--superseded-by"),
         targetIds,
         rows,
         missingIds,

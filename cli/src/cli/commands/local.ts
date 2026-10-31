@@ -10,7 +10,7 @@ import {
   stringFlag,
   stringSpec,
 } from "../runtime/command";
-import { handleLocalExport } from "./remote-migrate";
+import { handleLocalExport } from "./local-export";
 
 const localExportCommand = effectCommand(
   "export",

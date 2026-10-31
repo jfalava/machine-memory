@@ -3,15 +3,16 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --type-aware --fix && vitest run && bun run typecheck",
+    "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "5.20261029.1",
+    "@cloudflare/workers-types": "catalog:types",
     "hono": "4.13.14"
   },
   "devDependencies": {

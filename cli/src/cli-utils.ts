@@ -5,16 +5,19 @@ export function printJson(data: JsonValue) {
   console.info(JSON.stringify(data));
 }
 
-export function getFlagValue(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  if (idx === -1 || idx + 1 >= args.length) {
-    return undefined;
-  }
-  return args[idx + 1];
+/** Parsed command flags keyed by `--name`: string flags map to their value, set boolean flags to `true`. */
+export type CommandFlags = ReadonlyMap<string, string | true>;
+
+export function getFlagValue(
+  flags: CommandFlags,
+  flag: string,
+): string | undefined {
+  const value = flags.get(flag);
+  return value === true ? undefined : value;
 }
 
-export function hasFlag(args: string[], flag: string): boolean {
-  return args.includes(flag);
+export function hasFlag(flags: CommandFlags, flag: string): boolean {
+  return flags.has(flag);
 }
 
 export function usageError(message: string): never {
