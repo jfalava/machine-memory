@@ -1,10 +1,11 @@
 import {
+  ErrorBodySchema,
   PRODUCT_ROUTES,
   productRoutePath,
   type ProductRoute,
   type JsonValue,
 } from "@machine-memory/contract";
-import { Effect, Redacted } from "effect";
+import { Effect, Predicate, Redacted } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Schema from "effect/Schema";
@@ -14,17 +15,22 @@ import {
   classifyRestFailure,
   handleRestRequest,
   type RestHandlers,
-} from "../../api/src/rest-handlers";
+} from "../src/rest-handlers";
 
 class TestFailure extends Schema.TaggedError<TestFailure>()("TestFailure", {
   message: Schema.String,
 }) {}
 
-function responseJson(
-  response: HttpServerResponse.HttpServerResponse,
-): unknown {
-  const body = response.body.toJSON() as { readonly body?: unknown };
-  return JSON.parse(String(body.body));
+const decodeErrorBody = Schema.decodeUnknownSync(
+  Schema.fromJsonString(ErrorBodySchema),
+);
+
+function responseErrorBody(response: HttpServerResponse.HttpServerResponse) {
+  const body = response.body;
+  if (!Predicate.isTagged(body, "Uint8Array")) {
+    throw new Error(`Expected a JSON byte body, got ${body._tag}.`);
+  }
+  return decodeErrorBody(new TextDecoder().decode(body.body));
 }
 
 function setup(failingProduct?: RestHandlers<never>["handleProduct"]) {
@@ -38,9 +44,7 @@ function setup(failingProduct?: RestHandlers<never>["handleProduct"]) {
     handleQuery: ok,
     handleMigration: ok,
     handleMigrationLinks: ok,
-    handleVectorizeUpsert: vectorize,
     handleVectorizeSearch: vectorize,
-    handleVectorizeDelete: vectorize,
     handleProduct: product,
   };
   const call = (path: string, token = "token") =>
@@ -105,10 +109,9 @@ describe("REST product route catalog", () => {
       );
       const response = await call("/product/query");
       expect(response.status).toBe(400);
-      expect(responseJson(response)).toMatchObject({
-        ok: false,
-        error: expect.stringContaining("Use simpler words"),
-      });
+      const body = responseErrorBody(response);
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("Use simpler words");
       expect(error).toHaveBeenCalledWith(
         "REST /product/query failed [fts-query].",
       );
@@ -118,15 +121,14 @@ describe("REST product route catalog", () => {
   });
 
   test("guides pattern failures without blaming input or leaking diagnostics", async () => {
-    expect(
-      classifyRestFailure(
-        new Error("SQLITE_ERROR: LIKE or GLOB pattern too complex"),
-      ),
-    ).toMatchObject({
+    const failure = classifyRestFailure(
+      new Error("SQLITE_ERROR: LIKE or GLOB pattern too complex"),
+    );
+    expect(failure).toMatchObject({
       status: 500,
       category: "pattern-complexity",
-      error: expect.stringContaining("If machine-memory generated the pattern"),
     });
+    expect(failure.error).toContain("If machine-memory generated the pattern");
 
     const error = vi
       .spyOn(console, "error")
@@ -141,7 +143,7 @@ describe("REST product route catalog", () => {
       );
       const response = await call("/product/suggest");
       expect(response.status).toBe(500);
-      expect(responseJson(response)).toEqual({
+      expect(responseErrorBody(response)).toEqual({
         ok: false,
         error: "Internal server error.",
       });

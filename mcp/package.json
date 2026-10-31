@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --type-aware --fix && bun run typecheck",
+    "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
@@ -15,7 +16,6 @@
     "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
-    "@effect/sql-d1": "catalog:effect",
     "@machine-memory/contract": "workspace:*",
     "@modelcontextprotocol/server": "2.4.0",
     "agents": "0.32.0",

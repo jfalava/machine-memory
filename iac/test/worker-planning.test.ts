@@ -9,10 +9,18 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import Api from "../../api/src/worker";
 import Mcp from "../../mcp/src/worker";
 import { bindApplicationSecrets } from "../src/secrets";
+
+const decodeWorkerBindingData = Schema.decodeUnknownSync(
+  Schema.Struct({
+    bindings: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    crons: Schema.optionalKey(Schema.Array(Schema.String)),
+  }),
+);
 
 test.each([false, true])(
   "Workers plan without application secret values (OAuth: %s)",
@@ -25,11 +33,13 @@ test.each([false, true])(
       Effect.gen(function* () {
         const api = yield* Api;
         const mcp = yield* Mcp;
-        yield* bindApplicationSecrets(api, mcp, {
-          storeId: "test-store",
-          dbToken: "rest-bearer",
-          ...(enableOAuth
+        const secrets = { storeId: "test-store", dbToken: "rest-bearer" };
+        yield* bindApplicationSecrets(
+          api,
+          mcp,
+          enableOAuth
             ? {
+                ...secrets,
                 oauth: {
                   githubClientId: "github-client",
                   githubClientSecret: "github-secret",
@@ -37,8 +47,8 @@ test.each([false, true])(
                   cookieEncryptionKey: "cookie-key",
                 },
               }
-            : {}),
-        });
+            : secrets,
+        );
       }),
     ).pipe(
       Effect.provideService(Stage, "test"),
@@ -116,23 +126,18 @@ test.each([false, true])(
       );
     }
     expect(JSON.stringify(compiled.bindings)).not.toContain("secret_text");
-    expect(compiled.bindings["machine-memory-api"]).toEqual(
+    const apiData = (compiled.bindings["machine-memory-api"] ?? []).map(
+      (binding) => decodeWorkerBindingData(binding.data),
+    );
+    expect(apiData.flatMap((data) => data.bindings ?? [])).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          data: expect.objectContaining({
-            bindings: expect.arrayContaining([
-              expect.objectContaining({
-                type: "durable_object_namespace",
-                name: "VectorCoordinator",
-                className: "VectorCoordinator",
-              }),
-            ]),
-          }),
-        }),
-        expect.objectContaining({
-          data: expect.objectContaining({ crons: ["*/5 * * * *"] }),
+          type: "durable_object_namespace",
+          name: "VectorCoordinator",
+          className: "VectorCoordinator",
         }),
       ]),
     );
+    expect(apiData.map((data) => data.crons)).toContainEqual(["*/5 * * * *"]);
   },
 );

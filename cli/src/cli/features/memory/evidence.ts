@@ -7,11 +7,15 @@ import {
   type EvidenceKind,
 } from "@machine-memory/contract";
 
-import { getFlagValue, usageError } from "../../../cli-utils";
 import {
-  jsonString,
+  type CommandFlags,
+  getFlagValue,
+  usageError,
+} from "../../../cli-utils";
+import {
   jsonStringArray,
   parseJson,
+  storedStringArray,
   type JsonValue,
 } from "../../../json";
 
@@ -19,22 +23,6 @@ const CLEAR_VALUES = new Set(["", "[]", "none"]);
 
 function isEvidenceKind(value: string): value is EvidenceKind {
   return EVIDENCE_KINDS.some((kind) => kind === value);
-}
-
-function storedStringArray(value: JsonValue | undefined): string[] {
-  const array = jsonStringArray(value);
-  if (array !== undefined) {
-    return [...array];
-  }
-  const raw = jsonString(value);
-  if (raw === undefined || raw.trim() === "") {
-    return [];
-  }
-  try {
-    return [...(jsonStringArray(parseJson(raw)) ?? [])];
-  } catch {
-    return [];
-  }
 }
 
 /** Rows from a pre-migration remote schema have no column: [] means unspecified. */
@@ -61,8 +49,10 @@ function flagJsonArray(raw: string, flag: string): string[] {
 }
 
 /** `--evidence a,b` or a JSON array; `none` or `[]` clears it on update. */
-export function parseEvidenceFlag(args: string[]): EvidenceKind[] | undefined {
-  const raw = getFlagValue(args, "--evidence");
+export function parseEvidenceFlag(
+  flags: CommandFlags,
+): EvidenceKind[] | undefined {
+  const raw = getFlagValue(flags, "--evidence");
   if (raw === undefined) {
     return undefined;
   }
@@ -85,8 +75,10 @@ export function parseEvidenceFlag(args: string[]): EvidenceKind[] | undefined {
 }
 
 /** One gap as plain text, several as a JSON array; `none` or `[]` clears them. */
-export function parseValidationGapsFlag(args: string[]): string[] | undefined {
-  const raw = getFlagValue(args, "--validation-gaps");
+export function parseValidationGapsFlag(
+  flags: CommandFlags,
+): string[] | undefined {
+  const raw = getFlagValue(flags, "--validation-gaps");
   if (raw === undefined) {
     return undefined;
   }

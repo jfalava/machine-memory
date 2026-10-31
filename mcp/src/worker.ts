@@ -9,7 +9,7 @@ import ApiWorker from "../../api/src/worker";
 import { mcpName } from "../../iac/src/config";
 import { OAuthDevices, OAuthKv } from "../../iac/src/database";
 import { readStoredSecret } from "../../iac/src/secrets";
-import { handleOAuthPath, isOAuthPath } from "./oauth-bridge";
+import { handleOAuthPath } from "./oauth-bridge";
 
 const INTERNAL_ERROR = "Internal server error.";
 
@@ -77,15 +77,11 @@ export default Cloudflare.Worker<{ API: Cloudflare.Worker }>()(
     }).pipe(Effect.provideService(Cloudflare.WorkerEnvironment, env));
 
     return {
+      // The router forwards only MCP/OAuth paths here; the OAuth provider's
+      // default handler answers 404 for anything else.
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        if (isOAuthPath(request.url)) {
-          return yield* handleOAuthPath(yield* oauthResources, request);
-        }
-        return HttpServerResponse.jsonUnsafe(
-          { error: "Not found" },
-          { status: 404 },
-        );
+        return yield* handleOAuthPath(yield* oauthResources, request);
       }).pipe(
         Effect.catchCause(() =>
           Effect.succeed(

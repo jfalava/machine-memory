@@ -14,12 +14,17 @@ import {
   isMemoryStatus,
   isMemoryType,
   normalizeSqliteRow,
-  parseStoredRefs,
   sqliteDateForComparison,
   stringValue,
 } from "./cli/shared";
 import { DB_PATH } from "./constants";
-import { jsonNumber, jsonObject, jsonString, type JsonValue } from "./json";
+import {
+  jsonNumber,
+  jsonObject,
+  jsonString,
+  storedStringArray,
+  type JsonValue,
+} from "./json";
 
 export type RemoteMigrationRow = {
   readonly source_id: number;
@@ -125,7 +130,9 @@ function normalizeSourceRow(row: JsonValue, index: number): RemoteMigrationRow {
     stringValue(normalized.certainty, "inferred"),
   );
   if (!certainty) {
-    throw sourceError(`Source row ${sourceId} has invalid certainty.`);
+    throw sourceError(
+      `Source row ${sourceId} has invalid certainty. Legacy values (hard, soft, uncertain) are rewritten by running \`machine-memory migrate --local\` first.`,
+    );
   }
 
   const updateCount = sourceInteger(
@@ -155,7 +162,7 @@ function normalizeSourceRow(row: JsonValue, index: number): RemoteMigrationRow {
     last_updated_by: stringValue(normalized.last_updated_by),
     update_count: updateCount ?? 0,
     certainty,
-    refs: JSON.stringify(parseStoredRefs(normalized.refs)),
+    refs: JSON.stringify(storedStringArray(normalized.refs)),
     evidence: parseStoredEvidence(normalized.evidence),
     validation_gaps: parseStoredValidationGaps(normalized.validation_gaps),
     expires_after_days: expiresAfterDays,

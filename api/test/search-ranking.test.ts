@@ -1,8 +1,7 @@
-import { hasStrongMatch } from "@machine-memory/contract";
+import { extractTerms, hasStrongMatch } from "@machine-memory/contract";
 import { describe, expect, it } from "vitest";
 
 import {
-  extractTerms,
   scoreMemoryRows,
   scoredResultRow,
   strongerMatch,
@@ -37,6 +36,8 @@ function ranked(fields: {
     updated_at: daysAgo(fields.ageDays),
     update_count: fields.updateCount ?? 0,
     refs: fields.refs ?? [],
+    evidence: [],
+    validation_gaps: [],
     fts_rank: fields.ftsRank,
   };
 }

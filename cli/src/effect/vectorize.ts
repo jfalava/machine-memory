@@ -1,27 +1,14 @@
 import {
   decodeResponse,
-  ErrorBodySchema,
   VectorizeSearchResultSchema,
   type VectorizeSearchRequestInput,
-  VectorizeDeleteResultSchema,
-  VectorizeUpsertResultSchema,
-  type JsonValue as ContractJsonValue,
 } from "@machine-memory/contract";
-import { Effect } from "effect";
+import type { Effect } from "effect";
 
-import {
-  jsonObject,
-  jsonString,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "../json";
-import {
-  composeEmbeddingText,
-  validateBgeEmbeddingText,
-  type EmbeddingTextPart,
-} from "./bge-tokenizer";
-import { MemoryDatabaseError } from "./errors";
+import type { JsonObject, JsonValue } from "../json";
+import type { EmbeddingTextPart } from "./bge-tokenizer";
+import type { MemoryDatabaseError } from "./errors";
+import { apiUrl, postJson, toContractValue } from "./remote-http";
 
 export type MemoryVectorDocument = {
   readonly id: string;
@@ -32,12 +19,6 @@ export type MemoryVectorDocument = {
   readonly memory_type: string;
   readonly status: string;
   readonly certainty: string;
-};
-
-export type MemoryVectorMutation = {
-  readonly id: string;
-  readonly namespace?: string;
-  readonly indexing: "queued";
 };
 
 export type MemoryVectorMatch = {
@@ -52,12 +33,6 @@ export type MemoryVectorSearchResult = {
 };
 
 export type MemoryVectorApi = {
-  readonly upsert: (
-    document: MemoryVectorDocument,
-  ) => Effect.Effect<MemoryVectorMutation, MemoryDatabaseError>;
-  readonly delete: (
-    id: string,
-  ) => Effect.Effect<MemoryVectorMutation, MemoryDatabaseError>;
   readonly search: (
     request: MemoryVectorSearchRequest,
   ) => Effect.Effect<MemoryVectorSearchResult, MemoryDatabaseError>;
@@ -81,171 +56,6 @@ export function memoryVectorEmbeddingParts(
   ];
 }
 
-export function memoryVectorEmbeddingText(
-  document: MemoryVectorDocument,
-): string {
-  return composeEmbeddingText(memoryVectorEmbeddingParts(document));
-}
-
-type RemoteVectorResponse = JsonObject;
-
-type RequestHeaders = {
-  "content-type": string;
-  authorization?: string;
-};
-
-type RemoteRequestError = Error & {
-  readonly status?: number;
-  readonly retryAfterMs?: number;
-};
-
-export type VectorizeRateLimitInfo = {
-  readonly retryAfterMs?: number;
-};
-
-function parseRetryAfterMs(value: string | null): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) {
-    return Math.max(0, seconds * 1000);
-  }
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp)
-    ? undefined
-    : Math.max(0, timestamp - Date.now());
-}
-
-function remoteRequestError(
-  response: Response,
-  message: string,
-): RemoteRequestError {
-  // SAFETY: status and retryAfterMs are attached via defineProperties right below,
-  // satisfying RemoteRequestError.
-  const error = new Error(message) as RemoteRequestError;
-  Object.defineProperties(error, {
-    status: { value: response.status, enumerable: false },
-    retryAfterMs: {
-      value: parseRetryAfterMs(response.headers.get("retry-after")),
-      enumerable: false,
-    },
-  });
-  return error;
-}
-
-function errorRecord(value: Error): RemoteRequestError {
-  return value;
-}
-
-export function vectorizeRateLimitInfo(
-  error: MemoryDatabaseError,
-): VectorizeRateLimitInfo | undefined {
-  const seen = new Set<Error>();
-  let current: Error | undefined = error;
-  let rateLimited = false;
-  let retryAfterMs: number | undefined;
-  while (current && !seen.has(current)) {
-    seen.add(current);
-    const candidate = errorRecord(current);
-    if (!candidate) {
-      break;
-    }
-    const message = candidate.message;
-    const status = candidate.status;
-    const isRateLimited =
-      status === 429 ||
-      /(?:too many requests|rate[ -]?limit|\b429\b|\b40041\b)/i.test(message);
-    if (isRateLimited) {
-      rateLimited = true;
-      if (
-        retryAfterMs === undefined &&
-        candidate.retryAfterMs !== undefined &&
-        Number.isFinite(candidate.retryAfterMs)
-      ) {
-        retryAfterMs = candidate.retryAfterMs;
-      }
-    }
-    current = candidate.cause instanceof Error ? candidate.cause : undefined;
-  }
-  return rateLimited ? { retryAfterMs } : undefined;
-}
-
-async function readRemoteResponse(
-  response: Response,
-): Promise<RemoteVectorResponse> {
-  const text = await response.text();
-  try {
-    const parsed = jsonObject(parseJson(text));
-    if (parsed === undefined) {
-      throw new Error("response was not a JSON object");
-    }
-    return parsed;
-  } catch (cause) {
-    const contentType = response.headers.get("content-type") ?? "unknown";
-    throw new Error(
-      `Remote vector API returned non-JSON HTTP ${response.status} (${contentType}).`,
-      { cause },
-    );
-  }
-}
-
-function vectorError(operation: string, cause: unknown): MemoryDatabaseError {
-  return new MemoryDatabaseError({
-    operation,
-    message:
-      cause instanceof Error
-        ? cause.message
-        : "Remote vector operation failed.",
-    cause,
-  });
-}
-
-function vectorUrl(queryUrl: string, path: string): string {
-  const parsed = new URL(queryUrl);
-  const basePath = parsed.pathname.replace(/\/query\/?$/, "");
-  parsed.pathname = `${basePath}${path}`;
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed.toString();
-}
-
-function toContractValue(value: JsonValue): ContractJsonValue {
-  // SAFETY: parsed JSON response values carry no undefined entries.
-  return value as ContractJsonValue;
-}
-
-function parseUpsertMutation(value: JsonValue): MemoryVectorMutation {
-  const decoded = decodeResponse(
-    VectorizeUpsertResultSchema,
-    toContractValue(value),
-    "vectorize/upsert",
-  );
-  if (decoded === undefined) {
-    throw new Error("Remote vector API returned an invalid mutation.");
-  }
-  return {
-    id: decoded.id,
-    namespace: decoded.namespace,
-    indexing: decoded.indexing,
-  };
-}
-
-function parseDeleteMutation(value: JsonValue): MemoryVectorMutation {
-  const decoded = decodeResponse(
-    VectorizeDeleteResultSchema,
-    toContractValue(value),
-    "vectorize/delete",
-  );
-  if (decoded === undefined) {
-    throw new Error("Remote vector API returned an invalid mutation.");
-  }
-  return {
-    id: decoded.id,
-    indexing: decoded.indexing,
-  };
-}
-
 function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
   const result = decodeResponse(
     VectorizeSearchResultSchema,
@@ -265,88 +75,21 @@ function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
   };
 }
 
-type RequestOptions<T> = {
-  readonly queryUrl: string;
-  readonly token: string | undefined;
-  readonly operation: string;
-  readonly path: string;
-  readonly body: JsonValue;
-  readonly parse: (value: JsonValue) => T;
-  readonly beforeRequest?: () => Promise<void>;
-};
-
-function request<T>(
-  options: RequestOptions<T>,
-): Effect.Effect<T, MemoryDatabaseError> {
-  return Effect.tryPromise({
-    try: async () => {
-      await options.beforeRequest?.();
-      const headers: RequestHeaders = { "content-type": "application/json" };
-      if (options.token) {
-        headers.authorization = `Bearer ${options.token}`;
-      }
-      // HTTP boundary; errors are typed by tryPromise's catch.
-      // @effect-diagnostics-next-line globalFetchInEffect:off
-      const response = await fetch(vectorUrl(options.queryUrl, options.path), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(options.body),
-      });
-      const payload = await readRemoteResponse(response);
-      if (!response.ok || payload.ok !== true) {
-        const failure = decodeResponse(
-          ErrorBodySchema,
-          toContractValue(payload),
-          "vectorize/error",
-        );
-        const message =
-          failure?.error ??
-          jsonString(payload.error) ??
-          `Remote vector API returned HTTP ${response.status}.`;
-        throw remoteRequestError(response, message);
-      }
-      return options.parse(payload.result);
-    },
-    catch: (cause) => vectorError(options.operation, cause),
-  });
-}
-
 export function remoteVectorApi(
   queryUrl: string,
   token: string | undefined,
 ): MemoryVectorApi {
   return {
-    upsert: (document) =>
-      request({
-        queryUrl,
-        token,
-        operation: "vectorize/upsert",
-        path: "/vectorize/upsert",
-        body: document,
-        parse: parseUpsertMutation,
-        beforeRequest: () =>
-          validateBgeEmbeddingText(
-            memoryVectorEmbeddingText(document),
-            "Memory",
-          ),
-      }),
-    delete: (id) =>
-      request({
-        queryUrl,
-        token,
-        operation: "vectorize/delete",
-        path: "/vectorize/delete",
-        body: { id },
-        parse: parseDeleteMutation,
-      }),
     search: (searchRequest) =>
-      request({
-        queryUrl,
+      postJson({
+        url: apiUrl(queryUrl, "/vectorize/search"),
         token,
-        operation: "vectorize/search",
-        path: "/vectorize/search",
         body: searchRequest,
-        parse: parseSearchResult,
+        operation: "vectorize/search",
+        service: "Remote vector API",
+        fallbackMessage: "Remote vector operation failed.",
+        errorLabel: "vectorize/error",
+        parse: (payload) => parseSearchResult(payload.result),
       }),
   };
 }

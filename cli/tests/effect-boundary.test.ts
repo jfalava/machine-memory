@@ -1,12 +1,14 @@
-import { Cause, Effect } from "effect";
+import {
+  compareMemoryFact,
+  deriveFileNeighborhood,
+} from "@machine-memory/contract";
+import { Cause, Effect, Exit, Schema } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import { handleReindexCommand } from "@/cli/commands/reindex";
-import { compareFact } from "@/cli/features/memory/compare";
 import type { CommandContext } from "@/cli/runtime/context";
 import {
   combineHybridResults,
-  deriveNeighborhoodFromFiles,
   normalizeSqliteRow,
   parseIdSpec,
   queryNeighborhoodMatches,
@@ -17,6 +19,7 @@ import {
   normalizeRemoteUrl,
   validateDatabaseBackendFlags,
 } from "@/database-config";
+import type { SqlQueryBinding } from "@/db";
 import { MemoryDatabase, type MemoryDatabaseApi } from "@/effect/database";
 import { MemoryDatabaseError } from "@/effect/errors";
 import { remoteLayer } from "@/effect/remote-database";
@@ -25,20 +28,20 @@ describe("Effect application boundaries", () => {
   it("preserves the existing pure memory semantics", () => {
     expect(parseIdSpec("3,1,3")).toEqual([3, 1]);
     expect(
-      normalizeSqliteRow({ certainty: "hard", refs: '["docs/a.md"]' }),
+      normalizeSqliteRow({ certainty: "verified", refs: '["docs/a.md"]' }),
     ).toMatchObject({
       certainty: "verified",
       refs: ["docs/a.md"],
     });
-    expect(compareFact("Effect is used", "Effect is not used").conflict).toBe(
-      true,
-    );
+    expect(
+      compareMemoryFact("Effect is used", "Effect is not used").conflict,
+    ).toBe(true);
   });
 
   it("queries long suggest paths as literal substrings without wildcards", async () => {
-    const calls: Array<[string, Array<string | number>]> = [];
+    const calls: Array<[string, SqlQueryBinding[]]> = [];
     const all: MemoryDatabaseApi["all"] = (sql, params = []) => {
-      calls.push([sql, [...params] as Array<string | number>]);
+      calls.push([sql, [...params]]);
       return Effect.succeed([]);
     };
     const database: MemoryDatabaseApi = {
@@ -46,7 +49,7 @@ describe("Effect application boundaries", () => {
       get: () => Effect.void.pipe(Effect.as(undefined)),
       all,
     };
-    const neighborhood = deriveNeighborhoodFromFiles([
+    const neighborhood = deriveFileNeighborhood([
       "web/portal/src/components/references/gallery/gallery-tab.tsx",
     ]);
 
@@ -65,7 +68,11 @@ describe("Effect application boundaries", () => {
     expect(sql).toContain("INSTR(LOWER(m.content), ?) > 0");
     expect(sql).not.toContain("LIKE");
     expect(params).toContain("web/portal/src/components/references/gallery/");
-    expect(params?.some((param) => String(param).includes("%"))).toBe(false);
+    expect(
+      params?.some(
+        (param) => Schema.is(Schema.String)(param) && param.includes("%"),
+      ),
+    ).toBe(false);
   });
 
   it("preserves actionable remote query errors through the CLI database layer", async () => {
@@ -86,8 +93,8 @@ describe("Effect application boundaries", () => {
           Effect.provide(remoteLayer("https://memory.test/query", "token")),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.pretty(exit.cause)).toContain(guidance);
       }
     } finally {
@@ -97,7 +104,7 @@ describe("Effect application boundaries", () => {
 
   it("fails if server-side reindex queueing fails, including quiet mode", async () => {
     const failure = new MemoryDatabaseError({
-      operation: "vectorize/upsert",
+      operation: "reindex",
       message: "Vectorize unavailable",
       cause: undefined,
     });
@@ -113,8 +120,6 @@ describe("Effect application boundaries", () => {
           },
         ]),
       vectorize: {
-        upsert: () => Effect.fail(failure),
-        delete: () => Effect.succeed({ id: "1", indexing: "queued" }),
         search: () => Effect.succeed({ count: 0, matches: [] }),
       },
     };
@@ -122,7 +127,8 @@ describe("Effect application boundaries", () => {
       jsonMin: boolean;
       quiet: boolean;
     }): CommandContext => ({
-      args: ["--remote"],
+      flags: new Map([["--remote", true]]),
+      positionals: [],
       command: "reindex",
       outputMode: {
         brief: false,
@@ -132,6 +138,7 @@ describe("Effect application boundaries", () => {
         quiet: outputMode.quiet,
       },
       database,
+      // SAFETY: handleReindexCommand never reads context.fileSystem.
       fileSystem: {} as CommandContext["fileSystem"],
     });
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -162,12 +169,6 @@ describe("Effect application boundaries", () => {
   });
 
   it("queues reindex atomically on the server without indexing client snapshots", async () => {
-    let upsertCalls = 0;
-    const rateLimit = new MemoryDatabaseError({
-      operation: "vectorize/upsert",
-      message: "Too Many Requests",
-      cause: undefined,
-    });
     const run = vi.fn((_sql: string, _params?: unknown[]) =>
       Effect.succeed({ changes: 1 }),
     );
@@ -183,23 +184,19 @@ describe("Effect application boundaries", () => {
           },
         ]),
       vectorize: {
-        upsert: () => {
-          upsertCalls += 1;
-          return upsertCalls === 1
-            ? Effect.fail(rateLimit)
-            : Effect.succeed({ id: "1", indexing: "queued" });
-        },
-        delete: () => Effect.succeed({ id: "1", indexing: "queued" }),
         search: () => Effect.succeed({ count: 0, matches: [] }),
       },
     };
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    vi.useFakeTimers();
 
     try {
-      const exitPromise = Effect.runPromiseExit(
+      const exit = await Effect.runPromiseExit(
         handleReindexCommand({
-          args: ["--remote", "--json-min"],
+          flags: new Map([
+            ["--remote", true],
+            ["--json-min", true],
+          ]),
+          positionals: [],
           outputMode: {
             brief: false,
             jsonMin: true,
@@ -209,49 +206,51 @@ describe("Effect application boundaries", () => {
           },
           command: "reindex",
           database,
+          // SAFETY: handleReindexCommand never reads context.fileSystem.
           fileSystem: {} as CommandContext["fileSystem"],
         }),
       );
-      await vi.runAllTimersAsync();
-      const exit = await exitPromise;
 
       expect(exit._tag).toBe("Success");
-      expect(upsertCalls).toBe(0);
       expect(run).toHaveBeenCalledTimes(1);
       expect(run.mock.calls[0]?.[0]).toContain("UPDATE memory_vector_sync");
       expect(run.mock.calls[0]?.[0]).toContain("WHERE repository = ?");
       expect(info).toHaveBeenCalledWith(expect.stringContaining('"queued":1'));
     } finally {
-      vi.useRealTimers();
       info.mockRestore();
     }
   });
 
-  it("combines lexical and semantic relevance with an explanation", () => {
+  it("fuses lexical and semantic results by rank, not score scale", () => {
+    // Weighted score blending would rank #2 (near-top lexical score) above #3;
+    // reciprocal-rank fusion only sees that #3 is the best semantic hit.
     const results = combineHybridResults(
       [
         { id: 1, score: 90 },
-        { id: 2, score: 50 },
+        { id: 2, score: 89 },
       ],
       [
-        { id: 2, score: 0.95, semantic_score: 0.95 },
-        { id: 3, score: 0.8, semantic_score: 0.8 },
+        { id: 3, score: 0.99, semantic_score: 0.99 },
+        { id: 1, score: 0.1, semantic_score: 0.1 },
       ],
       3,
       true,
     );
 
-    expect(results.map((row) => row.id)).toEqual([2, 1, 3]);
+    expect(results.map((row) => row.id)).toEqual([1, 3, 2]);
     expect(results[0]).toMatchObject({
-      fts_score: 50,
-      semantic_score: 0.95,
-      hybrid_score: 75.556,
-      score: 75.556,
+      fts_score: 90,
+      semantic_score: 0.1,
+      hybrid_score: 1 / 61 + 1 / 62,
+      score: 1 / 61 + 1 / 62,
     });
-    expect(results[0]?.score_breakdown).toMatchObject({
-      fts: { weight: 0.55 },
-      semantic: { weight: 0.45 },
-      total: 75.556,
+    expect(results[0]?.score_breakdown).toEqual({
+      fts: { rank: 1, contribution: 1 / 61 },
+      semantic: { rank: 2, contribution: 1 / 62 },
+      total: 1 / 61 + 1 / 62,
+    });
+    expect(results[2]?.score_breakdown).toMatchObject({
+      semantic: { rank: null, contribution: 0 },
     });
   });
 

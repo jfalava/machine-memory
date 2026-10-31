@@ -1,17 +1,19 @@
-import { Effect } from "effect";
 import { resolve } from "node:path";
+
+import { Effect } from "effect";
+
 import { getFlagValue } from "../../cli-utils";
 import { jsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
 
 export function handleCoverageCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const root = resolve(process.cwd(), getFlagValue(args, "--root") ?? ".");
+    const root = resolve(process.cwd(), getFlagValue(flags, "--root") ?? ".");
     const directories = yield* collectDirectoriesEffect(
       root,
       commandCtx.fileSystem,

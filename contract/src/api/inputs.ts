@@ -2,12 +2,9 @@ import { Schema } from "effect";
 
 import { composeEmbeddingText, validateEmbeddingText } from "../embedding";
 import {
-  MemoryDocumentInputSchema,
-  normalizeMemoryDocument,
   normalizeSearchLimit,
   RepositorySchema,
   SearchLimitInputSchema,
-  type MemoryDocument,
 } from "../entities";
 import { EvidenceSchema, ValidationGapsSchema } from "../evidence";
 import {
@@ -28,7 +25,7 @@ import {
 
 const SqlParamSchema = Schema.Union([
   Schema.String,
-  Schema.Number,
+  Schema.Finite,
   Schema.Null,
 ]);
 
@@ -39,7 +36,6 @@ export const QueryRequestSchema = Schema.Struct({
   params: Schema.Array(SqlParamSchema),
   repository: RepositorySchema,
 });
-export type QueryRequest = typeof QueryRequestSchema.Type;
 
 const PositiveIntSchema = Schema.Int.check(Schema.isGreaterThan(0));
 const NonNegativeIntSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -164,9 +160,9 @@ export function normalizeMigrationRequest(
     }
     sourceIds.add(row.source_id);
     try {
-      Schema.decodeUnknownSync(
-        Schema.fromJsonString(Schema.Array(Schema.String)),
-      )(row.refs);
+      Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.String)))(
+        row.refs,
+      );
       if (
         row.expires_after_days !== null &&
         (row.memory_type !== "status" || row.expires_after_days <= 0)
@@ -197,7 +193,6 @@ export const MigrationLinkSchema = Schema.Struct({
   target_id: PositiveIntSchema,
   superseded_by_target_id: PositiveIntSchema,
 });
-export type MigrationLink = typeof MigrationLinkSchema.Type;
 
 /** POST /migrate/links */
 export const MigrationLinksRequestSchema = Schema.Struct({
@@ -206,19 +201,6 @@ export const MigrationLinksRequestSchema = Schema.Struct({
     Schema.isMaxLength(MAX_MIGRATION_LINKS),
   ),
 });
-export type MigrationLinksRequest = typeof MigrationLinksRequestSchema.Type;
-
-/** POST /vectorize/upsert */
-export const VectorizeUpsertRequestInputSchema = MemoryDocumentInputSchema;
-export type VectorizeUpsertRequestInput =
-  typeof VectorizeUpsertRequestInputSchema.Type;
-export type VectorizeUpsertRequest = MemoryDocument;
-
-export function normalizeVectorizeUpsertRequest(
-  input: VectorizeUpsertRequestInput,
-): VectorizeUpsertRequest {
-  return normalizeMemoryDocument(input);
-}
 
 /**
  * POST /vectorize/search
@@ -256,15 +238,3 @@ export function normalizeVectorizeSearchRequest(
     certainty: input.certainty,
   };
 }
-
-/** POST /vectorize/delete */
-export const VectorizeDeleteRequestSchema = Schema.Struct({
-  id: Schema.Union([Schema.NonEmptyString, Schema.Number]),
-});
-export type VectorizeDeleteRequest = typeof VectorizeDeleteRequestSchema.Type;
-
-/** @deprecated alias kept for barrel clarity during migration */
-export const MigrationRequestSchema = MigrationRequestInputSchema;
-export const MigrationRowSchema = MigrationRowInputSchema;
-export const VectorizeUpsertRequestSchema = VectorizeUpsertRequestInputSchema;
-export const VectorizeSearchRequestSchema = VectorizeSearchRequestInputSchema;

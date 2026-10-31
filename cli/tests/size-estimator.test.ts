@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { Effect } from "effect";
 import { Tokenizer } from "@huggingface/tokenizers";
+import { Effect, Schema } from "effect";
+import { describe, expect, it } from "vitest";
+
+import {
+  embeddingSizeReport,
+  measureEmbeddingFit,
+} from "@/cli/features/memory/size-report";
 import {
   analyzeBgeEmbeddingWith,
   analyzeEmbeddingByBytes,
@@ -10,11 +15,16 @@ import {
   sliceUtf8Safe,
   type EmbeddingTextPart,
 } from "@/effect/bge-tokenizer";
-import {
-  embeddingSizeReport,
-  measureEmbeddingFit,
-} from "@/cli/features/memory/size-report";
+
 import { tokenizerJson, tokenizerConfig } from "./fixtures/tokenizer";
+
+const LimitCheckSchema = Schema.Struct({ pass: Schema.Boolean });
+const decodeSizeLimits = Schema.decodeUnknownSync(
+  Schema.Struct({
+    tokens: LimitCheckSchema,
+    bytes_estimate: LimitCheckSchema,
+  }),
+);
 
 const parts: EmbeddingTextPart[] = [
   { part: "content", text: "hello" },
@@ -70,9 +80,10 @@ describe("size estimation: token vs byte binding", () => {
     expect(breakdown.binding_limit).toBe("both");
     expect(breakdown.largest_part).toEqual({
       part: "content",
-      amount: expect.any(Number),
+      amount: breakdown.largest_part?.amount,
       unit: "tokens",
     });
+    expect(breakdown.largest_part?.amount).toBeTypeOf("number");
     expect(breakdown.trimmed_suggestion).toMatch(
       /truncating content to ~\d+ bytes makes the byte\+2 estimate fit/,
     );
@@ -153,12 +164,9 @@ describe("embeddingSizeReport", () => {
 
     expect(report.within_budget).toBe(true);
     expect(report.binding_limit).toBeNull();
-    const limits = report.limits as Record<
-      string,
-      { pass: boolean; value: number }
-    >;
-    expect(limits.tokens?.pass).toBe(true);
-    expect(limits.bytes_estimate?.pass).toBe(true);
+    const limits = decodeSizeLimits(report.limits);
+    expect(limits.tokens.pass).toBe(true);
+    expect(limits.bytes_estimate.pass).toBe(true);
 
     const overParts: EmbeddingTextPart[] = [
       { part: "content", text: "é".repeat(400) },
@@ -169,9 +177,9 @@ describe("embeddingSizeReport", () => {
     );
     expect(overReport.within_budget).toBe(false);
     expect(overReport.binding_limit).toBe("bytes");
-    const overLimits = overReport.limits as Record<string, { pass: boolean }>;
-    expect(overLimits.tokens?.pass).toBe(true);
-    expect(overLimits.bytes_estimate?.pass).toBe(false);
+    const overLimits = decodeSizeLimits(overReport.limits);
+    expect(overLimits.tokens.pass).toBe(true);
+    expect(overLimits.bytes_estimate.pass).toBe(false);
     expect(overReport.over_by_bytes).toBeGreaterThan(0);
   });
 });

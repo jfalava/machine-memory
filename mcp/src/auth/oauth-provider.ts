@@ -4,13 +4,12 @@ import type {
 } from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
 
-import { createMemoryServer, type McpBindings } from "../mcp";
+import { createMemoryServer } from "../mcp/tools";
+import { MCP_SCOPES, type McpBindings } from "../mcp/types";
 import { githubHandler } from "./github-handler";
-import { isAllowedGithubUserId } from "./oauth-utils";
+import { AUTHORIZE_ENDPOINT, isAllowedGithubUserId } from "./oauth-utils";
 
-export const AUTHORIZE_ENDPOINT = "/authorize";
-export const TOKEN_ENDPOINT = "/token";
-export const CLIENT_REGISTRATION_ENDPOINT = "/register";
+const SUPPORTED_SCOPES = Object.values(MCP_SCOPES);
 
 /**
  * Runtime bindings required by the OAuth provider and the MCP tools it
@@ -102,12 +101,12 @@ export function createOauthProvider(
       },
       defaultHandler: githubHandler,
       authorizeEndpoint: AUTHORIZE_ENDPOINT,
-      tokenEndpoint: TOKEN_ENDPOINT,
-      clientRegistrationEndpoint: CLIENT_REGISTRATION_ENDPOINT,
-      scopesSupported: ["mcp:read", "mcp:write"],
+      tokenEndpoint: "/token",
+      clientRegistrationEndpoint: "/register",
+      scopesSupported: SUPPORTED_SCOPES,
       resourceMetadata: {
         resource,
-        scopes_supported: ["mcp:read", "mcp:write"],
+        scopes_supported: SUPPORTED_SCOPES,
         resource_name: "Machine Memory MCP",
       },
     });

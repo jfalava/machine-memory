@@ -1,26 +1,35 @@
 import {
+  FTS_CANDIDATE_LIMIT,
   SEARCH_LIMIT_MAX,
+  SEARCH_SCORE_WEIGHTS,
+  buildFtsQuery,
+  deriveFileNeighborhood,
+  extractPathTerms,
   extractQueryIdentifiers,
+  extractTerms,
   fileIdentifiers,
+  semanticCandidateCount,
+  type FileNeighborhood,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
-import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  hasFlag,
+  printJson,
+  usageError,
+} from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { jsonNumber, type JsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import {
-  HYBRID_SCORE_WEIGHTS,
-  SCORE_COMPONENT_WEIGHTS,
+  HYBRID_FUSION,
   annotateMatches,
   applySqlFilters,
-  buildFtsQueryFromTerms,
   combineHybridResults,
-  deriveNeighborhoodFromFiles,
-  extractPathTermsFromFiles,
-  extractTerms,
   hasStrongMatchRow,
   mergeSuggestionResults,
   minimalResultSummary,
@@ -57,18 +66,15 @@ type SuggestSnapshot = {
   files: string[];
   normalizedPathTerms: string[];
   suggestTerms: string[];
-  neighborhood: ReturnType<typeof deriveNeighborhoodFromFiles>;
+  neighborhood: FileNeighborhood;
   filters: ReturnType<typeof parseCommonFilters>;
   ftsQuery: string | undefined;
 };
 
 type SweepSource = "suggest" | "query" | "list";
 
-/** Candidates gathered per suggest source before tiering by match strength. */
-const SUGGEST_CANDIDATE_POOL = 20;
-
-function explainScoreEnabled(args: string[]): boolean {
-  return hasFlag(args, "--explain-score");
+function explainScoreEnabled(flags: CommandFlags): boolean {
+  return hasFlag(flags, "--explain-score");
 }
 
 function resultIds(results: JsonObject[]): JsonObject["id"][] {
@@ -192,11 +198,11 @@ export function fetchQueryResults(
   term: string,
   options: FetchResultsOptions,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
-  const { args } = commandCtx;
+  const { flags } = commandCtx;
   const database = requireDatabase(commandCtx);
-  const filters = parseCommonFilters(args);
+  const filters = parseCommonFilters(flags);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
-  const ftsQuery = buildFtsQueryFromTerms(queryTokens);
+  const ftsQuery = buildFtsQuery(queryTokens);
   if (!ftsQuery) {
     return Effect.succeed({ results: [], queryTokens, filters });
   }
@@ -233,31 +239,21 @@ export function fetchQueryResults(
 function fetchSemanticCandidates(
   commandCtx: CommandContext,
   term: string,
-  options: {
-    limit: number;
-    topKMultiplier: number;
-    minimumTopK?: number;
-  },
+  limit: number,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const database = requireDatabase(commandCtx);
   const vectorize = database.vectorize;
   if (!vectorize) {
     usageError("Semantic search requires the remote backend: query --remote.");
   }
-  if (options.limit > SEARCH_LIMIT_MAX) {
+  if (limit > SEARCH_LIMIT_MAX) {
     usageError(
       `--limit must be an integer between 1 and ${SEARCH_LIMIT_MAX} for semantic and hybrid search.`,
     );
   }
-  const topK = Math.min(
-    SEARCH_LIMIT_MAX,
-    Math.max(
-      options.limit * options.topKMultiplier,
-      options.minimumTopK ?? options.limit,
-    ),
-  );
+  const topK = semanticCandidateCount(limit);
 
-  const filters = parseCommonFilters(commandCtx.args);
+  const filters = parseCommonFilters(commandCtx.flags);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
   const status =
     filters.status ?? (filters.includeDeprecated ? undefined : "active");
@@ -334,10 +330,7 @@ function fetchSemanticResults(
   options: FetchResultsOptions,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
   const limit = options.limit ?? 8;
-  return fetchSemanticCandidates(commandCtx, term, {
-    limit,
-    topKMultiplier: 3,
-  }).pipe(
+  return fetchSemanticCandidates(commandCtx, term, limit).pipe(
     Effect.map((result) => ({
       ...result,
       results: orderRowsByMatchStrength(
@@ -357,13 +350,9 @@ function fetchHybridResults(
     [
       fetchQueryResults(commandCtx, term, {
         explainScore: options.explainScore,
-        limit: 100,
+        limit: FTS_CANDIDATE_LIMIT,
       }),
-      fetchSemanticCandidates(commandCtx, term, {
-        limit,
-        topKMultiplier: 4,
-        minimumTopK: 12,
-      }),
+      fetchSemanticCandidates(commandCtx, term, limit),
     ],
     { concurrency: "unbounded" },
   ).pipe(
@@ -383,14 +372,14 @@ function fetchHybridResults(
 
 export function handleQueryCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
-    const term = args[0];
+    const { flags } = commandCtx;
+    const term = commandCtx.positionals[0];
     if (!term) {
       usageError("Usage: query <search_term>");
     }
-    const explainScore = explainScoreEnabled(args);
-    const semantic = hasFlag(args, "--semantic");
-    const hybrid = hasFlag(args, "--hybrid");
+    const explainScore = explainScoreEnabled(flags);
+    const semantic = hasFlag(flags, "--semantic");
+    const hybrid = hasFlag(flags, "--hybrid");
     if (semantic && hybrid) {
       usageError("Use either --semantic or --hybrid, not both.");
     }
@@ -401,7 +390,7 @@ export function handleQueryCommand(commandCtx: CommandContext) {
         : fetchQueryResults;
     const fetched = yield* fetchResults(commandCtx, term, {
       explainScore,
-      limit: parseResultLimit(args),
+      limit: parseResultLimit(flags),
     });
     const { queryTokens, filters } = fetched;
     const results = orderRowsByMatchStrength(
@@ -416,10 +405,10 @@ export function handleQueryCommand(commandCtx: CommandContext) {
         explainScore,
         semantic,
         scoreWeights: hybrid
-          ? HYBRID_SCORE_WEIGHTS
+          ? HYBRID_FUSION
           : semantic
             ? undefined
-            : SCORE_COMPONENT_WEIGHTS,
+            : SEARCH_SCORE_WEIGHTS,
         wrapResults: explainScore,
       });
     });
@@ -428,9 +417,9 @@ export function handleQueryCommand(commandCtx: CommandContext) {
 
 export function handleListCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
+    const { flags, outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const filters = parseCommonFilters(args);
+    const filters = parseCommonFilters(flags);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
@@ -441,7 +430,7 @@ export function handleListCommand(commandCtx: CommandContext) {
     );
     const normalized = rows
       .map((row) => normalizeSqliteRow(row))
-      .slice(0, parseResultLimit(args, 100));
+      .slice(0, parseResultLimit(flags, 100));
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
         const payload = {
@@ -465,10 +454,10 @@ export function handleListCommand(commandCtx: CommandContext) {
   });
 }
 
-export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
-  const files = parseSuggestFiles(args);
-  const normalizedPathTerms = extractPathTermsFromFiles(files);
-  const neighborhood = deriveNeighborhoodFromFiles(files);
+export function buildSuggestSnapshot(flags: CommandFlags): SuggestSnapshot {
+  const files = parseSuggestFiles(flags);
+  const normalizedPathTerms = extractPathTerms(files);
+  const neighborhood = deriveFileNeighborhood(files);
   const suggestTerms = uniqueLowerPreserveOrder([
     ...normalizedPathTerms,
     ...neighborhood.terms,
@@ -478,8 +467,8 @@ export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
     normalizedPathTerms,
     suggestTerms,
     neighborhood,
-    filters: parseCommonFilters(args),
-    ftsQuery: buildFtsQueryFromTerms(normalizedPathTerms),
+    filters: parseCommonFilters(flags),
+    ftsQuery: buildFtsQuery(normalizedPathTerms),
   };
 }
 
@@ -504,7 +493,7 @@ function fetchFtsSuggestResults(
        JOIN memories_fts ON m.id = memories_fts.rowid
        WHERE ${ftsClauses.join(" AND ")}
        ORDER BY bm25(memories_fts)
-       LIMIT 100`,
+       LIMIT ${FTS_CANDIDATE_LIMIT}`,
       ftsParams,
     )
     .pipe(
@@ -513,7 +502,7 @@ function fetchFtsSuggestResults(
           explainScore: options.explainScore,
           identifiers: fileIdentifiers(snapshot.files),
           scope: "files",
-        }).slice(0, options.limit ?? 8),
+        }),
       ),
     );
 }
@@ -525,17 +514,16 @@ export function collectSuggestResults(
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   return Effect.gen(function* () {
     const limit = options.limit ?? 8;
-    const candidateLimit = Math.max(SUGGEST_CANDIDATE_POOL, limit);
     const neighborhoodResults = yield* queryNeighborhoodMatches(
       requireDatabase(commandCtx),
       snapshot.neighborhood,
       snapshot.filters,
-      candidateLimit,
     );
-    const ftsResults = yield* fetchFtsSuggestResults(commandCtx, snapshot, {
-      ...options,
-      limit: candidateLimit,
-    });
+    const ftsResults = yield* fetchFtsSuggestResults(
+      commandCtx,
+      snapshot,
+      options,
+    );
     return orderRowsByMatchStrength(
       annotateMatches(
         mergeSuggestionResults(ftsResults, neighborhoodResults),
@@ -556,9 +544,7 @@ function printSuggestResults(
     printJson(
       minimalScoredPayload(results, {
         jsonMin: outputMode.jsonMin,
-        scoreWeights: options.explainScore
-          ? SCORE_COMPONENT_WEIGHTS
-          : undefined,
+        scoreWeights: options.explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
       }),
     );
     return;
@@ -581,18 +567,18 @@ function printSuggestResults(
     results,
   } satisfies JsonObject;
   if (options.explainScore) {
-    Object.assign(output, { score_weights: SCORE_COMPONENT_WEIGHTS });
+    Object.assign(output, { score_weights: SEARCH_SCORE_WEIGHTS });
   }
   printCommandOutput(commandCtx, output);
 }
 
 export function handleSuggestCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const explainScore = explainScoreEnabled(commandCtx.args);
-    const snapshot = buildSuggestSnapshot(commandCtx.args);
+    const explainScore = explainScoreEnabled(commandCtx.flags);
+    const snapshot = buildSuggestSnapshot(commandCtx.flags);
     const results = yield* collectSuggestResults(commandCtx, snapshot, {
       explainScore,
-      limit: parseResultLimit(commandCtx.args),
+      limit: parseResultLimit(commandCtx.flags),
     });
     yield* Effect.sync(() =>
       printSuggestResults(commandCtx, snapshot, results, { explainScore }),
@@ -600,9 +586,9 @@ export function handleSuggestCommand(commandCtx: CommandContext) {
   });
 }
 
-function ensureSweepFileArgs(args: string[]) {
-  const filesRaw = getFlagValue(args, "--files");
-  const filesJsonRaw = getFlagValue(args, "--files-json");
+function ensureSweepFileArgs(flags: CommandFlags) {
+  const filesRaw = getFlagValue(flags, "--files");
+  const filesJsonRaw = getFlagValue(flags, "--files-json");
   if (!filesRaw && !filesJsonRaw) {
     usageError(`Usage: ${SWEEP_USAGE}`);
   }
@@ -611,9 +597,9 @@ function ensureSweepFileArgs(args: string[]) {
   }
 }
 
-function parseSweepQueryArg(args: string[]): string | undefined {
-  const value = getFlagValue(args, "--query");
-  if (hasFlag(args, "--query") && value === undefined) {
+function parseSweepQueryArg(flags: CommandFlags): string | undefined {
+  const value = getFlagValue(flags, "--query");
+  if (hasFlag(flags, "--query") && value === undefined) {
     usageError(`Usage: ${SWEEP_USAGE}`);
   }
   return value;
@@ -630,7 +616,7 @@ function fetchListScoredResults(
   },
   MemoryDatabaseError
 > {
-  const filters = parseCommonFilters(commandCtx.args);
+  const filters = parseCommonFilters(commandCtx.flags);
   const clauses: string[] = [];
   const params: (string | number)[] = [];
   applySqlFilters(clauses, params, filters, {
@@ -724,12 +710,12 @@ function mergeSweepResults(
 
 export function handleSweepCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
-    ensureSweepFileArgs(args);
-    const queryTerm = parseSweepQueryArg(args);
-    const explainScore = explainScoreEnabled(args);
-    const limit = parseResultLimit(args);
-    const snapshot = buildSuggestSnapshot(args);
+    const { flags, outputMode } = commandCtx;
+    ensureSweepFileArgs(flags);
+    const queryTerm = parseSweepQueryArg(flags);
+    const explainScore = explainScoreEnabled(flags);
+    const limit = parseResultLimit(flags);
+    const snapshot = buildSuggestSnapshot(flags);
     const suggestResults = yield* collectSuggestResults(commandCtx, snapshot, {
       explainScore,
       limit,
@@ -740,7 +726,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
           results: [],
           // SAFETY: empty array literal; string[] cannot be violated.
           queryTokens: [] as string[],
-          filters: parseCommonFilters(args),
+          filters: parseCommonFilters(flags),
         };
     const listScoreTerms = uniqueLowerPreserveOrder([
       ...snapshot.suggestTerms,
@@ -770,7 +756,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         printJson(
           minimalScoredPayload(results, {
             jsonMin: outputMode.jsonMin,
-            scoreWeights: explainScore ? SCORE_COMPONENT_WEIGHTS : undefined,
+            scoreWeights: explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
             summarize: (row) => ({
               ...minimalScoredResultSummary(row),
               sources: row.sources ?? [],
@@ -794,7 +780,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         results,
       } satisfies JsonObject;
       if (explainScore) {
-        Object.assign(output, { score_weights: SCORE_COMPONENT_WEIGHTS });
+        Object.assign(output, { score_weights: SEARCH_SCORE_WEIGHTS });
       }
       printCommandOutput(commandCtx, output);
     });

@@ -1,14 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { Effect } from "effect";
-import * as databaseConfig from "@/database-config";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
 import { remoteSetup } from "@/cli/commands/remote";
 import type { CommandContext } from "@/cli/runtime/context";
+import * as databaseConfig from "@/database-config";
 
-const localEnv: Record<string, string | undefined> = {
+const localEnv = {
   MACHINE_MEMORY_DB_URL: undefined,
   MACHINE_MEMORY_DB_TOKEN: undefined,
   MACHINE_MEMORY_DB_PATH: undefined,
-};
+} satisfies Record<string, string | undefined>;
 
 describe("loadCurrentRemoteConfig", () => {
   it("does not consult the keychain when env already has a Worker URL", async () => {
@@ -35,19 +36,25 @@ describe("loadCurrentRemoteConfig", () => {
 
   it("returns local defaults instead of throwing when the keychain cannot be read", async () => {
     const cause = new Error("Secret service is locked");
-    const result = await databaseConfig.loadCurrentRemoteConfig(localEnv, async () => {
-      throw cause;
-    });
+    const result = await databaseConfig.loadCurrentRemoteConfig(
+      localEnv,
+      async () => {
+        throw cause;
+      },
+    );
 
     expect(result.config).toEqual({ kind: "local" });
     expect(result.warningCause).toBe(cause);
   });
 
   it("uses stored credentials when the keychain read succeeds", async () => {
-    const result = await databaseConfig.loadCurrentRemoteConfig(localEnv, async () => ({
-      url: "https://stored.example/query",
-      token: "stored-token",
-    }));
+    const result = await databaseConfig.loadCurrentRemoteConfig(
+      localEnv,
+      async () => ({
+        url: "https://stored.example/query",
+        token: "stored-token",
+      }),
+    );
 
     expect(result.warningCause).toBeUndefined();
     expect(result.config).toEqual({
@@ -72,16 +79,17 @@ describe("remote setup with a locked keychain", () => {
       .spyOn(databaseConfig, "saveRemoteCredentials")
       .mockResolvedValue(undefined);
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const error = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
 
     await Effect.runPromise(
       remoteSetup({
-        args: [
-          "--url",
-          "https://example.workers.dev",
-          "--token",
-          "secret-token",
-        ],
+        flags: new Map([
+          ["--url", "https://example.workers.dev"],
+          ["--token", "secret-token"],
+        ]),
+        positionals: [],
         command: "setup",
         outputMode: {
           brief: false,
@@ -91,6 +99,7 @@ describe("remote setup with a locked keychain", () => {
           quiet: false,
         },
         database: undefined,
+        // SAFETY: remoteSetup never reads context.fileSystem.
         fileSystem: {} as CommandContext["fileSystem"],
       }),
     );

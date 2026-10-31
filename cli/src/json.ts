@@ -40,8 +40,7 @@ export function jsonString(value: JsonValue | undefined): string | undefined {
 
 export function jsonNumber(value: JsonValue | undefined): number | undefined {
   try {
-    const parsed = Schema.decodeUnknownSync(Schema.Number)(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
+    return Schema.decodeUnknownSync(Schema.Finite)(value);
   } catch {
     return undefined;
   }
@@ -70,4 +69,21 @@ export function jsonStringArray(
     strings.push(parsed);
   }
   return strings;
+}
+
+/** Reads a stored string list: a JSON array or a JSON-encoded array string; anything else is []. */
+export function storedStringArray(value: JsonValue | undefined): string[] {
+  const array = jsonStringArray(value);
+  if (array !== undefined) {
+    return array;
+  }
+  const raw = jsonString(value);
+  if (raw === undefined || raw.trim() === "") {
+    return [];
+  }
+  try {
+    return jsonStringArray(parseJson(raw)) ?? [];
+  } catch {
+    return [];
+  }
 }

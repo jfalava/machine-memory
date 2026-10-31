@@ -1,8 +1,18 @@
-import { resolve, relative, sep, dirname as pathDirname } from "node:path";
+import { resolve, relative, sep } from "node:path";
 
 import {
   assessMatch,
+  buildFtsQuery,
+  CLI_LIMIT_MAX,
   certaintyPoints,
+  extractTerms,
+  mergeSuggestCandidates,
+  normalizeSuggestPath,
+  SUGGEST_NEIGHBORHOOD_LIMIT,
+  reciprocalRankScore,
+  RRF_K,
+  sqliteDateToMs,
+  type FileNeighborhood,
   exactMatchPoints,
   ftsRankPoints,
   MATCH_STRENGTHS,
@@ -13,7 +23,7 @@ import {
   recencyPoints,
   REVIEW_CANDIDATES_LIMIT,
   reviewsDependents,
-  SEARCH_SCORE_WEIGHTS,
+  SEARCH_LIMIT_DEFAULT,
   tagMatchPoints,
   termCoveragePoints,
   updateCountPoints,
@@ -24,7 +34,12 @@ import {
 import { Effect, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 
-import { getFlagValue, hasFlag, usageError } from "../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  hasFlag,
+  usageError,
+} from "../cli-utils";
 import {
   CERTAINTY_LEVELS,
   MEMORY_STATUSES,
@@ -46,6 +61,7 @@ import {
   jsonString,
   jsonStringArray,
   parseJson,
+  storedStringArray,
   type JsonObject,
   type JsonValue,
 } from "../json";
@@ -69,32 +85,7 @@ function isCertainty(value: string): value is Certainty {
 }
 
 export function canonicalizeCertainty(raw: string): Certainty | undefined {
-  if (isCertainty(raw)) {
-    return raw;
-  }
-  switch (raw) {
-    case "hard":
-      return "verified";
-    case "soft":
-      return "inferred";
-    case "uncertain":
-      return "speculative";
-    default:
-      return undefined;
-  }
-}
-
-function certaintyStorageVariants(certainty: Certainty): string[] {
-  switch (certainty) {
-    case "verified":
-      return ["verified", "hard"];
-    case "inferred":
-      return ["inferred", "soft"];
-    case "speculative":
-      return ["speculative", "uncertain"];
-    default:
-      return [certainty];
-  }
+  return isCertainty(raw) ? raw : undefined;
 }
 
 export function normalizeCertaintyValue(
@@ -110,10 +101,10 @@ export function isMemoryStatus(value: string): value is MemoryStatus {
 }
 
 export function requireMemoryType(
-  args: string[],
+  flags: CommandFlags,
   flag = "--type",
 ): MemoryType | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -126,10 +117,10 @@ export function requireMemoryType(
 }
 
 export function requireCertainty(
-  args: string[],
+  flags: CommandFlags,
   flag = "--certainty",
 ): Certainty | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -143,10 +134,10 @@ export function requireCertainty(
 }
 
 function requireStatus(
-  args: string[],
+  flags: CommandFlags,
   flag = "--status",
 ): MemoryStatus | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -159,11 +150,11 @@ function requireStatus(
 }
 
 export function parseIntegerFlag(
-  args: string[],
+  flags: CommandFlags,
   flag: string,
   options: { allowNullLiteral?: boolean } = {},
 ): number | null | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -177,19 +168,22 @@ export function parseIntegerFlag(
   return parsed;
 }
 
-export function parseResultLimit(args: string[], fallback = 8): number {
-  const parsed = parseIntegerFlag(args, "--limit");
+export function parseResultLimit(
+  flags: CommandFlags,
+  fallback = SEARCH_LIMIT_DEFAULT,
+): number {
+  const parsed = parseIntegerFlag(flags, "--limit");
   if (parsed === undefined || parsed === null) {
     return fallback;
   }
-  if (parsed < 1 || parsed > 100) {
-    usageError("--limit must be an integer between 1 and 100");
+  if (parsed < 1 || parsed > CLI_LIMIT_MAX) {
+    usageError(`--limit must be an integer between 1 and ${CLI_LIMIT_MAX}`);
   }
   return parsed;
 }
 
-export function parseRefsFlag(args: string[]): string[] | undefined {
-  const raw = getFlagValue(args, "--refs");
+export function parseRefsFlag(flags: CommandFlags): string[] | undefined {
+  const raw = getFlagValue(flags, "--refs");
   if (raw === undefined) {
     return undefined;
   }
@@ -253,34 +247,11 @@ export function mergeTagValues(
   return merged.join(",");
 }
 
-export function collectPositionalArgs(
-  args: string[],
-  flagsWithValues: readonly string[],
-): string[] {
-  const flags = new Set(flagsWithValues);
-  const positional: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const token = args[i];
-    if (token === undefined) {
-      continue;
-    }
-    if (flags.has(token)) {
-      i += 1;
-      continue;
-    }
-    if (token.startsWith("--")) {
-      continue;
-    }
-    positional.push(token);
-  }
-  return positional;
-}
-
 export function parseContentFromFileFlag(
-  args: string[],
+  flags: CommandFlags,
   fileSystem: FileSystem,
 ): Effect.Effect<string | undefined, CommandError> {
-  const path = getFlagValue(args, "--from-file");
+  const path = getFlagValue(flags, "--from-file");
   if (path === undefined) {
     return Effect.void.pipe(Effect.as(undefined));
   }
@@ -317,7 +288,7 @@ export function stringValue(
 
 export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
   const next = jsonObject(row) ?? {};
-  next.refs = parseStoredRefs(next.refs);
+  next.refs = storedStringArray(next.refs);
   next.certainty = normalizeCertaintyValue(next.certainty);
   next.evidence = parseStoredEvidence(next.evidence);
   next.validation_gaps = parseStoredValidationGaps(next.validation_gaps);
@@ -336,84 +307,10 @@ export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
   return next;
 }
 
-export function parseStoredRefs(value: JsonValue | undefined): string[] {
-  const array = jsonStringArray(value);
-  if (array !== undefined) {
-    return array;
-  }
-  const raw = jsonString(value);
-  if (raw === undefined || raw.trim() === "") {
-    return [];
-  }
-  try {
-    return jsonStringArray(parseJson(raw)) ?? [];
-  } catch {
-    return [];
-  }
-}
-
-export function sqliteDateToMs(value: JsonValue | undefined): number | null {
-  const raw = jsonString(value);
-  if (raw === undefined || raw.trim() === "") {
-    return null;
-  }
-  const normalized = raw.includes("T") ? raw : `${raw.replace(" ", "T")}Z`;
-  const parsed = Date.parse(normalized);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-export function extractTerms(input: string): string[] {
-  const stopwords = new Set([
-    "the",
-    "and",
-    "with",
-    "from",
-    "that",
-    "this",
-    "into",
-    "your",
-    "have",
-    "for",
-    "are",
-    "use",
-    "uses",
-    "using",
-    "src",
-    "lib",
-    "app",
-    "test",
-    "tests",
-  ]);
-
-  const tokens = (input.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length >= 2 && !stopwords.has(token),
-  );
-
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const token of tokens) {
-    if (!seen.has(token)) {
-      seen.add(token);
-      unique.push(token);
-    }
-  }
-  return unique;
-}
-
-export function buildFtsQueryFromTerms(terms: string[]): string | undefined {
-  const usable = terms.filter((term) => term.length > 0).slice(0, 12);
-  if (usable.length === 0) {
-    return undefined;
-  }
-  return usable.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
-}
-
-export const SCORE_COMPONENT_WEIGHTS = SEARCH_SCORE_WEIGHTS;
-
-export const HYBRID_SCORE_WEIGHTS = {
-  fts: 0.55,
-  semantic: 0.45,
-  scale: 100,
+/** Reported as `score_weights` for `query --hybrid --explain-score`. */
+export const HYBRID_FUSION = {
+  method: "reciprocal_rank",
+  k: RRF_K,
 } as const;
 
 export type ScoreBreakdown = {
@@ -452,7 +349,7 @@ export function assessRowMatch(
       stringValue(row.content),
       stringValue(row.tags),
       stringValue(row.context),
-      ...parseStoredRefs(row.refs),
+      ...storedStringArray(row.refs),
     ]),
     semanticScore,
     scope: query.scope,
@@ -505,7 +402,7 @@ function scoreBreakdown(
     parseTags(stringValue(row.tags)),
     queryTokens,
   );
-  const recency = recencyPoints(sqliteDateToMs(row.updated_at));
+  const recency = recencyPoints(sqliteDateToMs(stringValue(row.updated_at)));
   const certainty = certaintyPoints(
     normalizeCertaintyValue(row.certainty, "speculative"),
   );
@@ -571,22 +468,27 @@ export function scoreRowsWithDetails(
   });
 }
 
-function normalizeHybridComponent(value: number, values: number[]): number {
-  const finiteValues = values.filter((candidate) => Number.isFinite(candidate));
-  if (finiteValues.length === 0 || !Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-  const max = Math.max(...finiteValues);
-  const min = Math.min(...finiteValues);
-  if (max <= 0) {
-    return 0;
-  }
-  if (max === min) {
-    return 1;
-  }
-  return Math.max(0, Math.min(1, (value - min) / (max - min)));
+function rowId(row: JsonObject): string {
+  return jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "";
 }
 
+type FusedRow = {
+  row: JsonObject;
+  ftsRank?: number;
+  semanticRank?: number;
+  score: number;
+};
+
+function rankBreakdown(rank: number | undefined): JsonObject {
+  return rank === undefined
+    ? { rank: null, contribution: 0 }
+    : { rank: rank + 1, contribution: reciprocalRankScore(rank) };
+}
+
+/**
+ * Reciprocal-rank fusion, as the API's product query does: each retriever adds
+ * 1 / (k + rank), so ranks are compared instead of unrelated score scales.
+ */
 export function combineHybridResults(
   ftsResults: JsonObject[],
   semanticResults: JsonObject[],
@@ -594,85 +496,57 @@ export function combineHybridResults(
   explainScore = false,
   matchQuery?: SearchMatchQuery,
 ): JsonObject[] {
-  const ftsById = new Map(
-    ftsResults.map(
-      (row) =>
-        [
-          jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "",
-          row,
-        ] as const,
-    ),
-  );
-  const semanticById = new Map(
-    semanticResults.map(
-      (row) =>
-        [
-          jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "",
-          row,
-        ] as const,
-    ),
-  );
-  const ids = [...new Set([...ftsById.keys(), ...semanticById.keys()])];
-  const ftsValues = ids.map((id) => Number(ftsById.get(id)?.score ?? 0));
-  const semanticValues = ids.map((id) =>
-    Number(semanticById.get(id)?.semantic_score ?? 0),
-  );
-
-  const combined = ids.map((id) => {
-    const ftsRow = ftsById.get(id);
-    const semanticRow = semanticById.get(id);
-    const ftsScore = Number(ftsRow?.score ?? 0);
-    const semanticScore = Number(semanticRow?.semantic_score ?? 0);
-    const normalizedFts = normalizeHybridComponent(ftsScore, ftsValues);
-    const normalizedSemantic = normalizeHybridComponent(
-      semanticScore,
-      semanticValues,
-    );
-    const ftsContribution =
-      normalizedFts * HYBRID_SCORE_WEIGHTS.fts * HYBRID_SCORE_WEIGHTS.scale;
-    const semanticContribution =
-      normalizedSemantic *
-      HYBRID_SCORE_WEIGHTS.semantic *
-      HYBRID_SCORE_WEIGHTS.scale;
-    const hybridScore = Number(
-      (ftsContribution + semanticContribution).toFixed(3),
-    );
-    const row =
-      jsonObject({
-        ...(ftsRow ?? semanticRow),
-        score: hybridScore,
-        fts_score: Number(ftsScore.toFixed(3)),
-        semantic_score: Number(semanticScore.toFixed(6)),
-        hybrid_score: hybridScore,
-      }) ?? {};
-    delete row["score_breakdown"];
-    if (explainScore) {
-      Object.assign(row, {
-        score_breakdown: {
-          fts: {
-            raw: Number(ftsScore.toFixed(3)),
-            normalized: Number(normalizedFts.toFixed(6)),
-            weight: HYBRID_SCORE_WEIGHTS.fts,
-            contribution: Number(ftsContribution.toFixed(3)),
-          },
-          semantic: {
-            raw: Number(semanticScore.toFixed(6)),
-            normalized: Number(normalizedSemantic.toFixed(6)),
-            weight: HYBRID_SCORE_WEIGHTS.semantic,
-            contribution: Number(semanticContribution.toFixed(3)),
-          },
-          total: hybridScore,
-        },
-      });
-    }
-    return row;
-  });
-
-  const sorted = sortByScoreThenRecency(combined);
-  if (matchQuery === undefined) {
-    return sorted.slice(0, limit);
+  const byId = new Map<string, FusedRow>();
+  for (const [rank, row] of ftsResults.entries()) {
+    byId.set(rowId(row), {
+      row,
+      ftsRank: rank,
+      score: reciprocalRankScore(rank),
+    });
   }
-  return orderRowsByMatchStrength(annotateMatches(sorted, matchQuery)).slice(
+  for (const [rank, row] of semanticResults.entries()) {
+    const existing = byId.get(rowId(row));
+    byId.set(rowId(row), {
+      row: existing?.row ?? row,
+      ftsRank: existing?.ftsRank,
+      semanticRank: rank,
+      score: (existing?.score ?? 0) + reciprocalRankScore(rank),
+    });
+  }
+  const semanticById = new Map(
+    semanticResults.map((row) => [rowId(row), row] as const),
+  );
+  const combined = [...byId.entries()]
+    .sort(
+      ([leftId, left], [rightId, right]) =>
+        right.score - left.score || Number(leftId) - Number(rightId),
+    )
+    .map(([id, fused]) => {
+      const ftsScore =
+        fused.ftsRank === undefined ? 0 : Number(fused.row.score ?? 0);
+      const row: JsonObject = {
+        ...fused.row,
+        score: fused.score,
+        fts_score: Number(ftsScore.toFixed(3)),
+        semantic_score: Number(
+          Number(semanticById.get(id)?.semantic_score ?? 0).toFixed(6),
+        ),
+        hybrid_score: fused.score,
+      };
+      delete row["score_breakdown"];
+      if (explainScore) {
+        row.score_breakdown = {
+          fts: rankBreakdown(fused.ftsRank),
+          semantic: rankBreakdown(fused.semanticRank),
+          total: fused.score,
+        };
+      }
+      return row;
+    });
+  if (matchQuery === undefined) {
+    return combined.slice(0, limit);
+  }
+  return orderRowsByMatchStrength(annotateMatches(combined, matchQuery)).slice(
     0,
     limit,
   );
@@ -683,7 +557,7 @@ export function sortByScoreThenRecency(rows: JsonObject[]): JsonObject[] {
     index,
     row,
     score: Number(row.score ?? 0),
-    updatedAt: sqliteDateToMs(row.updated_at) ?? 0,
+    updatedAt: sqliteDateToMs(stringValue(row.updated_at)) ?? 0,
   }));
   indexed.sort((left, right) => {
     if (right.score !== left.score) {
@@ -697,13 +571,13 @@ export function sortByScoreThenRecency(rows: JsonObject[]): JsonObject[] {
   return indexed.map((entry) => entry.row);
 }
 
-export function parseCommonFilters(args: string[]): CommonFilters {
+export function parseCommonFilters(flags: CommandFlags): CommonFilters {
   return {
-    tag: getFlagValue(args, "--tags"),
-    memoryType: requireMemoryType(args),
-    certainty: requireCertainty(args),
-    status: requireStatus(args),
-    includeDeprecated: hasFlag(args, "--include-deprecated"),
+    tag: getFlagValue(flags, "--tags"),
+    memoryType: requireMemoryType(flags),
+    certainty: requireCertainty(flags),
+    status: requireStatus(flags),
+    includeDeprecated: hasFlag(flags, "--include-deprecated"),
   };
 }
 
@@ -722,16 +596,8 @@ function appendCertaintyFilter(
   certainty: Certainty,
   prefix: string,
 ) {
-  const variants = certaintyStorageVariants(certainty);
-  if (variants.length === 1) {
-    clauses.push(`${prefix}certainty = ?`);
-    params.push(variants[0] ?? certainty);
-    return;
-  }
-  clauses.push(`${prefix}certainty IN (${variants.map(() => "?").join(", ")})`);
-  for (const variant of variants) {
-    params.push(variant);
-  }
+  clauses.push(`${prefix}certainty = ?`);
+  params.push(certainty);
 }
 
 function appendStatusFilter(
@@ -797,7 +663,7 @@ export function findMemoryByMatch(
   query: string,
 ): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
   const terms = extractTerms(query);
-  const ftsQuery = buildFtsQueryFromTerms(terms);
+  const ftsQuery = buildFtsQuery(terms);
   if (!ftsQuery) {
     return Effect.succeed(null);
   }
@@ -824,7 +690,7 @@ export function detectPotentialConflicts(
   const terms = extractTerms(
     [payload.content, payload.tags ?? "", payload.context ?? ""].join(" "),
   );
-  const ftsQuery = buildFtsQueryFromTerms(terms);
+  const ftsQuery = buildFtsQuery(terms);
   if (!ftsQuery) {
     return Effect.succeed([]);
   }
@@ -876,7 +742,7 @@ export function findReviewCandidates(
   return Effect.forEach(durable, (premise) => {
     const query = premiseQuery(stringValue(premise.content));
     const terms = extractTerms(query.leadingText);
-    const ftsQuery = buildFtsQueryFromTerms(terms);
+    const ftsQuery = buildFtsQuery(terms);
     if (!ftsQuery) {
       return Effect.succeed<JsonObject[]>([]);
     }
@@ -949,29 +815,6 @@ export function assertWritableRepository(
     );
 }
 
-export function findExactDuplicate(
-  database: MemoryDatabaseApi,
-  payload: { content: string; tags?: string; context?: string },
-): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
-  return database
-    .get(
-      `SELECT * FROM memories
-       WHERE repository = ?
-         AND status = 'active'
-         AND content = ?
-         AND tags = ?
-         AND context = ?
-       LIMIT 1`,
-      [
-        repositoryForCurrentDirectory(),
-        payload.content,
-        payload.tags ?? "",
-        payload.context ?? "",
-      ],
-    )
-    .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
-}
-
 export function collectDirectoriesEffect(
   rootPath: string,
   fileSystem: FileSystem,
@@ -1027,32 +870,6 @@ export function collectDirectoriesEffect(
   );
 }
 
-export function extractPathTermsFromFiles(paths: string[]): string[] {
-  const terms: string[] = [];
-  for (const path of paths) {
-    const normalized = normalizeFilePathInput(path);
-    const segments = normalized.split("/").filter(Boolean);
-    for (const segment of segments) {
-      terms.push(segment);
-      for (const piece of segment.split(/[._-]+/)) {
-        if (piece) {
-          terms.push(piece);
-        }
-      }
-    }
-  }
-  return extractTerms(terms.join(" "));
-}
-
-export function normalizeFilePathInput(value: string): string {
-  const cleaned = value.trim().replaceAll("\\", "/");
-  if (!cleaned) {
-    return "";
-  }
-  const withoutDotPrefix = cleaned.replace(/^\.\/+/, "");
-  return withoutDotPrefix.replace(/\/{2,}/g, "/");
-}
-
 function uniquePreserveOrder(values: string[]): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -1069,7 +886,7 @@ function uniquePreserveOrder(values: string[]): string[] {
 function parseFileList(raw: string): string[] {
   return raw
     .split(",")
-    .map((item) => normalizeFilePathInput(item))
+    .map((item) => normalizeSuggestPath(item))
     .filter(Boolean);
 }
 
@@ -1079,7 +896,7 @@ function parseFileListJson(raw: string): string[] {
     if (parsed === undefined) {
       throw new Error("Expected JSON string array");
     }
-    return parsed.map((item) => normalizeFilePathInput(item)).filter(Boolean);
+    return parsed.map((item) => normalizeSuggestPath(item)).filter(Boolean);
   } catch {
     usageError(
       'Invalid --files-json value. Provide a JSON array of paths, e.g. --files-json \'["src/a.ts","src/b.ts"]\'.',
@@ -1087,9 +904,9 @@ function parseFileListJson(raw: string): string[] {
   }
 }
 
-export function parseSuggestFiles(args: string[]): string[] {
-  const filesRaw = getFlagValue(args, "--files");
-  const filesJsonRaw = getFlagValue(args, "--files-json");
+export function parseSuggestFiles(flags: CommandFlags): string[] {
+  const filesRaw = getFlagValue(flags, "--files");
+  const filesJsonRaw = getFlagValue(flags, "--files-json");
   if (!filesRaw && !filesJsonRaw) {
     usageError(
       'Usage: suggest --files "src/auth/jwt.ts,src/middleware/session.ts" OR --files-json \'["src/auth/jwt.ts","src/middleware/session.ts"]\'',
@@ -1121,55 +938,11 @@ export function parseIdSpec(raw: string): number[] {
   );
 }
 
-type SuggestNeighborhood = {
-  tagHints: string[];
-  pathHints: string[];
-  terms: string[];
-};
-
-function normalizedPathForMatching(path: string): string {
-  return normalizeFilePathInput(path);
-}
-
-export function deriveNeighborhoodFromFiles(
-  files: string[],
-): SuggestNeighborhood {
-  const ignoredSegments = new Set([
-    "src",
-    "lib",
-    "app",
-    "apps",
-    "test",
-    "tests",
-  ]);
-  const tagHints: string[] = [];
-  const pathHints: string[] = [];
-
-  for (const filePath of files) {
-    const normalized = normalizedPathForMatching(filePath);
-    const directory = pathDirname(normalized).replaceAll("\\", "/");
-    if (directory && directory !== ".") {
-      pathHints.push(`${directory}/`);
-      const segments = directory.split("/").filter(Boolean);
-      for (const segment of segments) {
-        if (!ignoredSegments.has(segment.toLowerCase())) {
-          tagHints.push(segment);
-        }
-      }
-    }
-  }
-
-  const uniqueTagHints = uniqueLowerPreserveOrder(tagHints);
-  const uniquePathHints = uniqueLowerPreserveOrder(pathHints);
-  const terms = extractTerms([...uniqueTagHints, ...uniquePathHints].join(" "));
-  return { tagHints: uniqueTagHints, pathHints: uniquePathHints, terms };
-}
-
 export function queryNeighborhoodMatches(
   database: MemoryDatabaseApi,
-  neighborhood: SuggestNeighborhood,
+  neighborhood: FileNeighborhood,
   filters: CommonFilters,
-  limit = 30,
+  limit = SUGGEST_NEIGHBORHOOD_LIMIT,
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const orClauses: string[] = [];
   const params: (string | number)[] = [];
@@ -1208,39 +981,27 @@ export function queryNeighborhoodMatches(
     .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, neighborhood.terms)));
 }
 
+/** Wraps contract's suggest merge; a boosted row's score breakdown no longer adds up. */
 export function mergeSuggestionResults(
   primary: JsonObject[],
   secondary: JsonObject[],
 ): JsonObject[] {
-  const byId = new Map<number, JsonObject>();
-  for (const row of primary) {
-    byId.set(Number(row.id), row);
-  }
-  for (const row of secondary) {
-    const id = Number(row.id);
-    const existing = byId.get(id);
-    if (!existing) {
-      const boosted = {
-        ...row,
-        score: Number((Number(row.score ?? 0) + 12).toFixed(3)),
-      };
-      if ("score_breakdown" in boosted) {
-        delete boosted.score_breakdown;
+  const scored = (rows: JsonObject[]) =>
+    rows.map((row) => ({
+      id: Number(row.id),
+      score: Number(row.score ?? 0),
+      row,
+    }));
+  return mergeSuggestCandidates(scored(primary), scored(secondary)).map(
+    ({ score, row }) => {
+      if (score === Number(row.score ?? 0)) {
+        return row;
       }
-      byId.set(id, boosted);
-      continue;
-    }
-    const existingScore = Number(existing.score ?? 0);
-    const nextScore = Math.max(existingScore, Number(row.score ?? 0) + 12);
-    const merged = { ...existing, score: Number(nextScore.toFixed(3)) };
-    if (nextScore !== existingScore && "score_breakdown" in merged) {
+      const merged: JsonObject = { ...row, score };
       delete merged.score_breakdown;
-    }
-    byId.set(id, merged);
-  }
-  return [...byId.values()]
-    .sort((left, right) => Number(right.score) - Number(left.score))
-    .slice(0, 20);
+      return merged;
+    },
+  );
 }
 
 export function findStatusCascadeCandidates(
@@ -1276,49 +1037,8 @@ export function findStatusCascadeCandidates(
     );
 }
 
-type SqliteErrorDetails = {
-  kind: "fts_parse" | "sqlite" | "unknown";
-  message: string;
-  hint?: string;
-};
-
-export function parseSqliteErrorDetails(
-  err: Error | JsonValue,
-): SqliteErrorDetails {
-  if (!(err instanceof Error)) {
-    return {
-      kind: "unknown",
-      message: "Unexpected failure while running command.",
-    };
-  }
-  const lower = err.message.toLowerCase();
-  if (
-    lower.includes("no such column") ||
-    lower.includes("no such table") ||
-    lower.includes("fts5: syntax error") ||
-    lower.includes("malformed match expression")
-  ) {
-    return {
-      kind: "fts_parse",
-      message: "Search query could not be parsed by SQLite FTS.",
-      hint: "Try simpler terms without punctuation, or wrap file paths in --files-json for shell-safe input.",
-    };
-  }
-  if (lower.includes("sqlite")) {
-    return {
-      kind: "sqlite",
-      message: "SQLite command failed.",
-      hint: "Retry once; if this persists, run `machine-memory migrate` and verify DB permissions/path.",
-    };
-  }
-  return {
-    kind: "unknown",
-    message: err.message,
-  };
-}
-
-export function parseSinceDate(args: string[]): string | undefined {
-  const value = getFlagValue(args, "--since");
+export function parseSinceDate(flags: CommandFlags): string | undefined {
+  const value = getFlagValue(flags, "--since");
   if (value === undefined) {
     return undefined;
   }
@@ -1337,12 +1057,3 @@ export function sqliteDateForComparison(isoLike: string): string {
     d.getUTCHours(),
   )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }
-
-export {
-  ADD_FLAGS_WITH_VALUES,
-  ADD_USAGE,
-  DEPRECATE_FLAGS_WITH_VALUES,
-  DEPRECATE_USAGE,
-  UPDATE_FLAGS_WITH_VALUES,
-  UPDATE_USAGE,
-} from "./features/memory/usage";

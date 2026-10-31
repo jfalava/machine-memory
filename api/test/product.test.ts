@@ -1,9 +1,21 @@
 import { readFile } from "node:fs/promises";
 
-import { EMBEDDING_DIMENSIONS, type JsonValue } from "@machine-memory/contract";
+import {
+  EMBEDDING_DIMENSIONS,
+  ErrorBodySchema,
+  MigrationSuccessSchema,
+  PRODUCT_OPERATIONS,
+  productRoutePath,
+  QuerySuccessSchema,
+  type JsonObject,
+  type JsonValue,
+  type ProductRoute,
+} from "@machine-memory/contract";
+import { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
-import { Effect, Redacted } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 
@@ -21,8 +33,8 @@ const upsert = vi.fn(async (_vectors: VectorizeVector[]) => ({
 const deleteByIds = vi.fn(async (_ids: string[]) => ({ mutationId: "test" }));
 const index = { upsert, deleteByIds };
 const aiRun = vi.fn(() => Effect.succeed({ data: [values] }));
-const query = vi.fn(() =>
-  Effect.succeed({ count: 0, matches: [] as { id: string; score: number }[] }),
+const query = vi.fn((): Effect.Effect<VectorizeMatches> =>
+  Effect.succeed({ count: 0, matches: [] }),
 );
 const wake = vi.fn(() => undefined);
 
@@ -99,21 +111,41 @@ function d1Client(): Cloudflare.D1.QueryDatabaseClient {
   };
 }
 
-async function call(path: string, body: JsonValue) {
+type Reply = { readonly status: number; readonly body: unknown };
+
+async function send(path: string, body: JsonValue): Promise<Reply> {
+  const unused = () =>
+    Effect.die(new Error("HTTP must not use this binding method"));
+  // Only query/run are used by HTTP handlers. Mutation methods deliberately throw.
+  const vectorize: Cloudflare.Vectorize.SearchIndexClient = {
+    raw: unused(),
+    describe: unused,
+    query,
+    queryById: unused,
+    insert: unused,
+    upsert: () => {
+      throw new Error("HTTP must not mutate vectors");
+    },
+    deleteByIds: () => {
+      throw new Error("HTTP must not mutate vectors");
+    },
+    getByIds: unused,
+  };
+  const ai: Cloudflare.Workers.AIClient = {
+    raw: unused(),
+    // SAFETY: handlers only call the embedding model, whose output shape the
+    // mock returns; the generic per-model signature cannot be mocked directly.
+    run: aiRun as Cloudflare.Workers.AIClient["run"],
+    models: unused,
+    model: () => {
+      throw new Error("HTTP must not build language models");
+    },
+  };
   const effect = Effect.gen(function* () {
     const handlers = yield* createApiHandlers({
       d1: d1Client(),
-      // Only query/run are used by HTTP handlers. Mutation methods deliberately throw.
-      vectorize: {
-        query,
-        upsert: () => {
-          throw new Error("HTTP must not mutate vectors");
-        },
-        deleteByIds: () => {
-          throw new Error("HTTP must not mutate vectors");
-        },
-      } as unknown as Cloudflare.Vectorize.SearchIndexClient,
-      ai: { run: aiRun } as unknown as Cloudflare.Workers.AIClient,
+      vectorize,
+      ai,
       expectedToken: Effect.succeed(Redacted.make("test")),
       wake: Effect.sync(wake),
     });
@@ -134,16 +166,56 @@ async function call(path: string, body: JsonValue) {
   // The test D1 client supplies its raw binding directly; RuntimeContext is a
   // phantom requirement of PreparedStatement. Scope is still provided for SQL.
   const response = await Effect.runPromise(
-    Effect.scoped(effect) as Effect.Effect<
-      Awaited<Effect.Success<typeof effect>>,
-      unknown
-    >,
+    Effect.scoped(effect).pipe(Effect.provide(RuntimeContext.phantom)),
   );
-  const payload = response.body.toJSON() as { body: string };
-  return { status: response.status, ...JSON.parse(payload.body) };
+  const json: unknown = await HttpServerResponse.toWeb(response).json();
+  return { status: response.status, body: json };
 }
-const product = (route: string, fields: Record<string, JsonValue> = {}) =>
-  call(`/product/${route}`, { repository: "o/r", ...fields });
+
+/** Decode a reply with its contract schema; unknown keys fail the test. */
+function decode<S extends Schema.ConstraintDecoder<object>>(
+  schema: S,
+  path: string,
+  reply: Reply,
+) {
+  try {
+    const body: S["Type"] = Schema.decodeUnknownSync(schema, {
+      onExcessProperty: "error",
+    })(reply.body);
+    return { status: reply.status, ...body };
+  } catch (cause) {
+    throw new Error(
+      `${path} returned ${reply.status}: ${JSON.stringify(reply.body)}`,
+      { cause },
+    );
+  }
+}
+async function call<S extends Schema.ConstraintDecoder<object>>(
+  path: string,
+  schema: S,
+  body: JsonValue,
+) {
+  return decode(schema, path, await send(path, body));
+}
+const productBody = (fields: Record<string, JsonValue>): JsonObject => ({
+  repository: "o/r",
+  ...fields,
+});
+/** Call a product route and decode its success response. */
+const product = <R extends ProductRoute>(
+  route: R,
+  fields: Record<string, JsonValue> = {},
+) =>
+  call<(typeof PRODUCT_OPERATIONS)[R]["response"]>(
+    productRoutePath(route),
+    PRODUCT_OPERATIONS[route].response,
+    productBody(fields),
+  );
+/** Call a product route that is expected to fail and decode its error body. */
+const productError = (
+  route: ProductRoute,
+  fields: Record<string, JsonValue> = {},
+) => call(productRoutePath(route), ErrorBodySchema, productBody(fields));
 async function insert(content = "original", repository = "o/r") {
   const result = await db
     .prepare(
@@ -211,9 +283,9 @@ test("history snapshots updates without vector work and restores with optimistic
     id,
     content: "original decision",
     tags: "database",
-    revision_id: expect.any(Number),
     update_count: 0,
   });
+  expect(history.result.results[0].revision_id).toBeTypeOf("number");
 
   const revisionId = history.result.results[0].revision_id;
   const restored = await product("restore", {
@@ -241,7 +313,7 @@ test("history snapshots updates without vector work and restores with optimistic
   expect(embed.mock.calls[0]?.[0]).toContain("original decision");
   expect(embed.mock.calls[0]?.[0]).not.toContain("clobbered decision");
 
-  const stale = await product("restore", {
+  const stale = await productError("restore", {
     id,
     revision_id: revisionId,
     expected_update_count: 1,
@@ -277,13 +349,13 @@ test("history is scoped, paginated newest-first, and covers upserts, raw SQL, an
     tags: "upsert",
   });
   expect(upserted.result.id).toBe(id);
-  const raw = await call("/query", {
+  const raw = await call("/query", QuerySuccessSchema, {
     operation: "run",
     repository: "o/r",
     sql: "UPDATE memories SET content = ?, update_count = update_count + 1 WHERE id = ?",
     params: ["raw sql overwrite", id],
   });
-  expect(raw.status, raw.error).toBe(200);
+  expect(raw.status).toBe(200);
   await product("deprecate", { ids: [id] });
   const page = await product("history", { id, limit: 1, offset: 1 });
   expect(page.result).toMatchObject({
@@ -307,7 +379,7 @@ test("history is scoped, paginated newest-first, and covers upserts, raw SQL, an
     total_count: 0,
     results: [],
   });
-  const wrongMemory = await product("restore", {
+  const wrongMemory = await productError("restore", {
     id: other,
     revision_id: last.result.results[0].revision_id,
     expected_update_count: 0,
@@ -321,16 +393,19 @@ test("competing restores with the same current count allow exactly one mutation"
   const history = await product("history", { id });
   const attempts = await Promise.all(
     Array.from({ length: 4 }, () =>
-      product("restore", {
-        id,
-        revision_id: history.result.results[0].revision_id,
-        expected_update_count: 1,
-      }),
+      send(
+        productRoutePath("restore"),
+        productBody({
+          id,
+          revision_id: history.result.results[0].revision_id,
+          expected_update_count: 1,
+        }),
+      ),
     ),
   );
-  expect(attempts.map((result) => result.status).sort()).toEqual([
-    200, 409, 409, 409,
-  ]);
+  expect(attempts.map((result) => result.status).sort((a, b) => a - b)).toEqual(
+    [200, 409, 409, 409],
+  );
   expect((await product("get", { id })).result).toMatchObject({
     content: "recover this",
     update_count: 2,
@@ -367,8 +442,9 @@ test("restore replaces complete metadata, refreshes expiry, and can itself be un
     ...original.result,
     update_count: 2,
     last_updated_by: "restore",
-    updated_at: expect.any(String),
+    updated_at: restored.result.memory.updated_at,
   });
+  expect(restored.result.memory.updated_at).toBeTypeOf("string");
   expect(restored.result.memory.updated_at).not.toBe(
     original.result.updated_at,
   );
@@ -421,7 +497,7 @@ test("replacement deletion snapshots dependents and permanently purges the delet
     superseded_by: replacement,
   });
   const before = await job(id);
-  const invalid = await product("restore", {
+  const invalid = await productError("restore", {
     id,
     revision_id: history.result.results[0].revision_id,
     expected_update_count: 2,
@@ -468,7 +544,7 @@ test("failed writes and invalid legacy restores leave both history and vector in
       )
       .bind(value, "x".repeat(600), revision)
       .run();
-    const invalid = await product("restore", {
+    const invalid = await productError("restore", {
       id,
       revision_id: revision,
       expected_update_count: 1,
@@ -544,9 +620,9 @@ test("a failed batch rolls back earlier canonical changes and vector intent", as
     )
     .run();
   try {
-    expect((await product("deprecate", { ids: [first, second] })).status).toBe(
-      500,
-    );
+    expect(
+      (await productError("deprecate", { ids: [first, second] })).status,
+    ).toBe(500);
     expect(
       await db
         .prepare("SELECT status FROM memories WHERE id = ?")
@@ -600,7 +676,7 @@ test("strong upsert preserves omitted metadata and clears expiry on type convers
 test("match mutations do not select inactive rows", async () => {
   const id = await insert("inactive match needle");
   await product("deprecate", { ids: [id] });
-  const result = await product("update", {
+  const result = await productError("update", {
     match: "inactive match needle",
     content: "must not change",
   });
@@ -685,7 +761,7 @@ test("hybrid ranks agreement above a keyword-only leader before truncation", asy
 });
 
 test("migration retries retain inactive records and distinct metadata by source identity", async () => {
-  const rows = [
+  const rows: JsonObject[] = [
     {
       source_id: 10,
       content: "same content",
@@ -703,14 +779,14 @@ test("migration retries retain inactive records and distinct metadata by source 
       refs: '["doc.md"]',
     },
   ];
-  const first = await call("/migrate", {
+  const first = await call("/migrate", MigrationSuccessSchema, {
     repository: "o/r",
     source: "db1",
     rows,
   });
   expect(first.status).toBe(200);
   expect(first.result.inserted).toBe(2);
-  const retry = await call("/migrate", {
+  const retry = await call("/migrate", MigrationSuccessSchema, {
     repository: "o/r",
     source: "db1",
     rows,
@@ -730,7 +806,7 @@ test("migration retries retain inactive records and distinct metadata by source 
       .bind(first.result.items[1].target_id)
       .first("memory_type"),
   ).toBe("gotcha");
-  const other = await call("/migrate", {
+  const other = await call("/migrate", MigrationSuccessSchema, {
     repository: "o/r",
     source: "db2",
     rows: [rows[0]],
@@ -738,7 +814,7 @@ test("migration retries retain inactive records and distinct metadata by source 
   expect(other.result.inserted).toBe(1);
 });
 
-test.each([
+test.each<Record<string, JsonValue>>([
   { refs: "{}" },
   { refs: "[1]" },
   { content: "x".repeat(600) },
@@ -746,7 +822,7 @@ test.each([
 ])(
   "migration preflights the whole batch before a bad final row: %j",
   async (bad) => {
-    const result = await call("/migrate", {
+    const result = await call("/migrate", ErrorBodySchema, {
       repository: "o/r",
       source: "db1",
       rows: [
@@ -766,8 +842,12 @@ test("supersession rejects cross-repository/self/missing targets and repairs del
   const other = await insert("other", "other/repo");
   for (const replacement of [id, other, 999999]) {
     expect(
-      (await product("deprecate", { ids: [id], superseded_by: replacement }))
-        .status,
+      (
+        await productError("deprecate", {
+          ids: [id],
+          superseded_by: replacement,
+        })
+      ).status,
     ).toBe(400);
   }
   const replacement = await insert("replacement");
@@ -814,7 +894,7 @@ test("deprecating an exactly-full active embedding deletes rather than re-embeds
   // Metadata contributes 59 bytes, plus two special tokens: 451 + 59 + 2 = 512.
   const added = await product("add", { content: "x".repeat(451) });
   expect(added.status).toBe(200);
-  expect(added.result.size.bytes_estimate).toBe(512);
+  expect(added.result.size?.bytes_estimate).toBe(512);
   expect((await product("deprecate", { ids: [added.result.id] })).status).toBe(
     200,
   );
@@ -862,22 +942,25 @@ test.each(["update", "delete"])(
   async (operation) => {
     const id = await insert();
     embed.mockImplementationOnce(async () => {
-      if (operation === "delete")
+      if (operation === "delete") {
         await db.prepare("DELETE FROM memories WHERE id = ?").bind(id).run();
-      else
+      } else {
         await db
           .prepare("UPDATE memories SET content = 'newer' WHERE id = ?")
           .bind(id)
           .run();
+      }
       return values;
     });
     await drain();
     expect(upsert).not.toHaveBeenCalled();
     expect((await job(id))?.delivered_generation).toBe(0);
     await drain();
-    if (operation === "delete")
+    if (operation === "delete") {
       expect(deleteByIds).toHaveBeenCalledWith([String(id)]);
-    else expect(embed.mock.calls[1][0]).toContain("newer");
+    } else {
+      expect(embed.mock.calls[1][0]).toContain("newer");
+    }
     expect(await job(id)).toMatchObject({
       generation: 2,
       delivered_generation: 2,
@@ -906,21 +989,6 @@ test("mutation during index submission stays pending and tombstones periodically
   expect(deleteByIds).toHaveBeenCalledTimes(1);
   await drain(now + 3_600_001);
   expect(deleteByIds).toHaveBeenCalledTimes(2);
-});
-
-test("queued indexing ignores stale client documents", async () => {
-  const id = await insert("canonical newest");
-  const result = await call("/vectorize/upsert", {
-    id,
-    repository: "o/r",
-    content: "stale",
-  });
-  expect(result.status).toBe(200);
-  expect(result.result.indexing).toBe("queued");
-  expect(embed).not.toHaveBeenCalled();
-  await drain();
-  expect(embed.mock.calls[0][0]).toContain("canonical newest");
-  expect(embed.mock.calls[0][0]).not.toContain("stale");
 });
 
 test("embedding parser rejects invalid dimensions and nonfinite values", () => {
@@ -970,7 +1038,7 @@ test.each([
 );
 
 test("verified writes require evidence, and evidence survives update, history, and restore", async () => {
-  const bare = await product("add", {
+  const bare = await productError("add", {
     content: "shortcuts fire only in focused forms",
     certainty: "verified",
   });
@@ -990,7 +1058,7 @@ test("verified writes require evidence, and evidence survives update, history, a
     validation_gaps: ["Safari untested"],
   });
   const id = added.result.id;
-  expect((await product("update", { id, evidence: [] })).status).toBe(400);
+  expect((await productError("update", { id, evidence: [] })).status).toBe(400);
   const updated = await product("update", {
     id,
     content: "shortcuts fire in focused forms on macOS",
@@ -1046,7 +1114,7 @@ test("updates report dropped details and review candidates; deprecate reviews de
     content: "Home Manager reimports nixpkgs.",
   });
   expect(updated.status).toBe(200);
-  expect(updated.result.dropped.identifiers).toEqual([
+  expect(updated.result.dropped?.identifiers).toEqual([
     "nixpkgs-security",
     "flake.nix",
   ]);

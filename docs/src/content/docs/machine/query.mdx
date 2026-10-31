@@ -14,14 +14,19 @@ machine-memory query "Cloudflare Worker Vectorize" --semantic --remote
 machine-memory query "Cloudflare Worker Vectorize" --hybrid --explain-score --remote
 ```
 
+`<search-term>` is required. Running `query` with only flags prints a usage
+error.
+
 `query` tokenizes the search term, scopes results to the current repository, and
 returns active memories by default. The default mode uses the D1 full-text
 index.
 
 For remote memories, `--semantic` searches Vectorize using Workers AI
-embeddings. `--hybrid` combines normalized full-text relevance at 55% with
-normalized Vectorize similarity at 45%, producing a `hybrid_score` on a
-0–100 scale. Hybrid results also include `fts_score` and `semantic_score`.
+embeddings. `--hybrid` merges the full-text and semantic result lists with
+reciprocal-rank fusion (k = 60), the same method the MCP `memory_query` tool
+uses: each list adds `1 / (60 + rank)` to a memory's `hybrid_score`, so ranks
+are compared instead of unrelated score scales. Hybrid results also include
+`fts_score` and `semantic_score`.
 
 Full-text ranking is led by relevance: the FTS rank, the share of query terms
 the memory contains, literal identifier matches, and tag matches. Recency,
@@ -32,11 +37,11 @@ certainty, and update count only break ties.
 Scores rank results within one response; they do not say whether anything
 matched well. Every result therefore carries an absolute `match_strength`:
 
-| Value    | Meaning                                                                                                                                                                                                |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Value    | Meaning                                                                                                                                                                                                                                                   |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `strong` | Every identifier in the query (path, flag, `snake_case`, `kebab-case`, `camelCase`, dotted or `area:tag` token) appears literally, or one does with strong term coverage; 60% or more of the query terms appear; or semantic similarity is at least 0.75. |
-| `weak`   | Some identifiers appear, 30% or more of the terms appear, or semantic similarity is at least 0.68.                                                                                                     |
-| `none`   | Anything else.                                                                                                                                                                                         |
+| `weak`   | Some identifiers appear, 30% or more of the terms appear, or semantic similarity is at least 0.68.                                                                                                                                                        |
+| `none`   | Anything else.                                                                                                                                                                                                                                            |
 
 Results are ordered strong, then weak, then none, keeping score order inside
 each tier. `exact_matches` lists the identifiers found and `term_coverage` the

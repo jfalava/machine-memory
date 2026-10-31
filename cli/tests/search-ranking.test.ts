@@ -1,10 +1,13 @@
-import { extractQueryIdentifiers } from "@machine-memory/contract";
+import {
+  extractQueryIdentifiers,
+  extractTerms,
+} from "@machine-memory/contract";
+import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { minimalResultSummary } from "@/cli/runtime/output";
 import {
   annotateMatches,
-  extractTerms,
   hasStrongMatchRow,
   scoreRowsWithDetails,
 } from "@/cli/shared";
@@ -159,7 +162,8 @@ describe("search ranking regressions from the memory usage audit", () => {
     ]);
     const summary = minimalResultSummary(row ?? {});
     expect(summary.match_strength).toBe("strong");
-    expect(String(summary.snippet)).toHaveLength(140);
-    expect(String(summary.snippet).endsWith("…")).toBe(true);
+    const snippet = Schema.decodeUnknownSync(Schema.String)(summary.snippet);
+    expect(snippet).toHaveLength(140);
+    expect(snippet.endsWith("…")).toBe(true);
   });
 });

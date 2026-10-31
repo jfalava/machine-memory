@@ -1,4 +1,7 @@
+import { stripVTControlCharacters } from "node:util";
+
 import { describe, expect, it } from "vitest";
+
 import { renderPretty } from "@/cli/runtime/pretty";
 
 describe("pretty output", () => {
@@ -34,7 +37,7 @@ describe("pretty output", () => {
     const tableLines = output
       .split("\n")
       .filter((line) => /[┌│└]/u.test(line))
-      .map((line) => line.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, ""));
+      .map((line) => stripVTControlCharacters(line));
     const rowSeparators = output
       .split("\n")
       .filter((line) => line.includes("├"));

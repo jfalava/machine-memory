@@ -1,6 +1,6 @@
 import { Flag, GlobalFlag } from "effect/cli";
 
-import { printJson } from "../../cli-utils";
+import { type CommandFlags, printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import type { JsonObject, JsonValue } from "../../json";
 import {
@@ -25,13 +25,16 @@ export type OutputMode = {
   quiet: boolean;
 };
 
-export function parseOutputMode(args: string[], pretty = false): OutputMode {
+export function parseOutputMode(
+  flags: CommandFlags,
+  pretty = false,
+): OutputMode {
   return {
-    brief: args.includes("--brief"),
-    jsonMin: args.includes("--json-min"),
-    noConflicts: args.includes("--no-conflicts"),
+    brief: flags.has("--brief"),
+    jsonMin: flags.has("--json-min"),
+    noConflicts: flags.has("--no-conflicts"),
     pretty,
-    quiet: args.includes("--quiet"),
+    quiet: flags.has("--quiet"),
   };
 }
 
@@ -40,7 +43,7 @@ export function prettyOutputEnabled(mode: OutputMode): boolean {
 }
 
 export function outputModeForPretty(pretty: boolean): OutputMode {
-  return parseOutputMode([], pretty);
+  return parseOutputMode(new Map(), pretty);
 }
 
 export function printCommandOutput(
@@ -81,10 +84,13 @@ function formatBriefMemoryLine(row: JsonObject): string {
 const SNIPPET_MAX_CHARS = 140;
 
 /** Content head for triage in minimal output, so relevance can be judged without a full get. */
-export function contentSnippet(content: JsonValue | undefined): string {
+export function contentSnippet(
+  content: JsonValue | undefined,
+  maxChars = SNIPPET_MAX_CHARS,
+): string {
   const flattened = stringValue(content).replace(/\s+/g, " ").trim();
-  return flattened.length > SNIPPET_MAX_CHARS
-    ? `${flattened.slice(0, SNIPPET_MAX_CHARS - 1)}…`
+  return flattened.length > maxChars
+    ? `${flattened.slice(0, maxChars - 1)}…`
     : flattened;
 }
 

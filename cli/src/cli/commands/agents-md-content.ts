@@ -1,3 +1,6 @@
+import { Effect } from "effect";
+import type { FileSystem } from "effect/FileSystem";
+
 const MEMORY_BLOCK_START = "<!-- machine-memory:start -->";
 const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
 
@@ -215,16 +218,22 @@ export function replaceMemoryBlock(
   if (blockPattern.test(content)) {
     return content.replace(blockPattern, managedContent);
   }
-  const legacyStart = content.indexOf("# Project memory");
-  if (legacyStart === 0) {
-    const prefix = content.slice(0, legacyStart).trimEnd();
-    return (prefix ? prefix.concat("\n\n") : "").concat(managedContent, "\n");
-  }
   return `${content.trimEnd()}${content.trim() ? "\n\n" : ""}${managedContent}\n`;
 }
 
-/** Marker pair used by the public init-mcp script and CLI init --mcp. */
-export const AGENTS_MD_MARKERS = {
-  start: MEMORY_BLOCK_START,
-  end: MEMORY_BLOCK_END,
-} as const;
+/** Reads the AGENTS.md at `path` (empty when missing) and writes it back with the managed block replaced. */
+export function writeMemoryBlock(
+  fileSystem: FileSystem,
+  path: string,
+  backend: AgentsMemoryBackend,
+) {
+  return Effect.gen(function* () {
+    const existingContent = (yield* fileSystem.exists(path))
+      ? new TextDecoder().decode(yield* fileSystem.readFile(path))
+      : "";
+    yield* fileSystem.writeFile(
+      path,
+      new TextEncoder().encode(replaceMemoryBlock(existingContent, backend)),
+    );
+  });
+}

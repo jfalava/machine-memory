@@ -6,6 +6,7 @@ import {
   fileIdentifiers,
   hasStrongMatch,
   matchText,
+  mergeSuggestCandidates,
   orderByMatchStrength,
 } from "../src/index";
 
@@ -139,5 +140,24 @@ describe("search match assessment", () => {
         { match_strength: "strong" },
       ]),
     ).toBe(true);
+  });
+});
+
+describe("suggest candidate merge", () => {
+  it("boosts neighborhood rows, keeps the higher score, and drops nothing", () => {
+    const fts = Array.from({ length: 25 }, (_, index) => ({
+      id: index + 1,
+      score: 100 - index,
+    }));
+    const merged = mergeSuggestCandidates(fts, [
+      { id: 25, score: 90 },
+      { id: 1, score: 10 },
+      { id: 99, score: 5 },
+    ]);
+
+    expect(merged).toHaveLength(26);
+    expect(merged[0]).toEqual({ id: 25, score: 102 });
+    expect(merged.find((row) => row.id === 1)?.score).toBe(100);
+    expect(merged.at(-1)).toEqual({ id: 99, score: 17 });
   });
 });

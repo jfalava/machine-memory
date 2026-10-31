@@ -1,10 +1,12 @@
 import {
   assessMatch,
   certaintyPoints,
+  normalizeSuggestPath,
+  normalizeTags,
+  sqliteDateToMs,
   composeEmbeddingText,
   exactMatchPoints,
   ftsRankPoints,
-  gotchaOverlaps,
   matchStrengthRank,
   matchText,
   recencyPoints,
@@ -19,18 +21,11 @@ import {
   type MemoryRow,
   type MemoryHistoryEntry,
   type MemorySummary,
-  type FactCheckResult,
-  type MemoryDoctorFinding,
-  type MemoryDoctorResult,
   type ScoredMemoryRow,
   type MemoryStatsResult,
-  UPSERT_DEFAULT_MIN_SCORE,
-  UPSERT_MIN_SIMILARITY,
-  isJsonArray,
   jsonNumber,
   jsonString,
   type JsonObject,
-  type JsonValue,
 } from "@machine-memory/contract";
 import { Schema } from "effect";
 
@@ -75,7 +70,7 @@ export function toHistoryRow(value: JsonObject): MemoryHistoryEntry {
 export function toRankedRow(value: JsonObject): FtsRankedMemoryRow {
   const row = toProductRow(value);
   return {
-    ...Schema.decodeUnknownSync(MemorySummarySchema)(row),
+    ...Schema.decodeSync(MemorySummarySchema)(row),
     updated_at: row.updated_at ?? "",
     update_count: row.update_count,
     refs: row.refs,
@@ -110,111 +105,6 @@ export function strongerMatch(
     : left;
 }
 
-const STOPWORDS = new Set([
-  "the",
-  "and",
-  "with",
-  "from",
-  "that",
-  "this",
-  "into",
-  "your",
-  "have",
-  "for",
-  "are",
-  "use",
-  "uses",
-  "using",
-]);
-
-export function extractTerms(input: string): string[] {
-  const tokens = (input.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length >= 2 && !STOPWORDS.has(token),
-  );
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const token of tokens) {
-    if (!seen.has(token)) {
-      seen.add(token);
-      unique.push(token);
-    }
-  }
-  return unique;
-}
-
-export function buildFtsQuery(terms: string[]): string | undefined {
-  const usable = terms.filter((term) => term.length > 0).slice(0, 12);
-  if (usable.length === 0) {
-    return undefined;
-  }
-  return usable.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
-}
-
-function sqliteDateToMs(value: string): number | null {
-  if (value.trim() === "") {
-    return null;
-  }
-  const normalized = value.includes("T")
-    ? value
-    : `${value.replace(" ", "T")}Z`;
-  const parsed = Date.parse(normalized);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-const FACT_STOPWORDS = new Set([
-  ...STOPWORDS,
-  "src",
-  "lib",
-  "app",
-  "test",
-  "tests",
-]);
-
-function factTerms(input: string): Set<string> {
-  const tokens = (input.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length >= 2 && !FACT_STOPWORDS.has(token),
-  );
-  return new Set(tokens);
-}
-
-function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
-  if (left.size === 0 && right.size === 0) {
-    return 1;
-  }
-  let intersection = 0;
-  for (const term of left) {
-    if (right.has(term)) {
-      intersection += 1;
-    }
-  }
-  const union = new Set([...left, ...right]).size;
-  return union === 0 ? 0 : Number((intersection / union).toFixed(3));
-}
-
-function hasNegation(text: string): boolean {
-  return /\b(not|no|never|without|cannot|can't)\b/.test(text.toLowerCase());
-}
-
-export function compareMemoryFact(
-  stored: string,
-  candidate: string,
-): FactCheckResult {
-  const storedTerms = factTerms(stored);
-  const candidateTerms = factTerms(candidate);
-  const similarity = jaccardSimilarity(storedTerms, candidateTerms);
-  return {
-    similarity,
-    conflict:
-      hasNegation(stored) !== hasNegation(candidate) || similarity < 0.35,
-    added_terms: [...candidateTerms]
-      .filter((term) => !storedTerms.has(term))
-      .slice(0, 12),
-    removed_terms: [...storedTerms]
-      .filter((term) => !candidateTerms.has(term))
-      .slice(0, 12),
-  };
-}
-
 function rawString(row: JsonObject, key: string, fallback = ""): string {
   return jsonString(row[key]) ?? fallback;
 }
@@ -231,372 +121,6 @@ function rawNumber(row: JsonObject, key: string): number | null {
     return Number.isInteger(parsed) ? parsed : null;
   }
   return null;
-}
-
-function memoryTags(value: string): string[] {
-  return [
-    ...new Set(
-      value
-        .split(",")
-        .map((tag) => tag.trim().toLowerCase())
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function doctorFinding(
-  kind: string,
-  ids: number[],
-  details: JsonObject = {},
-): MemoryDoctorFinding {
-  return { kind, ids, details };
-}
-
-type DoctorSnapshot = {
-  readonly id: number;
-  readonly content: string;
-  readonly tags: string;
-  readonly context: string;
-  readonly memoryType: string;
-  readonly certainty: string;
-  readonly evidence: string;
-  readonly expiresAfterDays: number | null;
-  readonly refs: JsonValue | undefined;
-  readonly terms: Set<string>;
-};
-
-function doctorSnapshots(rows: readonly JsonObject[]): DoctorSnapshot[] {
-  return rows.flatMap((row) => {
-    const id = rawNumber(row, "id");
-    if (id === null) {
-      return [];
-    }
-    const content = rawString(row, "content");
-    const tags = rawString(row, "tags");
-    const context = rawString(row, "context");
-    return [
-      {
-        id,
-        content,
-        tags,
-        context,
-        memoryType: rawString(row, "memory_type"),
-        certainty: rawString(row, "certainty"),
-        evidence: rawString(row, "evidence", "[]"),
-        expiresAfterDays: rawNumber(row, "expires_after_days"),
-        refs: row.refs,
-        terms: new Set(extractTerms(`${content} ${tags} ${context}`)),
-      },
-    ];
-  });
-}
-
-function exactDuplicateFindings(
-  rows: readonly DoctorSnapshot[],
-): MemoryDoctorFinding[] {
-  const groups = new Map<string, DoctorSnapshot[]>();
-  for (const row of rows) {
-    const key = `${row.content}\u0001${row.tags}\u0001${row.context}`;
-    groups.set(key, [...(groups.get(key) ?? []), row]);
-  }
-  return [...groups.values()].flatMap((group) => {
-    const keep = group[0];
-    if (!keep || group.length < 2) {
-      return [];
-    }
-    const duplicates = group.slice(1).map((row) => row.id);
-    return [
-      doctorFinding("exact_duplicate", [keep.id, ...duplicates], {
-        keep_id: keep.id,
-        duplicate_ids: duplicates,
-      }),
-    ];
-  });
-}
-
-function bestNearDuplicate(
-  row: DoctorSnapshot,
-  rows: readonly DoctorSnapshot[],
-  candidateIndexes: readonly number[],
-): { id: number; similarity: number } | undefined {
-  let best: { id: number; similarity: number } | undefined;
-  for (const index of candidateIndexes) {
-    const candidate = rows[index];
-    if (!candidate) {
-      continue;
-    }
-    const exact =
-      row.content === candidate.content &&
-      row.tags === candidate.tags &&
-      row.context === candidate.context;
-    const similarity = exact
-      ? 0
-      : jaccardSimilarity(row.terms, candidate.terms);
-    if (
-      similarity >= 0.78 &&
-      (best === undefined || similarity > best.similarity)
-    ) {
-      best = { id: candidate.id, similarity };
-    }
-  }
-  return best;
-}
-
-function nearCandidateIndexes(
-  terms: Set<string>,
-  postings: ReadonlyMap<string, readonly number[]>,
-): number[] {
-  const indexes = new Set<number>();
-  for (const term of [...terms].slice(0, 12)) {
-    for (const index of postings.get(term) ?? []) {
-      indexes.add(index);
-      if (indexes.size >= 120) {
-        return [...indexes];
-      }
-    }
-  }
-  return [...indexes];
-}
-
-function addNearPostings(
-  postings: Map<string, number[]>,
-  terms: Set<string>,
-  rowIndex: number,
-): void {
-  for (const term of terms) {
-    const indexes = postings.get(term) ?? [];
-    if (indexes.length < 200) {
-      indexes.push(rowIndex);
-      postings.set(term, indexes);
-    }
-  }
-}
-
-function nearDuplicateFindings(
-  rows: readonly DoctorSnapshot[],
-): MemoryDoctorFinding[] {
-  const findings: MemoryDoctorFinding[] = [];
-  const postings = new Map<string, number[]>();
-  for (const [index, row] of rows.entries()) {
-    if (row.terms.size === 0) {
-      continue;
-    }
-    const candidates = nearCandidateIndexes(row.terms, postings);
-    const best = bestNearDuplicate(row, rows, candidates);
-    if (best) {
-      findings.push(
-        doctorFinding("near_duplicate", [best.id, row.id], {
-          keep_id: best.id,
-          duplicate_id: row.id,
-          similarity: best.similarity,
-        }),
-      );
-    }
-    addNearPostings(postings, row.terms, index);
-  }
-  return findings;
-}
-
-function statusFindings(
-  rows: readonly DoctorSnapshot[],
-): MemoryDoctorFinding[] {
-  const findings: MemoryDoctorFinding[] = [];
-  const latestByTag = new Map<string, number>();
-  for (const row of rows) {
-    if (row.memoryType !== "status") {
-      continue;
-    }
-    const tags = memoryTags(row.tags);
-    const newerId = tags
-      .map((tag) => latestByTag.get(tag))
-      .find((id) => id !== undefined);
-    if (newerId !== undefined) {
-      findings.push(
-        doctorFinding("stale_status_overlap", [row.id, newerId], {
-          stale_id: row.id,
-          superseded_by: newerId,
-          shared_tags: tags.filter((tag) => latestByTag.get(tag) === newerId),
-        }),
-      );
-    }
-    for (const tag of tags) {
-      if (!latestByTag.has(tag)) {
-        latestByTag.set(tag, row.id);
-      }
-    }
-    if (row.expiresAfterDays === null) {
-      findings.push(
-        doctorFinding("status_missing_expiry", [row.id], {
-          suggested_days: 14,
-        }),
-      );
-    }
-  }
-  return findings;
-}
-
-function canonicalThreadFindings(
-  rows: readonly DoctorSnapshot[],
-): MemoryDoctorFinding[] {
-  const latestByThread = new Map<string, number>();
-  const findings: MemoryDoctorFinding[] = [];
-  for (const row of rows) {
-    const tags = memoryTags(row.tags);
-    const topic = tags.find((tag) => tag.startsWith("topic:"));
-    if (!topic) {
-      continue;
-    }
-    const area = tags.find((tag) => tag.startsWith("area:")) ?? "area:global";
-    const kind =
-      tags.find((tag) => tag.startsWith("kind:")) ?? `kind:${row.memoryType}`;
-    const key = `${kind}|${area}|${topic}`;
-    const canonicalId = latestByThread.get(key);
-    if (canonicalId !== undefined) {
-      findings.push(
-        doctorFinding("canonical_thread_overlap", [row.id, canonicalId], {
-          stale_id: row.id,
-          canonical_id: canonicalId,
-          thread_key: key,
-        }),
-      );
-    } else {
-      latestByThread.set(key, row.id);
-    }
-  }
-  return findings;
-}
-
-const TRANSIENT_TERMS =
-  /\b(current|currently|today|now|progress|blocked|wip|todo|failing|failed|broken|fixed|resolved|temporary)\b/i;
-const DURABLE_TERMS =
-  /\b(decision|decided|always|must|policy|architecture|standard|convention|rule|design|contract)\b/i;
-
-function typeBoundaryFinding(
-  row: DoctorSnapshot,
-): MemoryDoctorFinding | undefined {
-  const text = `${row.content} ${row.context}`;
-  if (row.memoryType !== "status" && TRANSIENT_TERMS.test(text)) {
-    return doctorFinding("transient_non_status", [row.id], {
-      memory_type: row.memoryType,
-      suggested_type: "status",
-    });
-  }
-  if (
-    row.memoryType === "status" &&
-    DURABLE_TERMS.test(text) &&
-    !TRANSIENT_TERMS.test(text)
-  ) {
-    return doctorFinding("status_looks_decision", [row.id], {
-      suggested_type: "decision",
-    });
-  }
-  return undefined;
-}
-
-function tagHygieneFindings(row: DoctorSnapshot): MemoryDoctorFinding[] {
-  const normalizedTags = memoryTags(row.tags).join(",");
-  const findings =
-    normalizedTags === ""
-      ? [doctorFinding("empty_tags", [row.id])]
-      : normalizedTags === row.tags
-        ? []
-        : [
-            doctorFinding("invalid_tags", [row.id], {
-              tags: row.tags,
-              normalized_tags: normalizedTags,
-            }),
-          ];
-  const tags = memoryTags(row.tags);
-  const taxonomyIssues = ["area", "topic", "kind"].filter(
-    (scope) => !tags.some((tag) => tag.startsWith(`${scope}:`)),
-  );
-  const kind = tags.find((tag) => tag.startsWith("kind:"));
-  if (kind && kind !== `kind:${row.memoryType}`) {
-    taxonomyIssues.push("kind_mismatch");
-  }
-  if (normalizedTags !== "" && taxonomyIssues.length > 0) {
-    findings.push(
-      doctorFinding("taxonomy_mismatch", [row.id], {
-        taxonomy_issues: taxonomyIssues,
-      }),
-    );
-  }
-  return findings;
-}
-
-function hasMalformedRefs(refs: DoctorSnapshot["refs"]): boolean {
-  const text = jsonString(refs);
-  if (text !== undefined) {
-    try {
-      return !Schema.is(Schema.Array(Schema.String))(JSON.parse(text));
-    } catch {
-      return true;
-    }
-  }
-  return (
-    !isJsonArray(refs) || refs.some((ref) => jsonString(ref) === undefined)
-  );
-}
-
-function hygieneFindings(
-  rows: readonly DoctorSnapshot[],
-): MemoryDoctorFinding[] {
-  return rows.flatMap((row) => {
-    const findings = tagHygieneFindings(row);
-    const typeBoundary = typeBoundaryFinding(row);
-    if (typeBoundary) {
-      findings.push(typeBoundary);
-    }
-    if (hasMalformedRefs(row.refs)) {
-      findings.push(doctorFinding("malformed_refs", [row.id]));
-    }
-    if (row.certainty === "verified" && row.evidence.trim() === "[]") {
-      // Legacy rows predate evidence; only a reviewer can say which kind applies.
-      findings.push(
-        doctorFinding("verified_without_evidence", [row.id], {
-          hint: "Set the evidence kinds that were actually established, or lower certainty to inferred.",
-        }),
-      );
-    }
-    return findings;
-  });
-}
-
-export function analyzeMemoryDoctor(
-  repository: string,
-  rawRows: readonly JsonObject[],
-): MemoryDoctorResult {
-  const rows = doctorSnapshots(rawRows);
-  const findings = [
-    ...exactDuplicateFindings(rows),
-    ...nearDuplicateFindings(rows),
-    ...statusFindings(rows),
-    ...canonicalThreadFindings(rows),
-    ...hygieneFindings(rows),
-    ...gotchaOverlaps(
-      rows.map((row) => ({
-        id: row.id,
-        content: row.content,
-        memory_type: row.memoryType,
-      })),
-    ).map((overlap) =>
-      doctorFinding("gotcha_overlap", [...overlap.ids], {
-        shared_identifiers: overlap.shared_identifiers,
-        hint: "Consolidate the shared workaround into one gotcha; keep version-specific limits in their own record and reference it.",
-      }),
-    ),
-  ];
-  const countsByKind: Record<string, number> = {};
-  for (const finding of findings) {
-    countsByKind[finding.kind] = (countsByKind[finding.kind] ?? 0) + 1;
-  }
-  return {
-    repository,
-    checked: rows.length,
-    count: findings.length,
-    findings,
-    counts_by_kind: countsByKind,
-  };
 }
 
 type StatsOldest = { id: number; created_at: string | null; time: number };
@@ -665,7 +189,7 @@ function ingestStatsRow(
     accumulator.byCertainty,
     rawString(row, "certainty", "inferred"),
   );
-  const tags = memoryTags(rawString(row, "tags"));
+  const tags = normalizeTags(rawString(row, "tags"));
   accumulator.noTags += tags.length === 0 ? 1 : 0;
   for (const tag of tags) {
     incrementCount(accumulator.tagFrequency, tag);
@@ -723,7 +247,7 @@ export function scoreMemoryRows(
         ftsRankPoints(row.fts_rank) +
         termCoveragePoints(match.term_coverage) +
         exactMatchPoints(match.exact_matches.length) +
-        tagMatchPoints(memoryTags(row.tags), query.terms) +
+        tagMatchPoints(normalizeTags(row.tags), query.terms) +
         recencyPoints(sqliteDateToMs(row.updated_at)) +
         certaintyPoints(row.certainty) +
         updateCountPoints(row.update_count);
@@ -757,14 +281,6 @@ export function scoredResultRow(
   };
 }
 
-export function normalizeSuggestPath(value: string): string {
-  const cleaned = value.trim().replaceAll("\\", "/");
-  if (!cleaned) {
-    return "";
-  }
-  return cleaned.replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
-}
-
 export function parseSuggestFilesParam(files: string): string[] {
   const seen = new Set<string>();
   const parsed: string[] = [];
@@ -776,88 +292,6 @@ export function parseSuggestFilesParam(files: string): string[] {
     }
   }
   return parsed;
-}
-
-export function extractPathTerms(paths: string[]): string[] {
-  const terms: string[] = [];
-  for (const path of paths) {
-    for (const segment of normalizeSuggestPath(path)
-      .split("/")
-      .filter(Boolean)) {
-      terms.push(segment);
-      for (const piece of segment.split(/[._-]+/)) {
-        if (piece) {
-          terms.push(piece);
-        }
-      }
-    }
-  }
-  return extractTerms(terms.join(" "));
-}
-
-export type FileNeighborhood = {
-  readonly tagHints: string[];
-  readonly pathHints: string[];
-  readonly terms: string[];
-};
-
-const NEIGHBORHOOD_IGNORED_SEGMENTS = new Set([
-  "src",
-  "lib",
-  "app",
-  "apps",
-  "test",
-  "tests",
-]);
-
-function collectDirectoryTags(
-  directory: string,
-  seenTags: Set<string>,
-  tagHints: string[],
-): void {
-  for (const segment of directory.split("/").filter(Boolean)) {
-    const lower = segment.toLowerCase();
-    if (!NEIGHBORHOOD_IGNORED_SEGMENTS.has(lower) && !seenTags.has(lower)) {
-      seenTags.add(lower);
-      tagHints.push(segment);
-    }
-  }
-}
-
-function collectFileHints(
-  filePath: string,
-  seenTags: Set<string>,
-  seenPaths: Set<string>,
-  tagHints: string[],
-  pathHints: string[],
-): void {
-  const normalized = normalizeSuggestPath(filePath);
-  const slash = normalized.lastIndexOf("/");
-  const directory = slash < 0 ? "." : normalized.slice(0, slash);
-  if (!directory || directory === ".") {
-    return;
-  }
-  const lowerDir = directory.toLowerCase();
-  if (!seenPaths.has(lowerDir)) {
-    seenPaths.add(lowerDir);
-    pathHints.push(`${directory}/`);
-  }
-  collectDirectoryTags(directory, seenTags, tagHints);
-}
-
-export function deriveFileNeighborhood(files: string[]): FileNeighborhood {
-  const tagHints: string[] = [];
-  const pathHints: string[] = [];
-  const seenTags = new Set<string>();
-  const seenPaths = new Set<string>();
-  for (const filePath of files) {
-    collectFileHints(filePath, seenTags, seenPaths, tagHints, pathHints);
-  }
-  return {
-    tagHints,
-    pathHints,
-    terms: extractTerms([...tagHints, ...pathHints].join(" ")),
-  };
 }
 
 export function uniqueLowerPreserveOrder(values: string[]): string[] {
@@ -890,28 +324,3 @@ export function embeddingTextForMemory(input: {
     certainty: input.certainty,
   });
 }
-
-export type UpsertStrength = {
-  readonly strong: boolean;
-  readonly similarity: number;
-  readonly score: number;
-};
-
-export function upsertStrength(
-  stored: { content: string; tags: string; context: string },
-  candidate: { content: string; tags: string; context: string },
-  score: number,
-  threshold: number = UPSERT_DEFAULT_MIN_SCORE,
-): UpsertStrength {
-  const similarity = compareMemoryFact(
-    [stored.content, stored.tags, stored.context].join(" "),
-    [candidate.content, candidate.tags, candidate.context].join(" "),
-  ).similarity;
-  return {
-    strong: similarity >= UPSERT_MIN_SIMILARITY && score >= threshold,
-    similarity,
-    score,
-  };
-}
-
-export { UPSERT_DEFAULT_MIN_SCORE, UPSERT_MIN_SIMILARITY };

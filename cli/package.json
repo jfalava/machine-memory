@@ -17,9 +17,9 @@
     "build:windows-x64": "bun build --compile --target=bun-windows-x64 src/app.ts --outfile dist/machine-memory-windows-x64.exe",
     "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
+    "format:check": "oxfmt --check",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
-    "test:unit": "vitest run",
     "test:watch": "vitest",
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
@@ -37,6 +37,7 @@
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
     "typescript": "catalog:build",
+    "vite-tsconfig-paths": "6.1.1",
     "vitest": "catalog:maintenance"
   }
 }

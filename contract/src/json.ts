@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 
 export type JsonValue = Schema.Json;
-export type JsonObject = Schema.JsonObject;
+// Not `Schema.JsonObject`: that name also binds a schema class instance, so
+// type-aware no-misused-spread flags every spread of it.
+export type JsonObject = { readonly [key: string]: JsonValue };
 
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
@@ -31,8 +33,7 @@ export function jsonString(value: JsonValue | undefined): string | undefined {
 
 export function jsonNumber(value: JsonValue | undefined): number | undefined {
   try {
-    const parsed = Schema.decodeUnknownSync(Schema.Number)(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
+    return Schema.decodeUnknownSync(Schema.Finite)(value);
   } catch {
     return undefined;
   }

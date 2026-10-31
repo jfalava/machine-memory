@@ -1,51 +1,15 @@
-import {
-  decodeResponse,
-  ErrorBodySchema,
-  QuerySuccessSchema,
-  type JsonValue as ContractJsonValue,
-} from "@machine-memory/contract";
+import { decodeResponse, QuerySuccessSchema } from "@machine-memory/contract";
 import { Effect, Layer } from "effect";
 
 import type { SqlQueryBinding } from "../db";
-import {
-  jsonObject,
-  jsonString,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "../json";
+import type { JsonValue } from "../json";
 import { repositoryForCurrentDirectory } from "../repository";
 import { MemoryDatabase, type MemoryDatabaseApi } from "./database";
 import { MemoryDatabaseError } from "./errors";
+import { postJson, toContractValue } from "./remote-http";
 import { remoteVectorApi } from "./vectorize";
 
 type RemoteQueryOperation = "run" | "get" | "all";
-
-type RemoteQueryResponse = JsonObject;
-
-type RequestHeaders = {
-  "content-type": string;
-  authorization?: string;
-};
-
-async function readRemoteResponse(
-  response: Response,
-): Promise<RemoteQueryResponse> {
-  const text = await response.text();
-  try {
-    const parsed = jsonObject(parseJson(text));
-    if (parsed === undefined) {
-      throw new Error("response was not a JSON object");
-    }
-    return parsed;
-  } catch (cause) {
-    const contentType = response.headers.get("content-type") ?? "unknown";
-    throw new Error(
-      `Remote database returned non-JSON HTTP ${response.status} (${contentType}).`,
-      { cause },
-    );
-  }
-}
 
 function remoteError(
   operation: RemoteQueryOperation,
@@ -65,43 +29,23 @@ function query(
   sql: string,
   params: SqlQueryBinding[],
 ): Effect.Effect<JsonValue, MemoryDatabaseError> {
-  return Effect.tryPromise({
-    try: async () => {
-      const headers: RequestHeaders = { "content-type": "application/json" };
-      if (token) {
-        headers.authorization = `Bearer ${token}`;
-      }
-
-      // The CLI's single HTTP boundary; errors are typed by tryPromise's catch.
-      // @effect-diagnostics-next-line globalFetchInEffect:off
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          operation,
-          sql,
-          params,
-          repository: repositoryForCurrentDirectory(),
-        }),
-      });
-      const body = await readRemoteResponse(response);
-      // SAFETY: parsed JSON response bodies carry no undefined values.
-      const contractBody = body as ContractJsonValue;
-      if (!response.ok || body.ok !== true) {
-        const failure = decodeResponse(
-          ErrorBodySchema,
-          contractBody,
-          "remote/query",
-        );
-        const message =
-          failure?.error ??
-          jsonString(body.error) ??
-          `Remote database returned HTTP ${response.status}.`;
-        throw new Error(message);
-      }
+  return postJson({
+    url,
+    token,
+    body: {
+      operation,
+      sql,
+      params,
+      repository: repositoryForCurrentDirectory(),
+    },
+    operation,
+    service: "Remote database",
+    fallbackMessage: "Remote query failed.",
+    errorLabel: "remote/query",
+    parse: (payload) => {
       const success = decodeResponse(
         QuerySuccessSchema,
-        contractBody,
+        toContractValue(payload),
         "remote/query",
       );
       if (success === undefined) {
@@ -110,7 +54,6 @@ function query(
       // SAFETY: contract Json result re-enters the CLI as an opaque JSON value.
       return success.result as JsonValue;
     },
-    catch: (cause) => remoteError(operation, cause),
   });
 }
 

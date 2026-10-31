@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 
+import { RuntimeContext } from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 
-import { readStoredSecret } from "../src/secrets";
+import { readStoredSecret, SecretUnavailableError } from "../src/secrets";
 
 test("stored secret values are read only when the request effect runs", async () => {
   let reads = 0;
@@ -21,6 +22,7 @@ test("stored secret values are read only when the request effect runs", async ()
           },
         },
       }),
+      Effect.provide(RuntimeContext.phantom),
     ),
   );
 
@@ -29,13 +31,15 @@ test("stored secret values are read only when the request effect runs", async ()
 });
 
 test("a missing stored secret fails closed", async () => {
-  await expect(
-    Effect.runPromise(
-      readStoredSecret("MACHINE_MEMORY_DB_TOKEN").pipe(
-        Effect.provideService(Cloudflare.WorkerEnvironment, {}),
-      ),
+  const error = await Effect.runPromise(
+    readStoredSecret("MACHINE_MEMORY_DB_TOKEN").pipe(
+      Effect.provideService(Cloudflare.WorkerEnvironment, {}),
+      Effect.provide(RuntimeContext.phantom),
+      Effect.flip,
     ),
-  ).rejects.toThrow(
+  );
+  expect(error).toBeInstanceOf(SecretUnavailableError);
+  expect(error.message).toContain(
     "Secrets Store binding MACHINE_MEMORY_DB_TOKEN is unavailable.",
   );
 });

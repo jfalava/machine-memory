@@ -11,6 +11,9 @@ sidebar:
 machine-memory diff <id> <new_content> (--local|--remote)
 ```
 
+`<new_content>` is a single argument; quote it when it contains spaces. Flags
+after it are options, not part of the content.
+
 `diff` returns whether the proposed content conflicts with the stored content,
 its similarity score, the terms added, and the terms removed. It is a
 read-only comparison; use `update` to persist the proposed content.
@@ -22,7 +25,13 @@ keep fewer than half of their terms. An update replaces the whole content, so
 carry each one over or confirm it is obsolete:
 
 ```json
-{"id": 42, "conflict": false, "similarity": 0.4,
- "dropped": {"identifiers": ["src/ui/Keycap.tsx"],
-             "sentences": ["Keycap styling lives in src/ui/Keycap.tsx."]}}
+{
+  "id": 42,
+  "conflict": false,
+  "similarity": 0.4,
+  "dropped": {
+    "identifiers": ["src/ui/Keycap.tsx"],
+    "sentences": ["Keycap styling lives in src/ui/Keycap.tsx."]
+  }
+}
 ```

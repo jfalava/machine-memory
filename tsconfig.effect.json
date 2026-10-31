@@ -1,6 +1,14 @@
 {
   "$schema": "./node_modules/@effect/tsgo/schema.json",
+  // Shared by every TypeScript workspace except docs (Astro has its own base).
   "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
     "plugins": [
       {
         "name": "@effect/language-service",
@@ -46,7 +54,8 @@
           "outdatedApi": "error",
           "overriddenSchemaConstructor": "error",
           "promiseInEffectSuccess": "error",
-          "schemaClassMissingBrand": "suggestion",
+          // Off: every hit is a Schema.TaggedError, which `_tag` already discriminates.
+          "schemaClassMissingBrand": "off",
           "schemaClassObjectLiteral": "error",
           "schemaLiteralNonFinite": "error",
           "schemaOpaqueInstanceMember": "error",
@@ -107,8 +116,8 @@
           "processEnv": "off",
           "schemaSync": "off",
 
-          // Style: mechanical simplifications fail. Kept as suggestions: effectFnOpportunity
-          // (taste), schemaNumber and preferTypedSchemaDecoder (existing hits). Off:
+          // Style: mechanical simplifications fail. Kept as a suggestion: effectFnOpportunity
+          // (taste). Off:
           // import-style and service-shape rules that conflict with each other or the
           // codebase, and rules with hundreds of hits (strictBooleanExpressions,
           // missingPipeableSignature, newSchemaClass, deterministicKeys).
@@ -155,14 +164,14 @@
           "preferSchemaTaggedError": "error",
           "preferSchemaTypeProperty": "error",
           "preferSucceedSomeOrNone": "error",
-          "preferTypedSchemaDecoder": "suggestion",
+          "preferTypedSchemaDecoder": "error",
           "provideLayerSucceedToProvideService": "error",
           "raceFirstWithSleepToTimeout": "error",
           "redundantMapError": "error",
           "redundantOrDie": "error",
           "redundantSchemaTagIdentifier": "error",
           "runOfExitToRunExit": "error",
-          "schemaNumber": "suggestion",
+          "schemaNumber": "error",
           "schemaStructWithTag": "error",
           "schemaUnionOfLiterals": "error",
           "serviceNotAsClass": "off",

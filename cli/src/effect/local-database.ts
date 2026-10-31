@@ -1,5 +1,5 @@
-import { databaseFailureGuidance } from "@machine-memory/contract";
 import { Effect, Layer, Schema } from "effect";
+
 import {
   allWithRetry,
   ensureDb,
@@ -8,7 +8,7 @@ import {
   type DbAccessMode,
 } from "../db";
 import { MemoryDatabase } from "./database";
-import { MemoryDatabaseError } from "./errors";
+import { databaseOperationError, type MemoryDatabaseError } from "./errors";
 
 function effectful<T>(
   operation: string,
@@ -16,18 +16,7 @@ function effectful<T>(
 ): Effect.Effect<T, MemoryDatabaseError> {
   return Effect.try({
     try: run,
-    catch: (cause) => {
-      const guidance = databaseFailureGuidance(cause);
-      return new MemoryDatabaseError({
-        operation,
-        message:
-          guidance?.error ??
-          (cause instanceof Error
-            ? cause.message
-            : "Database operation failed."),
-        cause,
-      });
-    },
+    catch: (cause) => databaseOperationError(operation, cause),
   });
 }
 

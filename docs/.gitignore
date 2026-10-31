@@ -19,3 +19,6 @@ pnpm-debug.log*
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# nimbus-docs build output (lint config and route data)
+.nimbus/

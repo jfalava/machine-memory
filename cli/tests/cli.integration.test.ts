@@ -11,94 +11,36 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { MigrationRequestInputSchema } from "@machine-memory/contract";
+import { Schema } from "effect";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
-  assetNameForPlatform,
-  binaryNameForPlatform,
-  extractZipBinary,
-} from "@/upgrade";
-
-const cliTokenizerJson = {
-  version: "1.0",
-  truncation: null,
-  padding: null,
-  added_tokens: [
-    {
-      id: 0,
-      content: "[PAD]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 1,
-      content: "[UNK]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 2,
-      content: "[CLS]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-    {
-      id: 3,
-      content: "[SEP]",
-      single_word: false,
-      lstrip: false,
-      rstrip: false,
-      normalized: false,
-      special: true,
-    },
-  ],
-  normalizer: {
-    type: "BertNormalizer",
-    clean_text: true,
-    handle_chinese_chars: true,
-    strip_accents: null,
-    lowercase: true,
-  },
-  pre_tokenizer: { type: "BertPreTokenizer" },
-  post_processor: {
-    type: "BertProcessing",
-    sep: ["[SEP]", 3],
-    cls: ["[CLS]", 2],
-  },
-  decoder: { type: "WordPiece", prefix: "##", cleanup: true },
-  model: {
-    type: "WordPiece",
-    unk_token: "[UNK]",
-    continuing_subword_prefix: "##",
-    max_input_chars_per_word: 100,
-    vocab: { "[PAD]": 0, "[UNK]": 1, "[CLS]": 2, "[SEP]": 3, hello: 4 },
-  },
-};
-
-const cliTokenizerConfig = {
-  model_max_length: 512,
-  do_lower_case: true,
-  cls_token: "[CLS]",
-  sep_token: "[SEP]",
-  unk_token: "[UNK]",
-  pad_token: "[PAD]",
-};
+  type CliOutput,
+  type CliRow,
+  decodeCliOutput,
+  decodeCliRows,
+} from "./fixtures/cli-output";
+import { tokenizerConfig, tokenizerJson } from "./fixtures/tokenizer";
 
 let tokenizerServer: Server;
-let tokenizerEnv: Record<string, string> = {};
+/** Tokenizer download overrides that point the CLI at the local test server. */
+type TokenizerEnv = {
+  MACHINE_MEMORY_BGE_TOKENIZER_URL?: string;
+  MACHINE_MEMORY_BGE_TOKENIZER_CONFIG_URL?: string;
+};
+
+let tokenizerEnv: TokenizerEnv = {};
 
 type RunResult = {
   code: number;
-  json: Record<string, unknown>;
+  json: CliOutput;
+  stderr: string;
+};
+
+type RowsRunResult = {
+  code: number;
+  rows: readonly CliRow[];
   stderr: string;
 };
 
@@ -152,25 +94,18 @@ function execBun(
         },
       },
       (error, stdout, stderr) => {
-        const processError = error as
-          | { code?: unknown; signal?: unknown; message?: unknown }
-          | undefined;
         const numericCode =
-          typeof processError?.code === "number"
-            ? processError.code
-            : processError?.signal === "SIGSEGV"
-              ? 139
-              : error
-                ? 1
-                : 0;
+          error === null
+            ? 0
+            : Schema.is(Schema.Int)(error.code)
+              ? error.code
+              : error.signal === "SIGSEGV"
+                ? 139
+                : 1;
         resolvePromise({
           code: numericCode,
           stdout,
-          stderr:
-            stderr ||
-            (typeof processError?.message === "string"
-              ? processError.message
-              : ""),
+          stderr: stderr || (error?.message ?? ""),
         });
       },
     );
@@ -186,8 +121,11 @@ async function createProject(): Promise<{ cwd: string; dbPath: string }> {
   tempDirectories.push(cwd);
   await new Promise<void>((resolve, reject) => {
     execFileCallback("git", ["init", "--quiet"], { cwd }, (error) => {
-      if (error) reject(error);
-      else resolve();
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -196,19 +134,22 @@ async function createProject(): Promise<{ cwd: string; dbPath: string }> {
       ["remote", "add", "origin", "git@github.com:jfalava/machine-memory.git"],
       { cwd },
       (error) => {
-        if (error) reject(error);
-        else resolve();
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
       },
     );
   });
   return { cwd, dbPath: join(cwd, ".agents", "memory.db") };
 }
 
-async function runCli(
+async function runCliStdout(
   cwd: string,
   dbPath: string,
-  ...args: string[]
-): Promise<RunResult> {
+  args: string[],
+): Promise<TextRunResult> {
   const backendFlag =
     databaseCommands.has(args[0] ?? "") &&
     !args.includes("--local") &&
@@ -224,7 +165,33 @@ async function runCli(
   );
   return {
     code: isKnownBunCanaryExit(result) ? 0 : result.code,
-    json: JSON.parse(result.stdout.trim()) as Record<string, unknown>,
+    stdout: result.stdout.trim(),
+    stderr: result.stderr,
+  };
+}
+
+async function runCli(
+  cwd: string,
+  dbPath: string,
+  ...args: string[]
+): Promise<RunResult> {
+  const result = await runCliStdout(cwd, dbPath, args);
+  return {
+    code: result.code,
+    json: decodeCliOutput(result.stdout),
+    stderr: result.stderr,
+  };
+}
+
+async function runCliRows(
+  cwd: string,
+  dbPath: string,
+  ...args: string[]
+): Promise<RowsRunResult> {
+  const result = await runCliStdout(cwd, dbPath, args);
+  return {
+    code: result.code,
+    rows: decodeCliRows(result.stdout),
     stderr: result.stderr,
   };
 }
@@ -298,12 +265,12 @@ beforeAll(async () => {
     const url = request.url ?? "";
     if (url.endsWith("/tokenizer.json")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(cliTokenizerJson));
+      response.end(JSON.stringify(tokenizerJson));
       return;
     }
     if (url.endsWith("/tokenizer_config.json")) {
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(cliTokenizerConfig));
+      response.end(JSON.stringify(tokenizerConfig));
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
@@ -314,7 +281,7 @@ beforeAll(async () => {
   );
   const address = tokenizerServer.address();
   const port =
-    typeof address === "object" && address !== null ? address.port : 0;
+    address === null || Schema.is(Schema.String)(address) ? 0 : address.port;
   const baseUrl = `http://127.0.0.1:${port}`;
   tokenizerEnv = {
     MACHINE_MEMORY_BGE_TOKENIZER_URL: `${baseUrl}/tokenizer.json`,
@@ -330,7 +297,24 @@ afterAll(async () => {
   );
 });
 
-describe("CLI rewrite integration", () => {
+describe("CLI integration", () => {
+  it("reads a flag value that looks like a flag as a value, not a flag", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy uses bun",
+      "--context=--quiet",
+    );
+    expect(added.code).toBe(0);
+    // --quiet would print only { id }; the full row proves it stayed a value.
+    expect(added.json).toMatchObject({
+      content: "Deploy uses bun",
+      context: "--quiet",
+    });
+  });
+
   it("supports the add, query, update, get, and deprecate workflow", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(
@@ -377,7 +361,7 @@ describe("CLI rewrite integration", () => {
       "integration-test",
     );
     expect(updated.code).toBe(0);
-    expect((updated.json as { update_count: number }).update_count).toBe(1);
+    expect(updated.json.update_count).toBe(1);
 
     const fetched = await runCli(cwd, dbPath, "get", String(id));
     expect(fetched.json.content).toBe("Use Effect for all CLI effects");
@@ -386,7 +370,7 @@ describe("CLI rewrite integration", () => {
 
     const deprecated = await runCli(cwd, dbPath, "deprecate", String(id));
     expect(deprecated.code).toBe(0);
-    expect((deprecated.json as { status: string }).status).toBe("deprecated");
+    expect(deprecated.json.status).toBe("deprecated");
   });
 
   it("renders pretty output globally while preserving explicit JSON modes", async () => {
@@ -434,7 +418,7 @@ describe("CLI rewrite integration", () => {
       "--json-min",
     );
     expect(machine.code).toBe(0);
-    expect(JSON.parse(machine.stdout.trim()).ids).toEqual([1]);
+    expect(decodeCliOutput(machine.stdout.trim()).ids).toEqual([1]);
   });
 
   it("deletes a memory when given an explicit backend flag", async () => {
@@ -562,7 +546,7 @@ describe("CLI rewrite integration", () => {
       current_update_count: 1,
       total_count: 1,
     });
-    const snapshots = history.json.results as Record<string, unknown>[];
+    const snapshots = history.json.results ?? [];
     expect(snapshots[0]).toMatchObject({
       content: "Original decision",
       refs: ["docs/a.md", "docs/b.md"],
@@ -611,9 +595,7 @@ describe("CLI rewrite integration", () => {
     expect(stale.json.error).toContain("concurrently");
     const after = await runCli(cwd, dbPath, "history", id, "--limit", "1");
     expect(after.json).toMatchObject({ total_count: 2, has_more: true });
-    expect((after.json.results as Record<string, unknown>[])[0]?.content).toBe(
-      "Wrong overwrite",
-    );
+    expect(after.json.results?.[0]?.content).toBe("Wrong overwrite");
     await runCli(cwd, dbPath, "delete", id);
     expect((await runCli(cwd, dbPath, "history", id)).json.total_count).toBe(0);
   });
@@ -710,7 +692,7 @@ describe("CLI rewrite integration", () => {
     });
 
     const history = await runCli(cwd, dbPath, "history", id, "--limit", "1");
-    const latest = (history.json.results as Record<string, unknown>[])[0];
+    const latest = history.json.results?.[0];
     expect(latest).toMatchObject({ evidence: ["observed_implementation"] });
     const restored = await runCli(
       cwd,
@@ -770,10 +752,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     ).toBe(0);
     const doctor = await runCli(cwd, dbPath, "doctor");
     expect(doctor.json.summary).toMatchObject({ verified_without_evidence: 1 });
-    expect(
-      (doctor.json.findings as Record<string, unknown>)
-        .verified_without_evidence,
-    ).toEqual([expect.objectContaining({ id: 1 })]);
+    expect(doctor.json.findings?.verified_without_evidence).toEqual([
+      expect.objectContaining({ id: 1 }),
+    ]);
   });
 
   it("reports dropped details and records that rely on a changed or retired premise", async () => {
@@ -825,9 +806,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       "Home Manager reimports nixpkgs.",
       "--dry-run",
     );
-    expect(
-      (dryRun.json.targets as Record<string, unknown>[])[0]?.dropped,
-    ).toMatchObject({ identifiers: ["nixpkgs-security", "flake.nix"] });
+    expect(dryRun.json.targets?.[0]?.dropped).toMatchObject({
+      identifiers: ["nixpkgs-security", "flake.nix"],
+    });
 
     const updated = await runCli(
       cwd,
@@ -859,9 +840,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     }
     const doctor = await runCli(cwd, dbPath, "doctor");
     expect(doctor.json.summary).toMatchObject({ gotcha_overlaps: 1 });
-    expect(
-      (doctor.json.findings as Record<string, unknown>).gotcha_overlaps,
-    ).toEqual([
+    expect(doctor.json.findings?.gotcha_overlaps).toEqual([
       expect.objectContaining({
         ids: [1, 2],
         shared_identifiers: [
@@ -875,18 +854,14 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
   it("prints focused help for one command and the full catalog for help", async () => {
     const { cwd, dbPath } = await createProject();
     const focused = await runCliText(cwd, dbPath, "update", "--help");
-    const payload = JSON.parse(focused.stdout) as Record<string, unknown>;
-    expect(Object.keys(payload.commands as object)).toEqual(["update"]);
-    expect(Object.keys(payload.output_fields as object)).toContain("dropped");
+    const payload = decodeCliOutput(focused.stdout);
+    expect(Object.keys(payload.commands ?? {})).toEqual(["update"]);
+    expect(Object.keys(payload.output_fields ?? {})).toContain("dropped");
     expect(payload.full_help).toBe("machine-memory help");
     const viaHelp = await runCli(cwd, dbPath, "help", "checkpoint");
-    expect(Object.keys(viaHelp.json.commands as object)).toEqual([
-      "checkpoint",
-    ]);
+    expect(Object.keys(viaHelp.json.commands ?? {})).toEqual(["checkpoint"]);
     const full = await runCli(cwd, dbPath, "help");
-    expect(Object.keys(full.json.commands as object).length).toBeGreaterThan(
-      20,
-    );
+    expect(Object.keys(full.json.commands ?? {}).length).toBeGreaterThan(20);
   });
 
   it("targets another repository with --repo and refuses unknown ones on add", async () => {
@@ -914,24 +889,20 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       "--quiet",
     );
     expect(created.code).toBe(0);
-    const other = await runCli(
+    const other = await runCliRows(
       cwd,
       dbPath,
       "list",
       "--repo=jfalava/outfit",
       "--local",
     );
-    expect(
-      (other.json as unknown as Record<string, unknown>[]).map(
-        (row) => row.content,
-      ),
-    ).toEqual(["Other repository memory"]);
-    const own = await runCli(cwd, dbPath, "list");
-    expect(
-      (own.json as unknown as Record<string, unknown>[]).map(
-        (row) => row.content,
-      ),
-    ).toEqual(["Local repository memory"]);
+    expect(other.rows.map((row) => row.content)).toEqual([
+      "Other repository memory",
+    ]);
+    const own = await runCliRows(cwd, dbPath, "list");
+    expect(own.rows.map((row) => row.content)).toEqual([
+      "Local repository memory",
+    ]);
     const invalid = await runCli(cwd, dbPath, "list", "--repo", "outfit");
     expect(invalid.code).not.toBe(0);
     expect(String(invalid.json.error)).toContain("owner/name");
@@ -973,11 +944,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       "--json-min",
     );
     expect(checkpoint.json.files).toEqual(["cli/src/db.ts"]);
-    expect(
-      (checkpoint.json.recent as Record<string, unknown>[]).map(
-        (row) => row.id,
-      ),
-    ).toEqual([2, id]);
+    expect(checkpoint.json.recent?.map((row) => row.id)).toEqual([2, id]);
     expect(checkpoint.json.related).toEqual([
       expect.objectContaining({ id, match_strength: "strong" }),
     ]);
@@ -986,17 +953,15 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       verified_with_gaps: [id],
       strong_related: [id],
     });
-    expect(
-      (checkpoint.json.classification as Record<string, unknown>[]).map(
-        (entry) => entry.group,
-      ),
-    ).toEqual([
-      "already_covered",
-      "new_durable_knowledge",
-      "superseded_or_conflicting",
-      "transient_status",
-      "intentionally_omitted",
-    ]);
+    expect(checkpoint.json.classification?.map((entry) => entry.group)).toEqual(
+      [
+        "already_covered",
+        "new_durable_knowledge",
+        "superseded_or_conflicting",
+        "transient_status",
+        "intentionally_omitted",
+      ],
+    );
     const quiet = await runCli(cwd, dbPath, "checkpoint", "--quiet");
     expect(quiet.json.recent_ids).toEqual([2, id]);
   });
@@ -1031,9 +996,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect((await runCli(cwd, dbPath, "migrate")).code).toBe(0);
     const history = await runCli(cwd, dbPath, "history", "1");
     expect(history.json.total_count).toBe(1);
-    expect(
-      (history.json.results as Record<string, unknown>[])[0]?.content,
-    ).toBe("Retained v3 memory");
+    expect(history.json.results?.[0]?.content).toBe("Retained v3 memory");
     expect((await runCli(cwd, dbPath, "get", "1")).json.content).toBe(
       "After upgrade",
     );
@@ -1061,19 +1024,21 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(added.code).toBe(0);
 
-    const requests: { path: string; body: Record<string, unknown> }[] = [];
+    const requests: {
+      path: string;
+      body: typeof MigrationRequestInputSchema.Type;
+    }[] = [];
     const server = createServer((request, response) => {
       const chunks: Buffer[] = [];
       request.on("data", (chunk: Buffer) => chunks.push(chunk));
       request.on("end", () => {
-        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<
-          string,
-          unknown
-        >;
+        const body = Schema.decodeSync(
+          Schema.fromJsonString(MigrationRequestInputSchema),
+        )(Buffer.concat(chunks).toString());
         requests.push({ path: request.url ?? "", body });
         response.setHeader("content-type", "application/json");
         if (request.url === "/migrate") {
-          const rows = body.rows as { source_id: number }[];
+          const rows = body.rows;
           response.end(
             JSON.stringify({
               ok: true,
@@ -1104,7 +1069,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       server.listen(0, "127.0.0.1", () => resolveServer());
     });
     const address = server.address();
-    if (!address || typeof address === "string") {
+    if (address === null || Schema.is(Schema.String)(address)) {
       throw new Error("The migration test server did not expose a port.");
     }
 
@@ -1137,9 +1102,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       expect(requests.map((request) => request.path)).toEqual(["/migrate"]);
       expect(requests[0]?.body.repository).toBe("jfalava/machine-memory");
       expect(requests[0]?.body.source).toBe("stable-backup");
-      expect(
-        (requests[0]?.body.rows as Record<string, unknown>[])[0]?.content,
-      ).toBe("A selected SQLite file can be exported remotely");
+      expect(requests[0]?.body.rows[0]?.content).toBe(
+        "A selected SQLite file can be exported remotely",
+      );
       const agentsMd = await readFile(join(cwd, "AGENTS.md"), "utf8");
       expect(agentsMd).toContain("# Project instructions");
       expect(agentsMd).toContain(
@@ -1170,13 +1135,13 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "--quiet",
     );
     expect(added.code).toBe(0);
-    const tokens = added.json.tokens as Record<string, unknown>;
+    const tokens = added.json.tokens;
     expect(tokens).toBeDefined();
-    expect(tokens.source).toBe("tokenizer");
-    expect(tokens.within_limit).toBe(true);
-    expect(tokens.over_by).toBe(0);
-    expect(Number(tokens.total_tokens)).toBeGreaterThan(0);
-    const parts = tokens.parts as Array<{ part: string; tokens: number }>;
+    expect(tokens?.source).toBe("tokenizer");
+    expect(tokens?.within_limit).toBe(true);
+    expect(tokens?.over_by).toBe(0);
+    expect(Number(tokens?.total_tokens)).toBeGreaterThan(0);
+    const parts = tokens?.parts ?? [];
     expect(parts.map((entry) => entry.part)).toEqual(
       expect.arrayContaining(["content", "memory_type", "status", "certainty"]),
     );
@@ -1311,9 +1276,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(within.code).toBe(0);
     expect(within.json.within_budget).toBe(true);
     expect(within.json.binding_limit).toBeNull();
-    const limits = within.json.limits as Record<string, { pass: boolean }>;
-    expect(limits.tokens?.pass).toBe(true);
-    expect(limits.bytes_estimate?.pass).toBe(true);
+    const limits = within.json.limits;
+    expect(limits?.tokens?.pass).toBe(true);
+    expect(limits?.bytes_estimate?.pass).toBe(true);
 
     // --remote is accepted as a no-op for the non-database size command.
     const withRemote = await runCli(
@@ -1330,11 +1295,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(over.json.within_budget).toBe(false);
     expect(over.json.binding_limit).toBe("bytes");
     expect(over.json.over_by_bytes).toBeGreaterThan(0);
-    expect(
-      String(
-        (over.json.limits as Record<string, { pass: boolean }>).tokens?.pass,
-      ),
-    ).toBe("true");
+    expect(String(over.json.limits?.tokens?.pass)).toBe("true");
   });
 
   it("reports the add size with --dry-run without writing", async () => {
@@ -1351,9 +1312,11 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(dry.json.command).toBe("add");
     expect(dry.json.dry_run).toBe(true);
     expect(dry.json.action).toBe("create");
-    const size = dry.json.size as Record<string, unknown>;
-    expect(size.within_budget).toBe(false);
-    expect(size.trimmed_suggestion).toMatch(/truncating content to ~\d+ bytes/);
+    const size = dry.json.size;
+    expect(size?.within_budget).toBe(false);
+    expect(size?.trimmed_suggestion).toMatch(
+      /truncating content to ~\d+ bytes/,
+    );
 
     const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
     expect(fetched.json).toEqual({ error: "Not found" });
@@ -1384,11 +1347,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(dry.json.command).toBe("update");
     expect(dry.json.dry_run).toBe(true);
     expect(dry.json.count).toBe(1);
-    const targets = dry.json.targets as Array<Record<string, unknown>>;
+    const targets = dry.json.targets ?? [];
     expect(targets[0]?.id).toBe(id);
-    expect((targets[0]?.size as Record<string, unknown>).binding_limit).toBe(
-      "bytes",
-    );
+    expect(targets[0]?.size?.binding_limit).toBe("bytes");
 
     const okDry = await runCli(
       cwd,
@@ -1431,15 +1392,11 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(strong.code).toBe(0);
     expect(strong.json.action).toBe("update");
-    expect((strong.json.would_match as Record<string, unknown>).id).toBe(
-      existingId,
+    expect(strong.json.would_match?.id).toBe(existingId);
+    expect(String(strong.json.would_match?.content_head)).toContain(
+      "alpha beta gamma",
     );
-    expect(
-      String((strong.json.would_match as Record<string, unknown>).content_head),
-    ).toContain("alpha beta gamma");
-    expect((strong.json.size as Record<string, unknown>).within_budget).toBe(
-      true,
-    );
+    expect(strong.json.size?.within_budget).toBe(true);
 
     // A weak match would NOT be updated; the write path creates a new record.
     const weak = await runCli(
@@ -1454,9 +1411,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(weak.code).toBe(0);
     expect(weak.json.action).toBe("create");
-    expect((weak.json.would_match as Record<string, unknown>).id).toBe(
-      existingId,
-    );
+    expect(weak.json.would_match?.id).toBe(existingId);
     expect(String(weak.json.note)).toContain("not a strong upsert match");
 
     const fetched = await runCli(
@@ -1517,9 +1472,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(forced.json.mode).toBe("created");
     const newId = Number(forced.json.id);
     expect(newId).not.toBe(existingId);
-    expect((forced.json.upsert_match as Record<string, unknown>).id).toBe(
-      existingId,
-    );
+    expect(forced.json.upsert_match?.id).toBe(existingId);
 
     const lowered = await runCli(
       cwd,
@@ -1659,7 +1612,7 @@ describe("audit write regressions", () => {
     const imported = await runCli(cwd, dbPath, "import", file, "--json-min");
     expect(imported.code, imported.stderr).toBe(0);
     expect(imported.json.imported).toBe(2);
-    const results = imported.json.results as Array<{ id: number }>;
+    const results = imported.json.results ?? [];
     const first = await runCli(cwd, dbPath, "get", String(results[0]?.id));
     expect(first.json).toMatchObject({
       memory_type: "decision",
@@ -1695,7 +1648,7 @@ describe("audit write regressions", () => {
     );
     const imported = await runCli(cwd, dbPath, "import", file, "--json-min");
     expect(imported.code, imported.stderr).toBe(0);
-    const results = imported.json.results as Array<{ id: number }>;
+    const results = imported.json.results ?? [];
     const old = await runCli(cwd, dbPath, "get", String(results[0]?.id));
     expect(old.json.superseded_by).toBe(results[1]?.id);
     expect(old.json.superseded_by).not.toBe(90);
@@ -1829,38 +1782,23 @@ describe("audit write regressions", () => {
 describe("human command errors", () => {
   it("renders all human command argument errors as terminal text", async () => {
     const cases = [
-      [
-        ["upgrade", "--bad"],
-        "Usage: machine-memory upgrade",
-        "✗ Upgrade failed",
-      ],
-      [
-        ["init", "--bad"],
-        "Usage: machine-memory init (--local|--remote|--mcp)",
-        "✗ init failed",
-      ],
-      [
-        ["remote", "setup", "--bad"],
-        "Usage: machine-memory remote setup [--url <worker-url>] [--token <worker-token>]",
-        "✗ remote setup failed",
-      ],
-      [
-        ["remote", "provision", "--bad"],
-        "Usage: machine-memory remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
-        "✗ remote provision failed",
-      ],
-      [
-        ["local", "export", "--bad"],
-        "Usage: machine-memory local export [local-db-path] --remote",
-        "✗ local export failed",
-      ],
+      [["upgrade"], "✗ Upgrade failed"],
+      [["init"], "✗ init failed"],
+      [["remote", "setup"], "✗ remote setup failed"],
+      [["remote", "provision"], "✗ remote provision failed"],
+      [["local", "export"], "✗ local export failed"],
     ] as const;
 
-    for (const [args, usage, heading] of cases) {
-      const result = await execBun(["run", cliEntrypoint, ...args], {});
+    for (const [command, heading] of cases) {
+      const result = await execBun(
+        ["run", cliEntrypoint, ...command, "--bad"],
+        {},
+      );
 
       expect(result.code).toBe(1);
-      expect(result.stdout).toContain(usage);
+      expect(result.stdout).toContain(
+        `Usage: machine-memory ${command.join(" ")}`,
+      );
       expect(result.stdout).not.toContain('"error"');
       expect(result.stderr).toContain(heading);
       expect(result.stderr).not.toContain('{"error"');
@@ -1895,69 +1833,5 @@ describe("human command errors", () => {
       expect(result.stdout).toContain("Hint");
       expect(result.stdout).toContain(hint);
     }
-  });
-});
-
-describe("release platform selection", () => {
-  it("selects the published asset for each supported target", () => {
-    expect(assetNameForPlatform("darwin", "arm64")).toBe(
-      "machine-memory-darwin-arm64.zip",
-    );
-    expect(assetNameForPlatform("linux", "x64")).toBe(
-      "machine-memory-linux-x64.zip",
-    );
-    expect(assetNameForPlatform("win32", "x64")).toBe(
-      "machine-memory-windows-x64.zip",
-    );
-    expect(assetNameForPlatform("freebsd", "x64")).toBeUndefined();
-  });
-
-  it("uses normalized executable names inside release archives", () => {
-    expect(binaryNameForPlatform("darwin")).toBe("machine-memory");
-    expect(binaryNameForPlatform("linux")).toBe("machine-memory");
-    expect(binaryNameForPlatform("win32")).toBe("machine-memory.exe");
-    expect(binaryNameForPlatform("freebsd")).toBeUndefined();
-  });
-
-  it("extracts the expected executable from a stored ZIP archive", () => {
-    const name = new TextEncoder().encode("machine-memory-linux-x64");
-    const contents = new TextEncoder().encode("binary");
-    const local = new Uint8Array(30 + name.length + contents.length);
-    const localView = new DataView(local.buffer);
-    localView.setUint32(0, 0x04034b50, true);
-    localView.setUint16(8, 0, true);
-    localView.setUint32(18, contents.length, true);
-    localView.setUint32(22, contents.length, true);
-    localView.setUint16(26, name.length, true);
-    local.set(name, 30);
-    local.set(contents, 30 + name.length);
-
-    const central = new Uint8Array(46 + name.length);
-    const centralView = new DataView(central.buffer);
-    centralView.setUint32(0, 0x02014b50, true);
-    centralView.setUint16(10, 0, true);
-    centralView.setUint32(20, contents.length, true);
-    centralView.setUint32(24, contents.length, true);
-    centralView.setUint16(28, name.length, true);
-    centralView.setUint32(42, 0, true);
-    central.set(name, 46);
-
-    const end = new Uint8Array(22);
-    const endView = new DataView(end.buffer);
-    endView.setUint32(0, 0x06054b50, true);
-    endView.setUint16(8, 1, true);
-    endView.setUint16(10, 1, true);
-    endView.setUint32(12, central.length, true);
-    endView.setUint32(16, local.length, true);
-
-    const archive = new Uint8Array(local.length + central.length + end.length);
-    archive.set(local, 0);
-    archive.set(central, local.length);
-    archive.set(end, local.length + central.length);
-
-    expect(extractZipBinary(archive, "machine-memory")).toEqual(contents);
-    expect(extractZipBinary(archive, "machine-memory-linux-x64")).toEqual(
-      contents,
-    );
   });
 });

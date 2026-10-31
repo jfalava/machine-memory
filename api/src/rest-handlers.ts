@@ -1,6 +1,7 @@
 import {
   databaseFailureGuidance,
   normalizeProductRoute,
+  type JsonValue,
   type ProductRoute,
 } from "@machine-memory/contract";
 import type { RuntimeContext } from "alchemy";
@@ -9,8 +10,6 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-
-import type { JsonValue } from "./json";
 
 const INVALID_JSON_BODY_ERROR = "Invalid JSON request body.";
 const INTERNAL_ERROR = "Internal server error.";
@@ -47,9 +46,7 @@ export type RestHandlers<R = RuntimeContext> = {
   readonly handleQuery: RestHandlerFn<R>;
   readonly handleMigration: RestHandlerFn<R>;
   readonly handleMigrationLinks: RestHandlerFn<R>;
-  readonly handleVectorizeUpsert: RestHandlerFn<R>;
   readonly handleVectorizeSearch: RestHandlerFn<R>;
-  readonly handleVectorizeDelete: RestHandlerFn<R>;
   readonly handleProduct: (
     route: ProductRoute,
     body: JsonValue,
@@ -78,9 +75,7 @@ const KNOWN_ROUTES = new Set([
   "/query",
   "/migrate",
   "/migrate/links",
-  "/vectorize/upsert",
   "/vectorize/search",
-  "/vectorize/delete",
 ]);
 
 export function handleRestRequest<R>(
@@ -96,12 +91,6 @@ export function handleRestRequest<R>(
     }
     if (request.url === "/migrate/links") {
       return handlers.handleMigrationLinks(body);
-    }
-    if (request.url === "/vectorize/upsert") {
-      return handlers.handleVectorizeUpsert(body);
-    }
-    if (request.url === "/vectorize/delete") {
-      return handlers.handleVectorizeDelete(body);
     }
     if (request.url === "/vectorize/search") {
       return handlers.handleVectorizeSearch(body);
@@ -141,7 +130,7 @@ export function handleRestRequest<R>(
     const bodyResult = yield* request.json.pipe(
       Effect.map((body) => ({
         ok: true as const,
-        body: Schema.decodeUnknownSync(Schema.Json)(body),
+        body: Schema.decodeSync(Schema.Json)(body),
       })),
       Effect.catchCause(() => Effect.succeed({ ok: false as const })),
     );

@@ -1,8 +1,9 @@
-import type {
-  Certainty,
-  EvidenceKind,
-  MemoryStatus,
-  MemoryType,
+import {
+  SUGGEST_NEIGHBORHOOD_LIMIT,
+  type Certainty,
+  type EvidenceKind,
+  type MemoryStatus,
+  type MemoryType,
 } from "@machine-memory/contract";
 
 export type ProductFilters = {
@@ -18,15 +19,20 @@ export type VectorFilter = {
   certainty?: string;
 };
 
+function isFilterValue(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+/** Vectorize metadata filter; blank values mean no filter. */
 export function vectorFilter(filters: ProductFilters): VectorFilter {
   const filter: VectorFilter = {};
-  if (filters.status !== undefined) {
+  if (isFilterValue(filters.status)) {
     filter.status = filters.status;
   }
-  if (filters.memory_type !== undefined) {
+  if (isFilterValue(filters.memory_type)) {
     filter.memory_type = filters.memory_type;
   }
-  if (filters.certainty !== undefined) {
+  if (isFilterValue(filters.certainty)) {
     filter.certainty = filters.certainty;
   }
   return filter;
@@ -172,6 +178,8 @@ export function neighborhoodSelect(
     orParams.push(lowered);
     orClauses.push("INSTR(LOWER(m.context), ?) > 0");
     orParams.push(lowered);
+    orClauses.push("INSTR(LOWER(m.refs), ?) > 0");
+    orParams.push(lowered);
   }
   if (orClauses.length === 0) {
     return undefined;
@@ -192,7 +200,7 @@ function neighborhoodWhere(
       ? [...clauses, extra.sql].join(" AND ")
       : clauses.join(" AND ");
   return {
-    sql: `SELECT m.*, 0 AS fts_rank FROM memories m WHERE ${where} ORDER BY m.updated_at DESC, m.id DESC LIMIT 30`,
+    sql: `SELECT m.*, 0 AS fts_rank FROM memories m WHERE ${where} ORDER BY m.updated_at DESC, m.id DESC LIMIT ${SUGGEST_NEIGHBORHOOD_LIMIT}`,
     params: [...params, ...extra.params],
   };
 }

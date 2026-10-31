@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   EvidenceSchema,
   ValidationGapsSchema,
+  sqliteDateToMs,
   type EvidenceKind,
 } from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
@@ -29,6 +30,7 @@ import {
   jsonStringArray,
   isJsonArray,
   parseJson,
+  storedStringArray,
   type JsonObject,
   type JsonValue,
 } from "../../json";
@@ -49,10 +51,8 @@ import {
   isMemoryType,
   normalizeCertaintyValue,
   normalizeSqliteRow,
-  parseStoredRefs,
   parseTags,
   sqliteDateForComparison,
-  sqliteDateToMs,
   stringValue,
 } from "../shared";
 
@@ -146,7 +146,7 @@ function parseImportRefs(entry: JsonObject): string[] {
     return refs;
   }
   const raw = jsonString(entry.refs);
-  return raw === undefined ? [] : parseStoredRefs(raw);
+  return raw === undefined ? [] : storedStringArray(raw);
 }
 
 function parseImportTimestamp(
@@ -227,7 +227,7 @@ const ImportMetadataSchema = Schema.Struct({
 
 function validateImportMetadata(entry: JsonObject): ImportSkip | undefined {
   try {
-    Schema.decodeUnknownSync(ImportMetadataSchema)(entry);
+    Schema.decodeSync(ImportMetadataSchema)(entry);
   } catch {
     return importSkip("invalid_metadata");
   }
@@ -373,14 +373,15 @@ function updateOldest(current: JsonObject | null, candidate: JsonObject) {
     return candidate;
   }
   const candidateAge =
-    sqliteDateToMs(candidate.created_at) ?? Number.POSITIVE_INFINITY;
+    sqliteDateToMs(stringValue(candidate.created_at)) ??
+    Number.POSITIVE_INFINITY;
   const currentAge =
-    sqliteDateToMs(current.created_at) ?? Number.POSITIVE_INFINITY;
+    sqliteDateToMs(stringValue(current.created_at)) ?? Number.POSITIVE_INFINITY;
   return candidateAge < currentAge ? candidate : current;
 }
 
 function updateStaleCount(accumulator: StatsAccumulator, memory: JsonObject) {
-  const updatedMs = sqliteDateToMs(memory.updated_at);
+  const updatedMs = sqliteDateToMs(stringValue(memory.updated_at));
   if (updatedMs === null) {
     return;
   }
@@ -582,7 +583,7 @@ export function handleStatsCommand(commandCtx: CommandContext) {
 export function handleImportCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const parsed = yield* parseImportFile(
-      commandCtx.args[0],
+      commandCtx.positionals[0],
       commandCtx.fileSystem,
     );
     const results: JsonObject[] = parsed.map((_, index) => ({

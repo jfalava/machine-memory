@@ -22,9 +22,7 @@ interface PagefindSearchResponse {
 
 interface PagefindFilters {
   [key: string]:
-    | string
-    | string[]
-    | { none?: string | string[]; any?: string | string[] };
+    string | string[] | { none?: string | string[]; any?: string | string[] };
 }
 
 interface PagefindApi {

@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -66,13 +66,15 @@ describe("remote migration API", () => {
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://memory.example/migrate",
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({ authorization: "Bearer secret" }),
-      }),
+      expect.objectContaining({ method: "POST" }),
     );
-    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(JSON.parse(String(request.body))).toEqual({
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(request?.headers).toMatchObject({ authorization: "Bearer secret" });
+    expect(
+      Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(
+        request?.body,
+      ),
+    ).toEqual({
       repository: "owner/project",
       source: "source-database-1",
       rows: [row],
