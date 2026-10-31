@@ -85,12 +85,10 @@ describe("remote setup with a locked keychain", () => {
 
     await Effect.runPromise(
       remoteSetup({
-        args: [
-          "--url",
-          "https://example.workers.dev",
-          "--token",
-          "secret-token",
-        ],
+        flags: new Map([
+          ["--url", "https://example.workers.dev"],
+          ["--token", "secret-token"],
+        ]),
         positionals: [],
         command: "setup",
         outputMode: {

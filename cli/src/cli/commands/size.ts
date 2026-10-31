@@ -23,12 +23,12 @@ import {
  */
 export function handleSizeCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const fail = (message: string) =>
       Effect.fail(commandError("size", message, undefined));
     const contentFromArg = commandCtx.positionals[0];
     const contentFromFile = yield* parseContentFromFileFlag(
-      args,
+      flags,
       commandCtx.fileSystem,
     );
     if (contentFromArg && contentFromFile !== undefined) {
@@ -43,11 +43,11 @@ export function handleSizeCommand(commandCtx: CommandContext) {
         id: "0",
         repository: "",
         content,
-        tags: getFlagValue(args, "--tags") ?? "",
-        context: getFlagValue(args, "--context") ?? "",
-        memory_type: requireMemoryType(args) ?? "convention",
+        tags: getFlagValue(flags, "--tags") ?? "",
+        context: getFlagValue(flags, "--context") ?? "",
+        memory_type: requireMemoryType(flags) ?? "convention",
         status: "active",
-        certainty: requireCertainty(args) ?? "inferred",
+        certainty: requireCertainty(flags) ?? "inferred",
       }),
     );
     yield* Effect.sync(() => {

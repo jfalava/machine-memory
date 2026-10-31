@@ -71,8 +71,8 @@ function updateAgentsMdForRemote(context: CommandContext) {
 export function handleLocalExport(context: CommandContext) {
   return Effect.gen(function* () {
     const backendFlags = {
-      local: context.args.includes("--local"),
-      remote: context.args.includes("--remote"),
+      local: context.flags.has("--local"),
+      remote: context.flags.has("--remote"),
     };
     yield* Effect.try({
       try: () => {
@@ -107,7 +107,7 @@ export function handleLocalExport(context: CommandContext) {
       try: () => {
         const sourceRows = readLocalMigrationRows(sourcePath, repository);
         const sourceId =
-          getFlagValue(context.args, "--source-id") ??
+          getFlagValue(context.flags, "--source-id") ??
           createHash("sha256")
             .update(`${hostname()}:${realpathSync(sourcePath)}`)
             .digest("hex");

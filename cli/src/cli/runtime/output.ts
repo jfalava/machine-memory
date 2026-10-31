@@ -1,6 +1,6 @@
 import { Flag, GlobalFlag } from "effect/cli";
 
-import { printJson } from "../../cli-utils";
+import { type CommandFlags, printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import type { JsonObject, JsonValue } from "../../json";
 import {
@@ -25,13 +25,16 @@ export type OutputMode = {
   quiet: boolean;
 };
 
-export function parseOutputMode(args: string[], pretty = false): OutputMode {
+export function parseOutputMode(
+  flags: CommandFlags,
+  pretty = false,
+): OutputMode {
   return {
-    brief: args.includes("--brief"),
-    jsonMin: args.includes("--json-min"),
-    noConflicts: args.includes("--no-conflicts"),
+    brief: flags.has("--brief"),
+    jsonMin: flags.has("--json-min"),
+    noConflicts: flags.has("--no-conflicts"),
     pretty,
-    quiet: args.includes("--quiet"),
+    quiet: flags.has("--quiet"),
   };
 }
 
@@ -40,7 +43,7 @@ export function prettyOutputEnabled(mode: OutputMode): boolean {
 }
 
 export function outputModeForPretty(pretty: boolean): OutputMode {
-  return parseOutputMode([], pretty);
+  return parseOutputMode(new Map(), pretty);
 }
 
 export function printCommandOutput(

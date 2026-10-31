@@ -7,7 +7,11 @@ import {
   type EvidenceKind,
 } from "@machine-memory/contract";
 
-import { getFlagValue, usageError } from "../../../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  usageError,
+} from "../../../cli-utils";
 import {
   jsonStringArray,
   parseJson,
@@ -45,8 +49,10 @@ function flagJsonArray(raw: string, flag: string): string[] {
 }
 
 /** `--evidence a,b` or a JSON array; `none` or `[]` clears it on update. */
-export function parseEvidenceFlag(args: string[]): EvidenceKind[] | undefined {
-  const raw = getFlagValue(args, "--evidence");
+export function parseEvidenceFlag(
+  flags: CommandFlags,
+): EvidenceKind[] | undefined {
+  const raw = getFlagValue(flags, "--evidence");
   if (raw === undefined) {
     return undefined;
   }
@@ -69,8 +75,10 @@ export function parseEvidenceFlag(args: string[]): EvidenceKind[] | undefined {
 }
 
 /** One gap as plain text, several as a JSON array; `none` or `[]` clears them. */
-export function parseValidationGapsFlag(args: string[]): string[] | undefined {
-  const raw = getFlagValue(args, "--validation-gaps");
+export function parseValidationGapsFlag(
+  flags: CommandFlags,
+): string[] | undefined {
+  const raw = getFlagValue(flags, "--validation-gaps");
   if (raw === undefined) {
     return undefined;
   }

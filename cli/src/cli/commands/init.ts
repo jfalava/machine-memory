@@ -3,6 +3,7 @@ import { relative, resolve } from "node:path";
 import { Effect } from "effect";
 import pc from "picocolors";
 
+import type { CommandFlags } from "../../cli-utils";
 import { DB_PATH } from "../../constants";
 import {
   databaseConfig,
@@ -21,7 +22,7 @@ import { remoteProvision, remoteSetup } from "./remote";
 export function handleInitCommand(commandCtx: CommandContext) {
   const agentsMdPath = resolve(process.cwd(), "AGENTS.md");
   return Effect.gen(function* () {
-    const backend = yield* resolveInitBackend(commandCtx.args);
+    const backend = yield* resolveInitBackend(commandCtx.flags);
     const agentsExists = yield* commandCtx.fileSystem.exists(agentsMdPath);
     if (backend === "remote" || backend === "local") {
       const backendFlags: DatabaseBackendFlags = {
@@ -64,12 +65,12 @@ export function handleInitCommand(commandCtx: CommandContext) {
 }
 
 function resolveInitBackend(
-  args: readonly string[],
+  flags: CommandFlags,
 ): Effect.Effect<AgentsMemoryBackend, CommandError> {
   return Effect.gen(function* () {
-    const local = args.includes("--local");
-    const remote = args.includes("--remote");
-    const mcp = args.includes("--mcp");
+    const local = flags.has("--local");
+    const remote = flags.has("--remote");
+    const mcp = flags.has("--mcp");
     const selected = [local, remote, mcp].filter(Boolean).length;
     if (selected !== 1) {
       return yield* new CommandError({

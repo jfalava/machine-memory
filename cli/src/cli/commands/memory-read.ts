@@ -13,7 +13,13 @@ import {
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
-import { getFlagValue, hasFlag, printJson, usageError } from "../../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  hasFlag,
+  printJson,
+  usageError,
+} from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { jsonNumber, type JsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
@@ -67,8 +73,8 @@ type SuggestSnapshot = {
 
 type SweepSource = "suggest" | "query" | "list";
 
-function explainScoreEnabled(args: string[]): boolean {
-  return hasFlag(args, "--explain-score");
+function explainScoreEnabled(flags: CommandFlags): boolean {
+  return hasFlag(flags, "--explain-score");
 }
 
 function resultIds(results: JsonObject[]): JsonObject["id"][] {
@@ -192,9 +198,9 @@ export function fetchQueryResults(
   term: string,
   options: FetchResultsOptions,
 ): Effect.Effect<QueryResults, MemoryDatabaseError> {
-  const { args } = commandCtx;
+  const { flags } = commandCtx;
   const database = requireDatabase(commandCtx);
-  const filters = parseCommonFilters(args);
+  const filters = parseCommonFilters(flags);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
   const ftsQuery = buildFtsQuery(queryTokens);
   if (!ftsQuery) {
@@ -247,7 +253,7 @@ function fetchSemanticCandidates(
   }
   const topK = semanticCandidateCount(limit);
 
-  const filters = parseCommonFilters(commandCtx.args);
+  const filters = parseCommonFilters(commandCtx.flags);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
   const status =
     filters.status ?? (filters.includeDeprecated ? undefined : "active");
@@ -366,14 +372,14 @@ function fetchHybridResults(
 
 export function handleQueryCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const term = commandCtx.positionals[0];
     if (!term) {
       usageError("Usage: query <search_term>");
     }
-    const explainScore = explainScoreEnabled(args);
-    const semantic = hasFlag(args, "--semantic");
-    const hybrid = hasFlag(args, "--hybrid");
+    const explainScore = explainScoreEnabled(flags);
+    const semantic = hasFlag(flags, "--semantic");
+    const hybrid = hasFlag(flags, "--hybrid");
     if (semantic && hybrid) {
       usageError("Use either --semantic or --hybrid, not both.");
     }
@@ -384,7 +390,7 @@ export function handleQueryCommand(commandCtx: CommandContext) {
         : fetchQueryResults;
     const fetched = yield* fetchResults(commandCtx, term, {
       explainScore,
-      limit: parseResultLimit(args),
+      limit: parseResultLimit(flags),
     });
     const { queryTokens, filters } = fetched;
     const results = orderRowsByMatchStrength(
@@ -411,9 +417,9 @@ export function handleQueryCommand(commandCtx: CommandContext) {
 
 export function handleListCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
+    const { flags, outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const filters = parseCommonFilters(args);
+    const filters = parseCommonFilters(flags);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
@@ -424,7 +430,7 @@ export function handleListCommand(commandCtx: CommandContext) {
     );
     const normalized = rows
       .map((row) => normalizeSqliteRow(row))
-      .slice(0, parseResultLimit(args, 100));
+      .slice(0, parseResultLimit(flags, 100));
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
         const payload = {
@@ -448,8 +454,8 @@ export function handleListCommand(commandCtx: CommandContext) {
   });
 }
 
-export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
-  const files = parseSuggestFiles(args);
+export function buildSuggestSnapshot(flags: CommandFlags): SuggestSnapshot {
+  const files = parseSuggestFiles(flags);
   const normalizedPathTerms = extractPathTerms(files);
   const neighborhood = deriveFileNeighborhood(files);
   const suggestTerms = uniqueLowerPreserveOrder([
@@ -461,7 +467,7 @@ export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
     normalizedPathTerms,
     suggestTerms,
     neighborhood,
-    filters: parseCommonFilters(args),
+    filters: parseCommonFilters(flags),
     ftsQuery: buildFtsQuery(normalizedPathTerms),
   };
 }
@@ -568,11 +574,11 @@ function printSuggestResults(
 
 export function handleSuggestCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const explainScore = explainScoreEnabled(commandCtx.args);
-    const snapshot = buildSuggestSnapshot(commandCtx.args);
+    const explainScore = explainScoreEnabled(commandCtx.flags);
+    const snapshot = buildSuggestSnapshot(commandCtx.flags);
     const results = yield* collectSuggestResults(commandCtx, snapshot, {
       explainScore,
-      limit: parseResultLimit(commandCtx.args),
+      limit: parseResultLimit(commandCtx.flags),
     });
     yield* Effect.sync(() =>
       printSuggestResults(commandCtx, snapshot, results, { explainScore }),
@@ -580,9 +586,9 @@ export function handleSuggestCommand(commandCtx: CommandContext) {
   });
 }
 
-function ensureSweepFileArgs(args: string[]) {
-  const filesRaw = getFlagValue(args, "--files");
-  const filesJsonRaw = getFlagValue(args, "--files-json");
+function ensureSweepFileArgs(flags: CommandFlags) {
+  const filesRaw = getFlagValue(flags, "--files");
+  const filesJsonRaw = getFlagValue(flags, "--files-json");
   if (!filesRaw && !filesJsonRaw) {
     usageError(`Usage: ${SWEEP_USAGE}`);
   }
@@ -591,9 +597,9 @@ function ensureSweepFileArgs(args: string[]) {
   }
 }
 
-function parseSweepQueryArg(args: string[]): string | undefined {
-  const value = getFlagValue(args, "--query");
-  if (hasFlag(args, "--query") && value === undefined) {
+function parseSweepQueryArg(flags: CommandFlags): string | undefined {
+  const value = getFlagValue(flags, "--query");
+  if (hasFlag(flags, "--query") && value === undefined) {
     usageError(`Usage: ${SWEEP_USAGE}`);
   }
   return value;
@@ -610,7 +616,7 @@ function fetchListScoredResults(
   },
   MemoryDatabaseError
 > {
-  const filters = parseCommonFilters(commandCtx.args);
+  const filters = parseCommonFilters(commandCtx.flags);
   const clauses: string[] = [];
   const params: (string | number)[] = [];
   applySqlFilters(clauses, params, filters, {
@@ -704,12 +710,12 @@ function mergeSweepResults(
 
 export function handleSweepCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args, outputMode } = commandCtx;
-    ensureSweepFileArgs(args);
-    const queryTerm = parseSweepQueryArg(args);
-    const explainScore = explainScoreEnabled(args);
-    const limit = parseResultLimit(args);
-    const snapshot = buildSuggestSnapshot(args);
+    const { flags, outputMode } = commandCtx;
+    ensureSweepFileArgs(flags);
+    const queryTerm = parseSweepQueryArg(flags);
+    const explainScore = explainScoreEnabled(flags);
+    const limit = parseResultLimit(flags);
+    const snapshot = buildSuggestSnapshot(flags);
     const suggestResults = yield* collectSuggestResults(commandCtx, snapshot, {
       explainScore,
       limit,
@@ -720,7 +726,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
           results: [],
           // SAFETY: empty array literal; string[] cannot be violated.
           queryTokens: [] as string[],
-          filters: parseCommonFilters(args),
+          filters: parseCommonFilters(flags),
         };
     const listScoreTerms = uniqueLowerPreserveOrder([
       ...snapshot.suggestTerms,

@@ -10,7 +10,7 @@ import {
   loadDeployConfig,
   type DeployConfig,
 } from "../../../../iac/src/deploy-config";
-import { getFlagValue } from "../../cli-utils";
+import { type CommandFlags, getFlagValue } from "../../cli-utils";
 import {
   loadCurrentRemoteConfig,
   normalizeRemoteUrl,
@@ -226,7 +226,7 @@ export function remoteSetup(context: CommandContext) {
     const current = yield* loadCurrentRemote();
     const currentRemote = current.kind === "remote" ? current : undefined;
     const urlInput =
-      getFlagValue(context.args, "--url") ??
+      getFlagValue(context.flags, "--url") ??
       currentRemote?.url ??
       ask("Worker URL", undefined);
     const url = yield* Effect.try({
@@ -242,7 +242,7 @@ export function remoteSetup(context: CommandContext) {
     });
 
     const token =
-      getFlagValue(context.args, "--token") ??
+      getFlagValue(context.flags, "--token") ??
       (currentRemote?.token || undefined) ??
       (yield* Effect.promise(() => askMasked("Worker token")));
     if (!token) {
@@ -271,9 +271,9 @@ export function remoteSetup(context: CommandContext) {
   });
 }
 
-function docsFlagOverride(args: string[]): boolean | undefined {
-  const noDocs = args.includes("--no-docs");
-  const forceDocs = args.includes("--docs");
+function docsFlagOverride(flags: CommandFlags): boolean | undefined {
+  const noDocs = flags.has("--no-docs");
+  const forceDocs = flags.has("--docs");
   if (noDocs && forceDocs) {
     throw commandError("Pass only one of --docs or --no-docs.", {
       command: "remote provision",
@@ -292,41 +292,41 @@ function docsFlagOverride(args: string[]): boolean | undefined {
 // Field-wise flag/env/credential merge for provision naming.
 // oxlint-disable-next-line complexity -- precedence matrix per field
 function resolveProvisionConfig(
-  args: string[],
+  flags: CommandFlags,
   currentRemote:
     | { stackName?: string; databaseName?: string; apiName?: string }
     | undefined,
 ): DeployConfig {
-  const domainFlag = getFlagValue(args, "--domain");
+  const domainFlag = getFlagValue(flags, "--domain");
   const loaded = loadDeployConfig({
-    configPath: getFlagValue(args, "--config"),
+    configPath: getFlagValue(flags, "--config"),
     overrides: {
       domain: domainFlag,
-      docs: docsFlagOverride(args),
-      stackName: getFlagValue(args, "--stack-name"),
-      databaseName: getFlagValue(args, "--database-name"),
-      vectorIndexName: getFlagValue(args, "--vector-index-name"),
-      oauthKvName: getFlagValue(args, "--oauth-kv-name"),
+      docs: docsFlagOverride(flags),
+      stackName: getFlagValue(flags, "--stack-name"),
+      databaseName: getFlagValue(flags, "--database-name"),
+      vectorIndexName: getFlagValue(flags, "--vector-index-name"),
+      oauthKvName: getFlagValue(flags, "--oauth-kv-name"),
       workers: {
-        router: getFlagValue(args, "--router-name"),
-        api: getFlagValue(args, "--api-name"),
-        mcp: getFlagValue(args, "--mcp-name"),
-        docs: getFlagValue(args, "--docs-name"),
+        router: getFlagValue(flags, "--router-name"),
+        api: getFlagValue(flags, "--api-name"),
+        mcp: getFlagValue(flags, "--mcp-name"),
+        docs: getFlagValue(flags, "--docs-name"),
       },
     },
   });
   const stackName =
-    getFlagValue(args, "--stack-name") ??
+    getFlagValue(flags, "--stack-name") ??
     process.env["MACHINE_MEMORY_STACK_NAME"]?.trim() ??
     currentRemote?.stackName ??
     loaded.stackName;
   const databaseName =
-    getFlagValue(args, "--database-name") ??
+    getFlagValue(flags, "--database-name") ??
     process.env["MACHINE_MEMORY_DB_NAME"]?.trim() ??
     currentRemote?.databaseName ??
     loaded.databaseName;
   const apiName =
-    getFlagValue(args, "--api-name") ??
+    getFlagValue(flags, "--api-name") ??
     process.env["MACHINE_MEMORY_API_NAME"]?.trim() ??
     currentRemote?.apiName ??
     loaded.workers.api;
@@ -392,7 +392,7 @@ export function remoteProvision(context: CommandContext) {
     const current = yield* loadCurrentRemote();
     const currentRemote = current.kind === "remote" ? current : undefined;
     const resolved = yield* Effect.try({
-      try: () => resolveProvisionConfig(context.args, currentRemote),
+      try: () => resolveProvisionConfig(context.flags, currentRemote),
       catch: (cause) =>
         Schema.is(CommandError)(cause)
           ? cause

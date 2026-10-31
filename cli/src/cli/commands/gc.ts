@@ -1,15 +1,16 @@
 import { Effect } from "effect";
+
 import { printJson, usageError } from "../../cli-utils";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { normalizeSqliteRow } from "../shared";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import { normalizeSqliteRow } from "../shared";
 
 export function handleGcCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { args } = commandCtx;
+    const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
-    if (!args.includes("--dry-run")) {
+    if (!flags.has("--dry-run")) {
       usageError("Usage: gc --dry-run");
     }
     const rows = yield* database.all(

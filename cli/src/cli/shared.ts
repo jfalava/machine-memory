@@ -34,7 +34,12 @@ import {
 import { Effect, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
 
-import { getFlagValue, hasFlag, usageError } from "../cli-utils";
+import {
+  type CommandFlags,
+  getFlagValue,
+  hasFlag,
+  usageError,
+} from "../cli-utils";
 import {
   CERTAINTY_LEVELS,
   MEMORY_STATUSES,
@@ -96,10 +101,10 @@ export function isMemoryStatus(value: string): value is MemoryStatus {
 }
 
 export function requireMemoryType(
-  args: string[],
+  flags: CommandFlags,
   flag = "--type",
 ): MemoryType | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -112,10 +117,10 @@ export function requireMemoryType(
 }
 
 export function requireCertainty(
-  args: string[],
+  flags: CommandFlags,
   flag = "--certainty",
 ): Certainty | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -129,10 +134,10 @@ export function requireCertainty(
 }
 
 function requireStatus(
-  args: string[],
+  flags: CommandFlags,
   flag = "--status",
 ): MemoryStatus | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -145,11 +150,11 @@ function requireStatus(
 }
 
 export function parseIntegerFlag(
-  args: string[],
+  flags: CommandFlags,
   flag: string,
   options: { allowNullLiteral?: boolean } = {},
 ): number | null | undefined {
-  const raw = getFlagValue(args, flag);
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
@@ -164,10 +169,10 @@ export function parseIntegerFlag(
 }
 
 export function parseResultLimit(
-  args: string[],
+  flags: CommandFlags,
   fallback = SEARCH_LIMIT_DEFAULT,
 ): number {
-  const parsed = parseIntegerFlag(args, "--limit");
+  const parsed = parseIntegerFlag(flags, "--limit");
   if (parsed === undefined || parsed === null) {
     return fallback;
   }
@@ -177,8 +182,8 @@ export function parseResultLimit(
   return parsed;
 }
 
-export function parseRefsFlag(args: string[]): string[] | undefined {
-  const raw = getFlagValue(args, "--refs");
+export function parseRefsFlag(flags: CommandFlags): string[] | undefined {
+  const raw = getFlagValue(flags, "--refs");
   if (raw === undefined) {
     return undefined;
   }
@@ -243,10 +248,10 @@ export function mergeTagValues(
 }
 
 export function parseContentFromFileFlag(
-  args: string[],
+  flags: CommandFlags,
   fileSystem: FileSystem,
 ): Effect.Effect<string | undefined, CommandError> {
-  const path = getFlagValue(args, "--from-file");
+  const path = getFlagValue(flags, "--from-file");
   if (path === undefined) {
     return Effect.void.pipe(Effect.as(undefined));
   }
@@ -566,13 +571,13 @@ export function sortByScoreThenRecency(rows: JsonObject[]): JsonObject[] {
   return indexed.map((entry) => entry.row);
 }
 
-export function parseCommonFilters(args: string[]): CommonFilters {
+export function parseCommonFilters(flags: CommandFlags): CommonFilters {
   return {
-    tag: getFlagValue(args, "--tags"),
-    memoryType: requireMemoryType(args),
-    certainty: requireCertainty(args),
-    status: requireStatus(args),
-    includeDeprecated: hasFlag(args, "--include-deprecated"),
+    tag: getFlagValue(flags, "--tags"),
+    memoryType: requireMemoryType(flags),
+    certainty: requireCertainty(flags),
+    status: requireStatus(flags),
+    includeDeprecated: hasFlag(flags, "--include-deprecated"),
   };
 }
 
@@ -899,9 +904,9 @@ function parseFileListJson(raw: string): string[] {
   }
 }
 
-export function parseSuggestFiles(args: string[]): string[] {
-  const filesRaw = getFlagValue(args, "--files");
-  const filesJsonRaw = getFlagValue(args, "--files-json");
+export function parseSuggestFiles(flags: CommandFlags): string[] {
+  const filesRaw = getFlagValue(flags, "--files");
+  const filesJsonRaw = getFlagValue(flags, "--files-json");
   if (!filesRaw && !filesJsonRaw) {
     usageError(
       'Usage: suggest --files "src/auth/jwt.ts,src/middleware/session.ts" OR --files-json \'["src/auth/jwt.ts","src/middleware/session.ts"]\'',
@@ -1032,8 +1037,8 @@ export function findStatusCascadeCandidates(
     );
 }
 
-export function parseSinceDate(args: string[]): string | undefined {
-  const value = getFlagValue(args, "--since");
+export function parseSinceDate(flags: CommandFlags): string | undefined {
+  const value = getFlagValue(flags, "--since");
   if (value === undefined) {
     return undefined;
   }

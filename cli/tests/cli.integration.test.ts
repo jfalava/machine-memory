@@ -298,6 +298,23 @@ afterAll(async () => {
 });
 
 describe("CLI integration", () => {
+  it("reads a flag value that looks like a flag as a value, not a flag", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy uses bun",
+      "--context=--quiet",
+    );
+    expect(added.code).toBe(0);
+    // --quiet would print only { id }; the full row proves it stayed a value.
+    expect(added.json).toMatchObject({
+      content: "Deploy uses bun",
+      context: "--quiet",
+    });
+  });
+
   it("supports the add, query, update, get, and deprecate workflow", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(

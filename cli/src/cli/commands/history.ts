@@ -53,8 +53,8 @@ export function handleHistoryCommand(commandCtx: CommandContext) {
       commandCtx.positionals,
       "Usage: history <id> [--limit <n>] [--offset <n>]",
     );
-    const limit = parseResultLimit(commandCtx.args);
-    const offset = parseIntegerFlag(commandCtx.args, "--offset") ?? 0;
+    const limit = parseResultLimit(commandCtx.flags);
+    const offset = parseIntegerFlag(commandCtx.flags, "--offset") ?? 0;
     if (offset < 0) {
       usageError("--offset must be a non-negative integer");
     }
@@ -104,9 +104,9 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
       commandCtx.positionals,
       "Usage: restore <id> --revision <revision_id> --expected-update-count <n>",
     );
-    const revision = parseIntegerFlag(commandCtx.args, "--revision");
+    const revision = parseIntegerFlag(commandCtx.flags, "--revision");
     const expectedUpdateCount = parseIntegerFlag(
-      commandCtx.args,
+      commandCtx.flags,
       "--expected-update-count",
     );
     if (
