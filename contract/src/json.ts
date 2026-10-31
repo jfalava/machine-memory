@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 
 export type JsonValue = Schema.Json;
-export type JsonObject = Schema.JsonObject;
+// Not `Schema.JsonObject`: that name also binds a schema class instance, so
+// type-aware no-misused-spread flags every spread of it.
+export type JsonObject = { readonly [key: string]: JsonValue };
 
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);
 
