@@ -2,6 +2,7 @@ import {
   decodeRequest,
   encodeResponse,
   type JsonValue,
+  type MemoryRow,
   PRODUCT_OPERATIONS,
   productRoutePath,
   type ProductRoute,
@@ -11,7 +12,6 @@ import { InMemoryTransport } from "@modelcontextprotocol/server";
 import * as Schema from "effect/Schema";
 import { describe, expect, test } from "vitest";
 
-import { toProductRow } from "../../api/src/product-logic";
 import { type ApiFetcher, postProduct } from "../src/mcp/product-client";
 import { createMemoryServer } from "../src/mcp/tools";
 
@@ -72,7 +72,7 @@ const ROW = {
   certainty: "verified",
   evidence: ["observed_implementation"],
   validation_gaps: [],
-};
+} as const;
 
 const SCORED_ROW = {
   ...ROW,
@@ -91,7 +91,7 @@ const FULL_ROW = {
   expires_after_days: 7,
   created_at: "2026-09-01 10:00:00",
   updated_at: "2026-09-05 12:00:00",
-};
+} satisfies MemoryRow;
 
 const SIZE = {
   source: "bytes",
@@ -426,13 +426,7 @@ describe("mcp gateway to api product routes", () => {
     }
   });
 
-  test("memory_get carries all metadata from database row through the gateway", async () => {
-    const memory = toProductRow({
-      ...FULL_ROW,
-      refs: JSON.stringify(FULL_ROW.refs),
-      evidence: JSON.stringify(FULL_ROW.evidence),
-      validation_gaps: JSON.stringify(FULL_ROW.validation_gaps),
-    });
+  test("memory_get carries all metadata through the encoded API response", async () => {
     const client = await linkedClient({
       api: stubApi(
         {
@@ -440,7 +434,7 @@ describe("mcp gateway to api product routes", () => {
             status: 200,
             body: encodeResponse(PRODUCT_OPERATIONS.get.response, {
               ok: true,
-              result: memory,
+              result: FULL_ROW,
             }),
           },
         },

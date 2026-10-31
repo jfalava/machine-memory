@@ -1,14 +1,12 @@
-import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
-
-import { toProductRow, toRankedRow } from "../../api/src/product-logic";
 import {
   decodeResponse,
   encodeResponse,
   MemoryGetSuccessSchema,
   MemoryWriteSuccessSchema,
-  VectorizeSearchResultSchema,
-} from "../src/index";
+} from "@machine-memory/contract";
+import { describe, expect, it } from "vitest";
+
+import { toProductRow, toRankedRow } from "../src/product-logic";
 
 const stored = {
   id: 7,
@@ -88,36 +86,5 @@ describe("database to product wire boundary", () => {
       updated_at: stored.updated_at,
       fts_rank: -2,
     });
-  });
-});
-
-describe("Vectorize result contract", () => {
-  it("accepts absent metadata and preserves supplied JSON metadata", () => {
-    const result = {
-      count: 2,
-      matches: [
-        { id: "7", score: 0.8 },
-        {
-          id: "8",
-          score: 0.7,
-          metadata: { status: "active", custom: [1, true] },
-        },
-      ],
-    };
-    expect(
-      Schema.decodeUnknownSync(VectorizeSearchResultSchema)(result),
-    ).toEqual(result);
-  });
-  it.each([
-    { count: 1, matches: [{ id: "7", score: "0.8" }] },
-    { count: 1, matches: [{ id: "", score: 0.8 }] },
-    { count: -1, matches: [] },
-    { count: 1, matches: [{ id: "7", score: Infinity }] },
-    { count: 1, matches: [{ id: "7", score: 0.8, metadata: [] }] },
-    { arbitrary: "json" },
-  ])("rejects malformed results: %j", (body) => {
-    expect(() =>
-      Schema.decodeUnknownSync(VectorizeSearchResultSchema)(body),
-    ).toThrow();
   });
 });
