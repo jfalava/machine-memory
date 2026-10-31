@@ -185,6 +185,9 @@ test("warns and uses defaults when the env config path is missing", () => {
       const config = loadDeployConfig();
       expect(config.configPath).toBeUndefined();
       expect(config.stackName).toBe(DEFAULT_DEPLOY_CONFIG.stackName);
+      expect(config.workers).toEqual(DEFAULT_DEPLOY_CONFIG.workers);
+      expect(config.docs).toBe(true);
+      expect(config.domain).toBeUndefined();
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0]?.[0])).toContain(path);
     } finally {
