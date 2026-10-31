@@ -25,7 +25,7 @@ import {
 
 const SqlParamSchema = Schema.Union([
   Schema.String,
-  Schema.Number,
+  Schema.Finite,
   Schema.Null,
 ]);
 
@@ -160,9 +160,9 @@ export function normalizeMigrationRequest(
     }
     sourceIds.add(row.source_id);
     try {
-      Schema.decodeUnknownSync(
-        Schema.fromJsonString(Schema.Array(Schema.String)),
-      )(row.refs);
+      Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.String)))(
+        row.refs,
+      );
       if (
         row.expires_after_days !== null &&
         (row.memory_type !== "status" || row.expires_after_days <= 0)

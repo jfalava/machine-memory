@@ -70,7 +70,7 @@ export function toHistoryRow(value: JsonObject): MemoryHistoryEntry {
 export function toRankedRow(value: JsonObject): FtsRankedMemoryRow {
   const row = toProductRow(value);
   return {
-    ...Schema.decodeUnknownSync(MemorySummarySchema)(row),
+    ...Schema.decodeSync(MemorySummarySchema)(row),
     updated_at: row.updated_at ?? "",
     update_count: row.update_count,
     refs: row.refs,

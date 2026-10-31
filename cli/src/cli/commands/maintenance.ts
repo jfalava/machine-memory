@@ -227,7 +227,7 @@ const ImportMetadataSchema = Schema.Struct({
 
 function validateImportMetadata(entry: JsonObject): ImportSkip | undefined {
   try {
-    Schema.decodeUnknownSync(ImportMetadataSchema)(entry);
+    Schema.decodeSync(ImportMetadataSchema)(entry);
   } catch {
     return importSkip("invalid_metadata");
   }

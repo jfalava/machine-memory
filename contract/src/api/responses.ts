@@ -87,16 +87,16 @@ export function okResponseSchema<S extends Schema.Top>(result: S) {
 export const QuerySuccessSchema = okResponseSchema(Schema.Json);
 
 export const MigrationItemSchema = Schema.Struct({
-  source_id: Schema.Number,
-  target_id: Schema.Number,
+  source_id: Schema.Finite,
+  target_id: Schema.Finite,
   status: Schema.Literals(MIGRATION_ITEM_STATUSES),
 });
 export type MigrationItem = typeof MigrationItemSchema.Type;
 
 export const MigrationBatchResultSchema = Schema.Struct({
-  processed: Schema.Number,
-  inserted: Schema.Number,
-  duplicates: Schema.Number,
+  processed: Schema.Finite,
+  inserted: Schema.Finite,
+  duplicates: Schema.Finite,
   items: Schema.Array(MigrationItemSchema),
 });
 
@@ -105,7 +105,7 @@ export const MigrationSuccessSchema = okResponseSchema(
 );
 
 export const MigrationLinksResultSchema = Schema.Struct({
-  updated: Schema.Number,
+  updated: Schema.Finite,
 });
 
 export const MigrationLinksSuccessSchema = okResponseSchema(
@@ -115,7 +115,7 @@ export const MigrationLinksSuccessSchema = okResponseSchema(
 /** Vectorize matches requested without vector values. Metadata may be absent. */
 export const VectorizeMatchSchema = Schema.Struct({
   id: Schema.NonEmptyString,
-  score: Schema.Number.check(Schema.isFinite()),
+  score: Schema.Finite.check(Schema.isFinite()),
   namespace: Schema.optionalKey(Schema.String),
   metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 });

@@ -175,7 +175,7 @@ async function parseGithubTokenResponse(
 }
 
 const GitHubUserSchema = Schema.Struct({
-  id: Schema.Number,
+  id: Schema.Finite,
   login: Schema.String,
   name: Schema.NullOr(Schema.String),
   email: Schema.NullOr(Schema.String),

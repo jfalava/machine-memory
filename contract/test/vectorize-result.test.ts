@@ -16,9 +16,9 @@ describe("Vectorize result contract", () => {
         },
       ],
     };
-    expect(
-      Schema.decodeUnknownSync(VectorizeSearchResultSchema)(result),
-    ).toEqual(result);
+    expect(Schema.decodeSync(VectorizeSearchResultSchema)(result)).toEqual(
+      result,
+    );
   });
   it.each([
     { count: 1, matches: [{ id: "7", score: "0.8" }] },

@@ -65,9 +65,7 @@ export async function readDeviceActivation(
     .first<{ request: string }>();
   return row === null
     ? null
-    : Schema.decodeUnknownSync(Schema.fromJsonString(AuthRequestSchema))(
-        row.request,
-      );
+    : Schema.decodeSync(Schema.fromJsonString(AuthRequestSchema))(row.request);
 }
 
 /** The conditional update, not a preceding read, owns the single-use claim. */
