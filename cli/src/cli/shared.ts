@@ -1,8 +1,15 @@
-import { resolve, relative, sep, dirname as pathDirname } from "node:path";
+import { resolve, relative, sep } from "node:path";
 
 import {
   assessMatch,
+  buildFtsQuery,
   certaintyPoints,
+  extractTerms,
+  normalizeSuggestPath,
+  reciprocalRankScore,
+  RRF_K,
+  sqliteDateToMs,
+  type FileNeighborhood,
   exactMatchPoints,
   ftsRankPoints,
   MATCH_STRENGTHS,
@@ -327,68 +334,12 @@ export function parseStoredRefs(value: JsonValue | undefined): string[] {
   }
 }
 
-export function sqliteDateToMs(value: JsonValue | undefined): number | null {
-  const raw = jsonString(value);
-  if (raw === undefined || raw.trim() === "") {
-    return null;
-  }
-  const normalized = raw.includes("T") ? raw : `${raw.replace(" ", "T")}Z`;
-  const parsed = Date.parse(normalized);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-export function extractTerms(input: string): string[] {
-  const stopwords = new Set([
-    "the",
-    "and",
-    "with",
-    "from",
-    "that",
-    "this",
-    "into",
-    "your",
-    "have",
-    "for",
-    "are",
-    "use",
-    "uses",
-    "using",
-    "src",
-    "lib",
-    "app",
-    "test",
-    "tests",
-  ]);
-
-  const tokens = (input.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length >= 2 && !stopwords.has(token),
-  );
-
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const token of tokens) {
-    if (!seen.has(token)) {
-      seen.add(token);
-      unique.push(token);
-    }
-  }
-  return unique;
-}
-
-export function buildFtsQueryFromTerms(terms: string[]): string | undefined {
-  const usable = terms.filter((term) => term.length > 0).slice(0, 12);
-  if (usable.length === 0) {
-    return undefined;
-  }
-  return usable.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
-}
-
 export const SCORE_COMPONENT_WEIGHTS = SEARCH_SCORE_WEIGHTS;
 
-export const HYBRID_SCORE_WEIGHTS = {
-  fts: 0.55,
-  semantic: 0.45,
-  scale: 100,
+/** Reported as `score_weights` for `query --hybrid --explain-score`. */
+export const HYBRID_FUSION = {
+  method: "reciprocal_rank",
+  k: RRF_K,
 } as const;
 
 export type ScoreBreakdown = {
@@ -480,7 +431,7 @@ function scoreBreakdown(
     parseTags(stringValue(row.tags)),
     queryTokens,
   );
-  const recency = recencyPoints(sqliteDateToMs(row.updated_at));
+  const recency = recencyPoints(sqliteDateToMs(stringValue(row.updated_at)));
   const certainty = certaintyPoints(
     normalizeCertaintyValue(row.certainty, "speculative"),
   );
@@ -546,22 +497,27 @@ export function scoreRowsWithDetails(
   });
 }
 
-function normalizeHybridComponent(value: number, values: number[]): number {
-  const finiteValues = values.filter((candidate) => Number.isFinite(candidate));
-  if (finiteValues.length === 0 || !Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-  const max = Math.max(...finiteValues);
-  const min = Math.min(...finiteValues);
-  if (max <= 0) {
-    return 0;
-  }
-  if (max === min) {
-    return 1;
-  }
-  return Math.max(0, Math.min(1, (value - min) / (max - min)));
+function rowId(row: JsonObject): string {
+  return jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "";
 }
 
+type FusedRow = {
+  row: JsonObject;
+  ftsRank?: number;
+  semanticRank?: number;
+  score: number;
+};
+
+function rankBreakdown(rank: number | undefined): JsonObject {
+  return rank === undefined
+    ? { rank: null, contribution: 0 }
+    : { rank: rank + 1, contribution: reciprocalRankScore(rank) };
+}
+
+/**
+ * Reciprocal-rank fusion, as the API's product query does: each retriever adds
+ * 1 / (k + rank), so ranks are compared instead of unrelated score scales.
+ */
 export function combineHybridResults(
   ftsResults: JsonObject[],
   semanticResults: JsonObject[],
@@ -569,85 +525,57 @@ export function combineHybridResults(
   explainScore = false,
   matchQuery?: SearchMatchQuery,
 ): JsonObject[] {
-  const ftsById = new Map(
-    ftsResults.map(
-      (row) =>
-        [
-          jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "",
-          row,
-        ] as const,
-    ),
-  );
-  const semanticById = new Map(
-    semanticResults.map(
-      (row) =>
-        [
-          jsonString(row.id) ?? jsonNumber(row.id)?.toString() ?? "",
-          row,
-        ] as const,
-    ),
-  );
-  const ids = [...new Set([...ftsById.keys(), ...semanticById.keys()])];
-  const ftsValues = ids.map((id) => Number(ftsById.get(id)?.score ?? 0));
-  const semanticValues = ids.map((id) =>
-    Number(semanticById.get(id)?.semantic_score ?? 0),
-  );
-
-  const combined = ids.map((id) => {
-    const ftsRow = ftsById.get(id);
-    const semanticRow = semanticById.get(id);
-    const ftsScore = Number(ftsRow?.score ?? 0);
-    const semanticScore = Number(semanticRow?.semantic_score ?? 0);
-    const normalizedFts = normalizeHybridComponent(ftsScore, ftsValues);
-    const normalizedSemantic = normalizeHybridComponent(
-      semanticScore,
-      semanticValues,
-    );
-    const ftsContribution =
-      normalizedFts * HYBRID_SCORE_WEIGHTS.fts * HYBRID_SCORE_WEIGHTS.scale;
-    const semanticContribution =
-      normalizedSemantic *
-      HYBRID_SCORE_WEIGHTS.semantic *
-      HYBRID_SCORE_WEIGHTS.scale;
-    const hybridScore = Number(
-      (ftsContribution + semanticContribution).toFixed(3),
-    );
-    const row =
-      jsonObject({
-        ...(ftsRow ?? semanticRow),
-        score: hybridScore,
-        fts_score: Number(ftsScore.toFixed(3)),
-        semantic_score: Number(semanticScore.toFixed(6)),
-        hybrid_score: hybridScore,
-      }) ?? {};
-    delete row["score_breakdown"];
-    if (explainScore) {
-      Object.assign(row, {
-        score_breakdown: {
-          fts: {
-            raw: Number(ftsScore.toFixed(3)),
-            normalized: Number(normalizedFts.toFixed(6)),
-            weight: HYBRID_SCORE_WEIGHTS.fts,
-            contribution: Number(ftsContribution.toFixed(3)),
-          },
-          semantic: {
-            raw: Number(semanticScore.toFixed(6)),
-            normalized: Number(normalizedSemantic.toFixed(6)),
-            weight: HYBRID_SCORE_WEIGHTS.semantic,
-            contribution: Number(semanticContribution.toFixed(3)),
-          },
-          total: hybridScore,
-        },
-      });
-    }
-    return row;
-  });
-
-  const sorted = sortByScoreThenRecency(combined);
-  if (matchQuery === undefined) {
-    return sorted.slice(0, limit);
+  const byId = new Map<string, FusedRow>();
+  for (const [rank, row] of ftsResults.entries()) {
+    byId.set(rowId(row), {
+      row,
+      ftsRank: rank,
+      score: reciprocalRankScore(rank),
+    });
   }
-  return orderRowsByMatchStrength(annotateMatches(sorted, matchQuery)).slice(
+  for (const [rank, row] of semanticResults.entries()) {
+    const existing = byId.get(rowId(row));
+    byId.set(rowId(row), {
+      row: existing?.row ?? row,
+      ftsRank: existing?.ftsRank,
+      semanticRank: rank,
+      score: (existing?.score ?? 0) + reciprocalRankScore(rank),
+    });
+  }
+  const semanticById = new Map(
+    semanticResults.map((row) => [rowId(row), row] as const),
+  );
+  const combined = [...byId.entries()]
+    .sort(
+      ([leftId, left], [rightId, right]) =>
+        right.score - left.score || Number(leftId) - Number(rightId),
+    )
+    .map(([id, fused]) => {
+      const ftsScore =
+        fused.ftsRank === undefined ? 0 : Number(fused.row.score ?? 0);
+      const row: JsonObject = {
+        ...fused.row,
+        score: fused.score,
+        fts_score: Number(ftsScore.toFixed(3)),
+        semantic_score: Number(
+          Number(semanticById.get(id)?.semantic_score ?? 0).toFixed(6),
+        ),
+        hybrid_score: fused.score,
+      };
+      delete row["score_breakdown"];
+      if (explainScore) {
+        row.score_breakdown = {
+          fts: rankBreakdown(fused.ftsRank),
+          semantic: rankBreakdown(fused.semanticRank),
+          total: fused.score,
+        };
+      }
+      return row;
+    });
+  if (matchQuery === undefined) {
+    return combined.slice(0, limit);
+  }
+  return orderRowsByMatchStrength(annotateMatches(combined, matchQuery)).slice(
     0,
     limit,
   );
@@ -658,7 +586,7 @@ export function sortByScoreThenRecency(rows: JsonObject[]): JsonObject[] {
     index,
     row,
     score: Number(row.score ?? 0),
-    updatedAt: sqliteDateToMs(row.updated_at) ?? 0,
+    updatedAt: sqliteDateToMs(stringValue(row.updated_at)) ?? 0,
   }));
   indexed.sort((left, right) => {
     if (right.score !== left.score) {
@@ -764,7 +692,7 @@ export function findMemoryByMatch(
   query: string,
 ): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
   const terms = extractTerms(query);
-  const ftsQuery = buildFtsQueryFromTerms(terms);
+  const ftsQuery = buildFtsQuery(terms);
   if (!ftsQuery) {
     return Effect.succeed(null);
   }
@@ -791,7 +719,7 @@ export function detectPotentialConflicts(
   const terms = extractTerms(
     [payload.content, payload.tags ?? "", payload.context ?? ""].join(" "),
   );
-  const ftsQuery = buildFtsQueryFromTerms(terms);
+  const ftsQuery = buildFtsQuery(terms);
   if (!ftsQuery) {
     return Effect.succeed([]);
   }
@@ -843,7 +771,7 @@ export function findReviewCandidates(
   return Effect.forEach(durable, (premise) => {
     const query = premiseQuery(stringValue(premise.content));
     const terms = extractTerms(query.leadingText);
-    const ftsQuery = buildFtsQueryFromTerms(terms);
+    const ftsQuery = buildFtsQuery(terms);
     if (!ftsQuery) {
       return Effect.succeed<JsonObject[]>([]);
     }
@@ -971,32 +899,6 @@ export function collectDirectoriesEffect(
   );
 }
 
-export function extractPathTermsFromFiles(paths: string[]): string[] {
-  const terms: string[] = [];
-  for (const path of paths) {
-    const normalized = normalizeFilePathInput(path);
-    const segments = normalized.split("/").filter(Boolean);
-    for (const segment of segments) {
-      terms.push(segment);
-      for (const piece of segment.split(/[._-]+/)) {
-        if (piece) {
-          terms.push(piece);
-        }
-      }
-    }
-  }
-  return extractTerms(terms.join(" "));
-}
-
-export function normalizeFilePathInput(value: string): string {
-  const cleaned = value.trim().replaceAll("\\", "/");
-  if (!cleaned) {
-    return "";
-  }
-  const withoutDotPrefix = cleaned.replace(/^\.\/+/, "");
-  return withoutDotPrefix.replace(/\/{2,}/g, "/");
-}
-
 function uniquePreserveOrder(values: string[]): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
@@ -1013,7 +915,7 @@ function uniquePreserveOrder(values: string[]): string[] {
 function parseFileList(raw: string): string[] {
   return raw
     .split(",")
-    .map((item) => normalizeFilePathInput(item))
+    .map((item) => normalizeSuggestPath(item))
     .filter(Boolean);
 }
 
@@ -1023,7 +925,7 @@ function parseFileListJson(raw: string): string[] {
     if (parsed === undefined) {
       throw new Error("Expected JSON string array");
     }
-    return parsed.map((item) => normalizeFilePathInput(item)).filter(Boolean);
+    return parsed.map((item) => normalizeSuggestPath(item)).filter(Boolean);
   } catch {
     usageError(
       'Invalid --files-json value. Provide a JSON array of paths, e.g. --files-json \'["src/a.ts","src/b.ts"]\'.',
@@ -1065,53 +967,9 @@ export function parseIdSpec(raw: string): number[] {
   );
 }
 
-type SuggestNeighborhood = {
-  tagHints: string[];
-  pathHints: string[];
-  terms: string[];
-};
-
-function normalizedPathForMatching(path: string): string {
-  return normalizeFilePathInput(path);
-}
-
-export function deriveNeighborhoodFromFiles(
-  files: string[],
-): SuggestNeighborhood {
-  const ignoredSegments = new Set([
-    "src",
-    "lib",
-    "app",
-    "apps",
-    "test",
-    "tests",
-  ]);
-  const tagHints: string[] = [];
-  const pathHints: string[] = [];
-
-  for (const filePath of files) {
-    const normalized = normalizedPathForMatching(filePath);
-    const directory = pathDirname(normalized).replaceAll("\\", "/");
-    if (directory && directory !== ".") {
-      pathHints.push(`${directory}/`);
-      const segments = directory.split("/").filter(Boolean);
-      for (const segment of segments) {
-        if (!ignoredSegments.has(segment.toLowerCase())) {
-          tagHints.push(segment);
-        }
-      }
-    }
-  }
-
-  const uniqueTagHints = uniqueLowerPreserveOrder(tagHints);
-  const uniquePathHints = uniqueLowerPreserveOrder(pathHints);
-  const terms = extractTerms([...uniqueTagHints, ...uniquePathHints].join(" "));
-  return { tagHints: uniqueTagHints, pathHints: uniquePathHints, terms };
-}
-
 export function queryNeighborhoodMatches(
   database: MemoryDatabaseApi,
-  neighborhood: SuggestNeighborhood,
+  neighborhood: FileNeighborhood,
   filters: CommonFilters,
   limit = 30,
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {

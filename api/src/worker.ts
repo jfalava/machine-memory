@@ -45,6 +45,12 @@ import {
   QuerySuccessSchema,
   StoredMemoryRowSchema,
   UPSERT_MIN_SIMILARITY,
+  buildFtsQuery,
+  compareMemoryFact,
+  deriveFileNeighborhood,
+  extractPathTerms,
+  extractTerms,
+  reciprocalRankScore,
   validateEmbeddingText,
   VectorizeSearchRequestInputSchema,
   VectorizeSearchSuccessSchema,
@@ -85,15 +91,10 @@ import {
   type InsertInput,
 } from "./product-api";
 import {
-  buildFtsQuery,
   analyzeMemoryDoctor,
   assessRowMatch,
-  compareMemoryFact,
   contentHead,
-  deriveFileNeighborhood,
   embeddingTextForMemory,
-  extractPathTerms,
-  extractTerms,
   parseSuggestFilesParam,
   scoredResultRow,
   scoreMemoryRows,
@@ -1282,7 +1283,7 @@ export const createApiHandlers = ({
             byId.set(row.id, {
               ...row,
               ...(previous ? strongerMatch(previous, row) : row),
-              score: (previous?.score ?? 0) + 1 / (60 + rank + 1),
+              score: (previous?.score ?? 0) + reciprocalRankScore(rank),
             });
           }
         }

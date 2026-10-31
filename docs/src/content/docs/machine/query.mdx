@@ -19,9 +19,11 @@ returns active memories by default. The default mode uses the D1 full-text
 index.
 
 For remote memories, `--semantic` searches Vectorize using Workers AI
-embeddings. `--hybrid` combines normalized full-text relevance at 55% with
-normalized Vectorize similarity at 45%, producing a `hybrid_score` on a
-0–100 scale. Hybrid results also include `fts_score` and `semantic_score`.
+embeddings. `--hybrid` merges the full-text and semantic result lists with
+reciprocal-rank fusion (k = 60), the same method the MCP `memory_query` tool
+uses: each list adds `1 / (60 + rank)` to a memory's `hybrid_score`, so ranks
+are compared instead of unrelated score scales. Hybrid results also include
+`fts_score` and `semantic_score`.
 
 Full-text ranking is led by relevance: the FTS rank, the share of query terms
 the memory contains, literal identifier matches, and tag matches. Recency,

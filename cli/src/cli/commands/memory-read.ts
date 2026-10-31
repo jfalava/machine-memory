@@ -1,7 +1,12 @@
 import {
   SEARCH_LIMIT_MAX,
+  buildFtsQuery,
+  deriveFileNeighborhood,
+  extractPathTerms,
   extractQueryIdentifiers,
+  extractTerms,
   fileIdentifiers,
+  type FileNeighborhood,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
@@ -12,15 +17,11 @@ import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import {
-  HYBRID_SCORE_WEIGHTS,
+  HYBRID_FUSION,
   SCORE_COMPONENT_WEIGHTS,
   annotateMatches,
   applySqlFilters,
-  buildFtsQueryFromTerms,
   combineHybridResults,
-  deriveNeighborhoodFromFiles,
-  extractPathTermsFromFiles,
-  extractTerms,
   hasStrongMatchRow,
   mergeSuggestionResults,
   minimalResultSummary,
@@ -57,7 +58,7 @@ type SuggestSnapshot = {
   files: string[];
   normalizedPathTerms: string[];
   suggestTerms: string[];
-  neighborhood: ReturnType<typeof deriveNeighborhoodFromFiles>;
+  neighborhood: FileNeighborhood;
   filters: ReturnType<typeof parseCommonFilters>;
   ftsQuery: string | undefined;
 };
@@ -196,7 +197,7 @@ export function fetchQueryResults(
   const database = requireDatabase(commandCtx);
   const filters = parseCommonFilters(args);
   const queryTokens = extractTerms([term, filters.tag ?? ""].join(" "));
-  const ftsQuery = buildFtsQueryFromTerms(queryTokens);
+  const ftsQuery = buildFtsQuery(queryTokens);
   if (!ftsQuery) {
     return Effect.succeed({ results: [], queryTokens, filters });
   }
@@ -416,7 +417,7 @@ export function handleQueryCommand(commandCtx: CommandContext) {
         explainScore,
         semantic,
         scoreWeights: hybrid
-          ? HYBRID_SCORE_WEIGHTS
+          ? HYBRID_FUSION
           : semantic
             ? undefined
             : SCORE_COMPONENT_WEIGHTS,
@@ -467,8 +468,8 @@ export function handleListCommand(commandCtx: CommandContext) {
 
 export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
   const files = parseSuggestFiles(args);
-  const normalizedPathTerms = extractPathTermsFromFiles(files);
-  const neighborhood = deriveNeighborhoodFromFiles(files);
+  const normalizedPathTerms = extractPathTerms(files);
+  const neighborhood = deriveFileNeighborhood(files);
   const suggestTerms = uniqueLowerPreserveOrder([
     ...normalizedPathTerms,
     ...neighborhood.terms,
@@ -479,7 +480,7 @@ export function buildSuggestSnapshot(args: string[]): SuggestSnapshot {
     suggestTerms,
     neighborhood,
     filters: parseCommonFilters(args),
-    ftsQuery: buildFtsQueryFromTerms(normalizedPathTerms),
+    ftsQuery: buildFtsQuery(normalizedPathTerms),
   };
 }
 

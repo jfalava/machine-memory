@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   EvidenceSchema,
   ValidationGapsSchema,
+  sqliteDateToMs,
   type EvidenceKind,
 } from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
@@ -52,7 +53,6 @@ import {
   parseStoredRefs,
   parseTags,
   sqliteDateForComparison,
-  sqliteDateToMs,
   stringValue,
 } from "../shared";
 
@@ -373,14 +373,15 @@ function updateOldest(current: JsonObject | null, candidate: JsonObject) {
     return candidate;
   }
   const candidateAge =
-    sqliteDateToMs(candidate.created_at) ?? Number.POSITIVE_INFINITY;
+    sqliteDateToMs(stringValue(candidate.created_at)) ??
+    Number.POSITIVE_INFINITY;
   const currentAge =
-    sqliteDateToMs(current.created_at) ?? Number.POSITIVE_INFINITY;
+    sqliteDateToMs(stringValue(current.created_at)) ?? Number.POSITIVE_INFINITY;
   return candidateAge < currentAge ? candidate : current;
 }
 
 function updateStaleCount(accumulator: StatsAccumulator, memory: JsonObject) {
-  const updatedMs = sqliteDateToMs(memory.updated_at);
+  const updatedMs = sqliteDateToMs(stringValue(memory.updated_at));
   if (updatedMs === null) {
     return;
   }

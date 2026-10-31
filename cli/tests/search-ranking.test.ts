@@ -1,11 +1,13 @@
-import { extractQueryIdentifiers } from "@machine-memory/contract";
+import {
+  extractQueryIdentifiers,
+  extractTerms,
+} from "@machine-memory/contract";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { minimalResultSummary } from "@/cli/runtime/output";
 import {
   annotateMatches,
-  extractTerms,
   hasStrongMatchRow,
   scoreRowsWithDetails,
 } from "@/cli/shared";

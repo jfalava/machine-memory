@@ -1,8 +1,7 @@
-import { droppedDetails } from "@machine-memory/contract";
+import { compareMemoryFact, droppedDetails } from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { usageError } from "../../cli-utils";
-import { compareFact } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import { getMemoryById, stringValue } from "../shared";
@@ -27,13 +26,13 @@ export function handleDiffCommand(commandCtx: CommandContext) {
         printCommandOutput(commandCtx, { error: "Not found" });
         return;
       }
-      const result = compareFact(stringValue(memory.content), fact);
+      const result = compareMemoryFact(stringValue(memory.content), fact);
       printCommandOutput(commandCtx, {
         id,
         conflict: result.conflict,
         similarity: result.similarity,
-        added_terms: result.addedTerms,
-        removed_terms: result.removedTerms,
+        added_terms: result.added_terms,
+        removed_terms: result.removed_terms,
         dropped: droppedDetails(stringValue(memory.content), fact),
       });
     });

@@ -1,4 +1,8 @@
-import { gotchaOverlaps } from "@machine-memory/contract";
+import {
+  extractTerms,
+  gotchaOverlaps,
+  jaccardSimilarity,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { printJson } from "../../cli-utils";
@@ -13,7 +17,6 @@ import {
   type JsonValue,
 } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { jaccardSimilarity, setFromTerms } from "../features/memory/compare";
 import { parseStoredEvidence } from "../features/memory/evidence";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
@@ -234,7 +237,9 @@ function loadActiveMemories(
             evidenceCount: parseStoredEvidence(row.evidence).length,
             refsRaw: row.refs,
             expiresAfterDays: maybeInteger(row.expires_after_days),
-            termSet: setFromTerms([content, tagsRaw, memoContext].join(" ")),
+            termSet: new Set(
+              extractTerms([content, tagsRaw, memoContext].join(" ")),
+            ),
           };
         }),
       ),

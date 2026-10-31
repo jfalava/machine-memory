@@ -112,6 +112,20 @@ export {
   type MatchAssessment,
   type MatchScope,
 } from "./search";
+export {
+  RRF_K,
+  buildFtsQuery,
+  compareMemoryFact,
+  deriveFileNeighborhood,
+  extractPathTerms,
+  extractTerms,
+  factTerms,
+  jaccardSimilarity,
+  normalizeSuggestPath,
+  reciprocalRankScore,
+  sqliteDateToMs,
+  type FileNeighborhood,
+} from "./ranking";
 
 export {
   MigrationLinkSchema,

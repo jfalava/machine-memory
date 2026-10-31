@@ -1,6 +1,10 @@
 import {
   assessMatch,
   certaintyPoints,
+  extractTerms,
+  jaccardSimilarity,
+  normalizeSuggestPath,
+  sqliteDateToMs,
   composeEmbeddingText,
   exactMatchPoints,
   ftsRankPoints,
@@ -19,7 +23,6 @@ import {
   type MemoryRow,
   type MemoryHistoryEntry,
   type MemorySummary,
-  type FactCheckResult,
   type MemoryDoctorFinding,
   type MemoryDoctorResult,
   type ScoredMemoryRow,
@@ -106,111 +109,6 @@ export function strongerMatch(
     matchStrengthRank(left.match_strength)
     ? right
     : left;
-}
-
-const STOPWORDS = new Set([
-  "the",
-  "and",
-  "with",
-  "from",
-  "that",
-  "this",
-  "into",
-  "your",
-  "have",
-  "for",
-  "are",
-  "use",
-  "uses",
-  "using",
-]);
-
-export function extractTerms(input: string): string[] {
-  const tokens = (input.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length >= 2 && !STOPWORDS.has(token),
-  );
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const token of tokens) {
-    if (!seen.has(token)) {
-      seen.add(token);
-      unique.push(token);
-    }
-  }
-  return unique;
-}
-
-export function buildFtsQuery(terms: string[]): string | undefined {
-  const usable = terms.filter((term) => term.length > 0).slice(0, 12);
-  if (usable.length === 0) {
-    return undefined;
-  }
-  return usable.map((term) => `"${term.replaceAll('"', '""')}"`).join(" OR ");
-}
-
-function sqliteDateToMs(value: string): number | null {
-  if (value.trim() === "") {
-    return null;
-  }
-  const normalized = value.includes("T")
-    ? value
-    : `${value.replace(" ", "T")}Z`;
-  const parsed = Date.parse(normalized);
-  return Number.isNaN(parsed) ? null : parsed;
-}
-
-const FACT_STOPWORDS = new Set([
-  ...STOPWORDS,
-  "src",
-  "lib",
-  "app",
-  "test",
-  "tests",
-]);
-
-function factTerms(input: string): Set<string> {
-  const tokens = (input.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
-    (token) => token.length >= 2 && !FACT_STOPWORDS.has(token),
-  );
-  return new Set(tokens);
-}
-
-function jaccardSimilarity(left: Set<string>, right: Set<string>): number {
-  if (left.size === 0 && right.size === 0) {
-    return 1;
-  }
-  let intersection = 0;
-  for (const term of left) {
-    if (right.has(term)) {
-      intersection += 1;
-    }
-  }
-  const union = new Set([...left, ...right]).size;
-  return union === 0 ? 0 : Number((intersection / union).toFixed(3));
-}
-
-function hasNegation(text: string): boolean {
-  return /\b(not|no|never|without|cannot|can't)\b/.test(text.toLowerCase());
-}
-
-export function compareMemoryFact(
-  stored: string,
-  candidate: string,
-): FactCheckResult {
-  const storedTerms = factTerms(stored);
-  const candidateTerms = factTerms(candidate);
-  const similarity = jaccardSimilarity(storedTerms, candidateTerms);
-  return {
-    similarity,
-    conflict:
-      hasNegation(stored) !== hasNegation(candidate) || similarity < 0.35,
-    added_terms: [...candidateTerms]
-      .filter((term) => !storedTerms.has(term))
-      .slice(0, 12),
-    removed_terms: [...storedTerms]
-      .filter((term) => !candidateTerms.has(term))
-      .slice(0, 12),
-  };
 }
 
 function rawString(row: JsonObject, key: string, fallback = ""): string {
@@ -755,14 +653,6 @@ export function scoredResultRow(
   };
 }
 
-export function normalizeSuggestPath(value: string): string {
-  const cleaned = value.trim().replaceAll("\\", "/");
-  if (!cleaned) {
-    return "";
-  }
-  return cleaned.replace(/^\.\/+/, "").replace(/\/{2,}/g, "/");
-}
-
 export function parseSuggestFilesParam(files: string): string[] {
   const seen = new Set<string>();
   const parsed: string[] = [];
@@ -774,88 +664,6 @@ export function parseSuggestFilesParam(files: string): string[] {
     }
   }
   return parsed;
-}
-
-export function extractPathTerms(paths: string[]): string[] {
-  const terms: string[] = [];
-  for (const path of paths) {
-    for (const segment of normalizeSuggestPath(path)
-      .split("/")
-      .filter(Boolean)) {
-      terms.push(segment);
-      for (const piece of segment.split(/[._-]+/)) {
-        if (piece) {
-          terms.push(piece);
-        }
-      }
-    }
-  }
-  return extractTerms(terms.join(" "));
-}
-
-export type FileNeighborhood = {
-  readonly tagHints: string[];
-  readonly pathHints: string[];
-  readonly terms: string[];
-};
-
-const NEIGHBORHOOD_IGNORED_SEGMENTS = new Set([
-  "src",
-  "lib",
-  "app",
-  "apps",
-  "test",
-  "tests",
-]);
-
-function collectDirectoryTags(
-  directory: string,
-  seenTags: Set<string>,
-  tagHints: string[],
-): void {
-  for (const segment of directory.split("/").filter(Boolean)) {
-    const lower = segment.toLowerCase();
-    if (!NEIGHBORHOOD_IGNORED_SEGMENTS.has(lower) && !seenTags.has(lower)) {
-      seenTags.add(lower);
-      tagHints.push(segment);
-    }
-  }
-}
-
-function collectFileHints(
-  filePath: string,
-  seenTags: Set<string>,
-  seenPaths: Set<string>,
-  tagHints: string[],
-  pathHints: string[],
-): void {
-  const normalized = normalizeSuggestPath(filePath);
-  const slash = normalized.lastIndexOf("/");
-  const directory = slash < 0 ? "." : normalized.slice(0, slash);
-  if (!directory || directory === ".") {
-    return;
-  }
-  const lowerDir = directory.toLowerCase();
-  if (!seenPaths.has(lowerDir)) {
-    seenPaths.add(lowerDir);
-    pathHints.push(`${directory}/`);
-  }
-  collectDirectoryTags(directory, seenTags, tagHints);
-}
-
-export function deriveFileNeighborhood(files: string[]): FileNeighborhood {
-  const tagHints: string[] = [];
-  const pathHints: string[] = [];
-  const seenTags = new Set<string>();
-  const seenPaths = new Set<string>();
-  for (const filePath of files) {
-    collectFileHints(filePath, seenTags, seenPaths, tagHints, pathHints);
-  }
-  return {
-    tagHints,
-    pathHints,
-    terms: extractTerms([...tagHints, ...pathHints].join(" ")),
-  };
 }
 
 export function uniqueLowerPreserveOrder(values: string[]): string[] {

@@ -1,9 +1,10 @@
+import { compareMemoryFact } from "@machine-memory/contract";
 import { Effect } from "effect";
+
 import { usageError } from "../../cli-utils";
-import { getMemoryById, stringValue } from "../shared";
-import { compareFact } from "../features/memory/compare";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
+import { getMemoryById, stringValue } from "../shared";
 
 function parseFactArgs(args: string[], usage: string) {
   const idRaw = args[0];
@@ -33,7 +34,7 @@ export function handleVerifyCommand(commandCtx: CommandContext) {
         printCommandOutput(commandCtx, { error: "Not found" });
         return;
       }
-      const result = compareFact(stringValue(memory.content), fact);
+      const result = compareMemoryFact(stringValue(memory.content), fact);
       printCommandOutput(
         commandCtx,
         result.conflict

@@ -4,6 +4,7 @@ import {
   droppedDetails,
   hasDroppedDetails,
   type EvidenceKind,
+  compareMemoryFact,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
@@ -30,7 +31,6 @@ import {
 } from "../../json";
 import { suggestTagsForPath } from "../../path-tags";
 import { repositoryForCurrentDirectory } from "../../repository";
-import { compareFact } from "../features/memory/compare";
 import {
   assertEvidenceWrite,
   parseEvidenceFlag,
@@ -455,7 +455,7 @@ function isStrongUpsertMatch(
     stringValue(matched.context),
   ].join(" ");
   const incomingText = upsertComparableText(content, metadata);
-  const similarity = compareFact(matchedText, incomingText).similarity;
+  const similarity = compareMemoryFact(matchedText, incomingText).similarity;
   const score = Number(matched.score ?? 0);
   return similarity >= UPSERT_MIN_SIMILARITY && score >= minScore;
 }
@@ -482,7 +482,7 @@ function upsertMatchInfo(
     score: Number(matched.score ?? 0),
     similarity:
       Math.round(
-        compareFact(matchedText, upsertComparableText(content, metadata))
+        compareMemoryFact(matchedText, upsertComparableText(content, metadata))
           .similarity * 1000,
       ) / 1000,
     memory_type: stringValue(matched.memory_type, "convention"),
