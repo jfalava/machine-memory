@@ -13,7 +13,6 @@ export type ErrorBody = typeof ErrorBodySchema.Type;
 export const SimpleErrorBodySchema = Schema.Struct({
   error: Schema.String,
 });
-export type SimpleErrorBody = typeof SimpleErrorBodySchema.Type;
 
 export type DatabaseFailureGuidance = {
   readonly category:
@@ -81,19 +80,11 @@ export function okResponseSchema<S extends Schema.Top>(result: S) {
   });
 }
 
-/** POST /query run result */
-export const QueryRunResultSchema = Schema.Struct({
-  changes: Schema.Number,
-  lastInsertRowid: Schema.Number,
-});
-export type QueryRunResult = typeof QueryRunResultSchema.Type;
-
 /**
  * POST /query success envelope. `result` is operation-dependent JSON
  * (row, row array, or run metadata). Keep it open so the SQL gateway stays flexible.
  */
 export const QuerySuccessSchema = okResponseSchema(Schema.Json);
-export type QuerySuccess = typeof QuerySuccessSchema.Type;
 
 export const MigrationItemSchema = Schema.Struct({
   source_id: Schema.Number,
@@ -108,22 +99,18 @@ export const MigrationBatchResultSchema = Schema.Struct({
   duplicates: Schema.Number,
   items: Schema.Array(MigrationItemSchema),
 });
-export type MigrationBatchResult = typeof MigrationBatchResultSchema.Type;
 
 export const MigrationSuccessSchema = okResponseSchema(
   MigrationBatchResultSchema,
 );
-export type MigrationSuccess = typeof MigrationSuccessSchema.Type;
 
 export const MigrationLinksResultSchema = Schema.Struct({
   updated: Schema.Number,
 });
-export type MigrationLinksResult = typeof MigrationLinksResultSchema.Type;
 
 export const MigrationLinksSuccessSchema = okResponseSchema(
   MigrationLinksResultSchema,
 );
-export type MigrationLinksSuccess = typeof MigrationLinksSuccessSchema.Type;
 
 /** Vectorize matches requested without vector values. Metadata may be absent. */
 export const VectorizeMatchSchema = Schema.Struct({
@@ -132,20 +119,11 @@ export const VectorizeMatchSchema = Schema.Struct({
   namespace: Schema.optionalKey(Schema.String),
   metadata: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 });
-export type VectorizeMatch = typeof VectorizeMatchSchema.Type;
 
 export const VectorizeSearchResultSchema = Schema.Struct({
   count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   matches: Schema.Array(VectorizeMatchSchema),
 });
-export type VectorizeSearchResult = typeof VectorizeSearchResultSchema.Type;
 export const VectorizeSearchSuccessSchema = okResponseSchema(
   VectorizeSearchResultSchema,
 );
-export type VectorizeSearchSuccess = typeof VectorizeSearchSuccessSchema.Type;
-
-export const ApiSuccessSchema = okResponseSchema(Schema.Json);
-export type ApiSuccess = typeof ApiSuccessSchema.Type;
-
-export const ApiFailureSchema = ErrorBodySchema;
-export type ApiFailure = typeof ApiFailureSchema.Type;

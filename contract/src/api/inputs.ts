@@ -36,7 +36,6 @@ export const QueryRequestSchema = Schema.Struct({
   params: Schema.Array(SqlParamSchema),
   repository: RepositorySchema,
 });
-export type QueryRequest = typeof QueryRequestSchema.Type;
 
 const PositiveIntSchema = Schema.Int.check(Schema.isGreaterThan(0));
 const NonNegativeIntSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -194,7 +193,6 @@ export const MigrationLinkSchema = Schema.Struct({
   target_id: PositiveIntSchema,
   superseded_by_target_id: PositiveIntSchema,
 });
-export type MigrationLink = typeof MigrationLinkSchema.Type;
 
 /** POST /migrate/links */
 export const MigrationLinksRequestSchema = Schema.Struct({
@@ -203,7 +201,6 @@ export const MigrationLinksRequestSchema = Schema.Struct({
     Schema.isMaxLength(MAX_MIGRATION_LINKS),
   ),
 });
-export type MigrationLinksRequest = typeof MigrationLinksRequestSchema.Type;
 
 /**
  * POST /vectorize/search

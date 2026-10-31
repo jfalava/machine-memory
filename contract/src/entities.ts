@@ -40,11 +40,6 @@ export function normalizeSearchLimit(value: number | undefined): number {
   return value ?? SEARCH_LIMIT_DEFAULT;
 }
 
-export const OptionalMemoryTypeSchema = Schema.optionalKey(MemoryTypeSchema);
-export const OptionalCertaintySchema = Schema.optionalKey(CertaintySchema);
-export const OptionalMemoryStatusSchema =
-  Schema.optionalKey(MemoryStatusSchema);
-
 export const OptionalTagsFilterSchema = Schema.optionalKey(Schema.String);
 
 /** Memory fields returned in search summaries. */
