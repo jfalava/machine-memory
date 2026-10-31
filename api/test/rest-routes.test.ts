@@ -15,7 +15,7 @@ import {
   classifyRestFailure,
   handleRestRequest,
   type RestHandlers,
-} from "../../api/src/rest-handlers";
+} from "../src/rest-handlers";
 
 class TestFailure extends Schema.TaggedError<TestFailure>()("TestFailure", {
   message: Schema.String,

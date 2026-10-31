@@ -19,15 +19,20 @@ export type VectorFilter = {
   certainty?: string;
 };
 
+function isFilterValue(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+/** Vectorize metadata filter; blank values mean no filter. */
 export function vectorFilter(filters: ProductFilters): VectorFilter {
   const filter: VectorFilter = {};
-  if (filters.status !== undefined) {
+  if (isFilterValue(filters.status)) {
     filter.status = filters.status;
   }
-  if (filters.memory_type !== undefined) {
+  if (isFilterValue(filters.memory_type)) {
     filter.memory_type = filters.memory_type;
   }
-  if (filters.certainty !== undefined) {
+  if (isFilterValue(filters.certainty)) {
     filter.certainty = filters.certainty;
   }
   return filter;

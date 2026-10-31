@@ -9,8 +9,8 @@ import {
   listSelect,
   neighborhoodSelect,
   repositoryStatsSelect,
-} from "../../api/src/product-api";
-import { summarizeMemoryStats } from "../../api/src/product-logic";
+} from "../src/product-api";
+import { summarizeMemoryStats } from "../src/product-logic";
 
 const BASE_ROW = {
   repository: "o/r",
