@@ -1,5 +1,6 @@
 import {
   buildFtsQuery,
+  canonicalTags,
   compareMemoryFact,
   decodeRequest,
   droppedDetails,
@@ -17,6 +18,7 @@ import {
   StoredMemoryRowSchema,
   UPSERT_MIN_SIMILARITY,
   type JsonObject,
+  type MatchedUpdateTarget,
   type MemoryAddArgs,
   type MemoryDeprecateResult,
   type MemoryRow,
@@ -55,7 +57,13 @@ import {
   toProductRow,
 } from "./product-logic";
 
-type MatchedUpdateTarget = { query: string; id: number; score: number };
+/** Stores tags in the form the doctor expects: trimmed, lowercased, deduplicated. */
+const withCanonicalTags = <T extends { readonly tags?: string | undefined }>(
+  input: T,
+): T =>
+  input.tags === undefined
+    ? input
+    : { ...input, tags: canonicalTags(input.tags) };
 
 const findBestProductMatch = (
   ctx: ApiContext,
@@ -227,6 +235,15 @@ const createProduct = (
   upsertMatch: UpsertMatchInfo | undefined,
 ) =>
   Effect.gen(function* () {
+    // Every create path checks this: plain adds, unmatched upserts and forced weak matches.
+    if (
+      args.expires_after_days !== undefined &&
+      args.memory_type !== "status"
+    ) {
+      return yield* badRequest(
+        "expires_after_days is only valid for status memories.",
+      );
+    }
     const evidenceError = evidenceWriteError(args);
     if (evidenceError !== undefined) {
       return yield* badRequest(evidenceError);
@@ -541,17 +558,9 @@ export const productWriteHandlers = (
   ProductHandlers,
   "add" | "update" | "restore" | "delete" | "delete-many" | "deprecate"
 > => ({
-  add: (input) => {
+  add: (request) => {
+    const input = withCanonicalTags(request);
     const args = normalizeMemoryAddArgs(input);
-    if (
-      args.expires_after_days !== undefined &&
-      args.memory_type !== "status" &&
-      args.upsert_match === undefined
-    ) {
-      return badRequest(
-        "expires_after_days is only valid for status memories.",
-      );
-    }
     const upsertQuery = args.upsert_match?.trim() || undefined;
     if (upsertQuery === undefined) {
       return createProduct(ctx, args, undefined);
@@ -559,8 +568,9 @@ export const productWriteHandlers = (
     return upsertProductAdd(ctx, input, args, upsertQuery);
   },
 
-  update: (input) =>
+  update: (request) =>
     Effect.gen(function* () {
+      const input = withCanonicalTags(request);
       const matchQuery = input.match?.trim() || undefined;
       if (input.id !== undefined && matchQuery !== undefined) {
         return yield* badRequest(

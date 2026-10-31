@@ -10,7 +10,7 @@ import type {
   MemoryDoctorFinding,
   MemoryDoctorResult,
 } from "./product/results";
-import { extractTerms, jaccardSimilarity } from "./ranking";
+import { factTerms, jaccardSimilarity } from "./ranking";
 import { gotchaOverlaps } from "./reconcile";
 
 /**
@@ -89,6 +89,11 @@ export function normalizeTags(value: string): string[] {
   ];
 }
 
+/** The stored form of a tag list; writes use it so the doctor's `invalid_tags` stays quiet. */
+export function canonicalTags(value: string): string {
+  return normalizeTags(value).join(",");
+}
+
 function finding(
   kind: string,
   ids: number[],
@@ -122,7 +127,7 @@ function doctorRows(rows: readonly JsonObject[]): DoctorRow[] {
         evidence: row.evidence,
         expiresAfterDays: integerOrNull(row.expires_after_days),
         refs: row.refs,
-        terms: new Set(extractTerms(`${content} ${tags} ${context}`)),
+        terms: factTerms(`${content} ${tags} ${context}`),
       },
     ];
   });

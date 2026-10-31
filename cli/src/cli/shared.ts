@@ -3,6 +3,7 @@ import { resolve, relative, sep } from "node:path";
 import {
   assessMatch,
   buildFtsQuery,
+  canonicalTags,
   CLI_LIMIT_MAX,
   certaintyPoints,
   extractTerms,
@@ -240,11 +241,7 @@ export function mergeTagValues(
   explicitTags: string | undefined,
   mappedTags: string[],
 ) {
-  const merged = uniqueLowerPreserveOrder([
-    ...parseTags(explicitTags ?? ""),
-    ...mappedTags,
-  ]);
-  return merged.join(",");
+  return canonicalTags([explicitTags ?? "", ...mappedTags].join(","));
 }
 
 export function parseContentFromFileFlag(
