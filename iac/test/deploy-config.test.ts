@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,11 +43,13 @@ function withCleanEnv(run: () => void): void {
   }
 }
 
-test("defaults without file or env", () => {
+test("defaults without file values or env", () => {
   withCleanEnv(() => {
-    const config = loadDeployConfig({
-      configPath: join(tmpdir(), "missing-mm-deploy.json"),
-    });
+    const dir = mkdtempSync(join(tmpdir(), "mm-deploy-"));
+    const path = join(dir, "machine-memory.deploy.json");
+    writeFileSync(path, JSON.stringify({ workers: { api: "a1" } }));
+    const config = loadDeployConfig({ configPath: path });
+    expect(config.workers.api).toBe("a1");
     expect(config.workers.router).toBe(DEFAULT_DEPLOY_CONFIG.workers.router);
     expect(config.docs).toBe(true);
     expect(config.domain).toBeUndefined();
@@ -162,5 +164,31 @@ test("rejects non-object config file", () => {
     const path = join(dir, "bad.json");
     writeFileSync(path, "[1,2,3]");
     expect(() => loadDeployConfig({ configPath: path })).toThrow(/JSON object/);
+  });
+});
+
+test("rejects a missing explicit config path", () => {
+  withCleanEnv(() => {
+    const path = join(tmpdir(), "missing-mm-deploy.json");
+    expect(() => loadDeployConfig({ configPath: path })).toThrow(
+      /Deploy config not found/,
+    );
+  });
+});
+
+test("warns and uses defaults when the env config path is missing", () => {
+  withCleanEnv(() => {
+    const path = join(tmpdir(), "missing-mm-deploy-env.json");
+    Bun.env.MACHINE_MEMORY_DEPLOY_CONFIG = path;
+    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const config = loadDeployConfig();
+      expect(config.configPath).toBeUndefined();
+      expect(config.stackName).toBe(DEFAULT_DEPLOY_CONFIG.stackName);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toContain(path);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
