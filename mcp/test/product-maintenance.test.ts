@@ -1,4 +1,7 @@
-import { deriveFileNeighborhood } from "@machine-memory/contract";
+import {
+  analyzeMemoryDoctor,
+  deriveFileNeighborhood,
+} from "@machine-memory/contract";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -7,10 +10,7 @@ import {
   neighborhoodSelect,
   repositoryStatsSelect,
 } from "../../api/src/product-api";
-import {
-  analyzeMemoryDoctor,
-  summarizeMemoryStats,
-} from "../../api/src/product-logic";
+import { summarizeMemoryStats } from "../../api/src/product-logic";
 
 const BASE_ROW = {
   repository: "o/r",

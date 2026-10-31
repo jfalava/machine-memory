@@ -45,6 +45,7 @@ import {
   QuerySuccessSchema,
   StoredMemoryRowSchema,
   UPSERT_MIN_SIMILARITY,
+  analyzeMemoryDoctor,
   buildFtsQuery,
   compareMemoryFact,
   deriveFileNeighborhood,
@@ -91,7 +92,6 @@ import {
   type InsertInput,
 } from "./product-api";
 import {
-  analyzeMemoryDoctor,
   assessRowMatch,
   contentHead,
   embeddingTextForMemory,

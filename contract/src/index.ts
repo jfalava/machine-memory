@@ -126,6 +126,11 @@ export {
   sqliteDateToMs,
   type FileNeighborhood,
 } from "./ranking";
+export {
+  DEFAULT_STATUS_EXPIRY_DAYS,
+  analyzeMemoryDoctor,
+  normalizeTags,
+} from "./doctor";
 
 export {
   MigrationLinkSchema,
