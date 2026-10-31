@@ -34,11 +34,11 @@ certainty, and update count only break ties.
 Scores rank results within one response; they do not say whether anything
 matched well. Every result therefore carries an absolute `match_strength`:
 
-| Value    | Meaning                                                                                                                                                                                                |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Value    | Meaning                                                                                                                                                                                                                                                   |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `strong` | Every identifier in the query (path, flag, `snake_case`, `kebab-case`, `camelCase`, dotted or `area:tag` token) appears literally, or one does with strong term coverage; 60% or more of the query terms appear; or semantic similarity is at least 0.75. |
-| `weak`   | Some identifiers appear, 30% or more of the terms appear, or semantic similarity is at least 0.68.                                                                                                     |
-| `none`   | Anything else.                                                                                                                                                                                         |
+| `weak`   | Some identifiers appear, 30% or more of the terms appear, or semantic similarity is at least 0.68.                                                                                                                                                        |
+| `none`   | Anything else.                                                                                                                                                                                                                                            |
 
 Results are ordered strong, then weak, then none, keeping score order inside
 each tier. `exact_matches` lists the identifiers found and `term_coverage` the

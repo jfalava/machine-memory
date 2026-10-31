@@ -1,5 +1,6 @@
 import { Tokenizer } from "@huggingface/tokenizers";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
 import {
   analyzeBgeEmbeddingWith,
   analyzeEmbeddingByBytes,
@@ -14,6 +15,7 @@ import {
   validateBgeEmbeddingText,
   type EmbeddingTextPart,
 } from "@/effect/bge-tokenizer";
+
 import { tokenizerConfig, tokenizerJson } from "./fixtures/tokenizer";
 
 afterEach(() => {

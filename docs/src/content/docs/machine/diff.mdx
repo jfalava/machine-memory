@@ -22,7 +22,13 @@ keep fewer than half of their terms. An update replaces the whole content, so
 carry each one over or confirm it is obsolete:
 
 ```json
-{"id": 42, "conflict": false, "similarity": 0.4,
- "dropped": {"identifiers": ["src/ui/Keycap.tsx"],
-             "sentences": ["Keycap styling lives in src/ui/Keycap.tsx."]}}
+{
+  "id": 42,
+  "conflict": false,
+  "similarity": 0.4,
+  "dropped": {
+    "identifiers": ["src/ui/Keycap.tsx"],
+    "sentences": ["Keycap styling lives in src/ui/Keycap.tsx."]
+  }
+}
 ```
