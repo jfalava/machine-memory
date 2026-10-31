@@ -2,6 +2,8 @@ name: CLI - Release
 
 on:
   push:
+    branches:
+      - master
     tags:
       - "v*"
   pull_request:
