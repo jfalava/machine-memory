@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "oxlint --type-aware --fix && bun run typecheck",
+    "check": "oxlint --type-aware && vitest run && bun run typecheck",
     "format": "oxfmt",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
@@ -14,7 +14,6 @@
     "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
-    "@effect/sql-d1": "catalog:effect",
     "@machine-memory/contract": "workspace:*",
     "alchemy": "catalog:iac",
     "effect": "catalog:effect"

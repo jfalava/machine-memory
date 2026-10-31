@@ -8,10 +8,9 @@
         "@effect/tsgo": "0.63.0",
         "@oxlint/plugins": "1.90.0",
         "oxfmt": "catalog:maintenance",
-        "oxlint": "catalog:build",
+        "oxlint": "catalog:maintenance",
         "tsrs": "catalog:build",
         "typescript": "catalog:build",
-        "vite-tsconfig-paths": "6.1.1",
       },
     },
     "api": {
@@ -21,7 +20,6 @@
         "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
-        "@effect/sql-d1": "catalog:effect",
         "@machine-memory/contract": "workspace:*",
         "alchemy": "catalog:iac",
         "effect": "catalog:effect",
@@ -56,6 +54,7 @@
         "oxlint": "catalog:maintenance",
         "oxlint-tsgolint": "catalog:build",
         "typescript": "catalog:build",
+        "vite-tsconfig-paths": "6.1.1",
         "vitest": "catalog:maintenance",
       },
     },
@@ -98,7 +97,7 @@
         "eslint": "10.13.0",
         "eslint-plugin-astro": "3.2.1",
         "oxfmt": "catalog:maintenance",
-        "oxlint": "catalog:build",
+        "oxlint": "catalog:maintenance",
         "oxlint-tsgolint": "catalog:build",
         "pagefind": "1.5.2",
         "prettier": "3.9.10",
@@ -121,7 +120,6 @@
         "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
-        "@effect/sql-d1": "catalog:effect",
         "@machine-memory/contract": "workspace:*",
         "alchemy": "catalog:iac",
         "effect": "catalog:effect",
@@ -142,7 +140,6 @@
         "@cloudflare/workers-types": "catalog:types",
         "@effect/platform-bun": "catalog:effect",
         "@effect/platform-node": "catalog:effect",
-        "@effect/sql-d1": "catalog:effect",
         "@machine-memory/contract": "workspace:*",
         "@modelcontextprotocol/server": "2.4.0",
         "agents": "0.32.0",
@@ -164,7 +161,7 @@
     "router": {
       "name": "@machine-memory/router",
       "dependencies": {
-        "@cloudflare/workers-types": "5.20261029.1",
+        "@cloudflare/workers-types": "catalog:types",
         "hono": "4.13.14",
       },
       "devDependencies": {
@@ -182,7 +179,6 @@
   },
   "catalogs": {
     "build": {
-      "oxlint": "1.90.0",
       "oxlint-tsgolint": "7.0.2005",
       "tsrs": "0.20.1-ts7.1.0-beta",
       "typescript": "7.0.2",
@@ -191,7 +187,6 @@
     "effect": {
       "@effect/platform-bun": "4.0.5",
       "@effect/platform-node": "4.0.5",
-      "@effect/sql-d1": "4.0.5",
       "effect": "4.0.5",
     },
     "iac": {
@@ -2042,8 +2037,6 @@
 
     "@effect/platform-node-shared/ws": ["ws@8.22.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="],
 
-    "@effect/sql-d1/@cloudflare/workers-types": ["@cloudflare/workers-types@5.20261029.1", "", {}, "sha512-HwLwogkO/PnT4oXC8Y6wMQpgYbT3TEbWHytHV56F2tz9eLJBcgf4/VMjk5FYriAYHX6JOutS+tU6miuopKfCKw=="],
-
     "@eslint-community/eslint-utils/eslint-visitor-keys": ["eslint-visitor-keys@3.4.3", "", {}, "sha512-wpc+LXeiyiisxPlEkUzU6svyS1frIO3Mgxj1fdy7Pm8Ygzguax2N3Fa/D/ag1WqbOprdI+uY6wMUl8/a2G+iag=="],
 
     "@img/sharp-wasm32/@emnapi/runtime": ["@emnapi/runtime@1.11.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-Xz4Tpyki7XyrpbUK1jR1AhdAdaXyhhY4lZ3neLodmhpuWfy2PAQN5B46sAiU4liOXGLkHypn/qU+jvfWSCYYLA=="],
@@ -2059,8 +2052,6 @@
     "@machine-memory/docs/@typescript-eslint/parser": ["@typescript-eslint/parser@8.72.1", "", { "dependencies": { "@typescript-eslint/scope-manager": "8.72.1", "@typescript-eslint/types": "8.72.1", "@typescript-eslint/typescript-estree": "8.72.1", "@typescript-eslint/visitor-keys": "8.72.1", "debug": "^4.4.3" }, "peerDependencies": { "eslint": "^8.57.0 || ^9.0.0 || ^10.0.0", "typescript": ">=4.8.4 <6.1.0" } }, "sha512-ZGwZP4OCfyA0AQTpEAMWz+rtX01DRhQWW5hB0ucKDEIX5U7jdmPSaMx94rQfaPAQzIYz2BimOgKOJtjfpRFQ9g=="],
 
     "@machine-memory/docs/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
-
-    "@machine-memory/router/@cloudflare/workers-types": ["@cloudflare/workers-types@5.20261029.1", "", {}, "sha512-HwLwogkO/PnT4oXC8Y6wMQpgYbT3TEbWHytHV56F2tz9eLJBcgf4/VMjk5FYriAYHX6JOutS+tU6miuopKfCKw=="],
 
     "@octokit/plugin-paginate-rest/@octokit/types": ["@octokit/types@16.0.0", "", { "dependencies": { "@octokit/openapi-types": "^27.0.0" } }, "sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg=="],
 

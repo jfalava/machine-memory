@@ -1,13 +1,6 @@
 {
   "extends": "../tsconfig.effect.json",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
-    "target": "ESNext",
-    "module": "Preserve",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "skipLibCheck": true,
-    "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "types": ["bun-types"]
   },

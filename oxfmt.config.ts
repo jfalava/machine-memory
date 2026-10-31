@@ -1,7 +1,6 @@
 import { defineConfig, type OxfmtConfig } from "oxfmt";
 
-// Shared formatting options; workspace configs re-export these with their own
-// ignorePatterns and package.json sorting.
+// Shared formatting options for the root, docs, and workspace configs.
 export const fmtBase: OxfmtConfig = {
   printWidth: 80,
   tabWidth: 2,
@@ -16,16 +15,24 @@ export const fmtBase: OxfmtConfig = {
   sortTailwindcss: true,
 };
 
+// Workspace packages also sort package.json scripts.
+export const workspaceFmt: OxfmtConfig = {
+  ...fmtBase,
+  sortPackageJson: { sortScripts: true },
+};
+
 // Repo root only formats top-level files; each workspace formats itself.
 export default defineConfig({
   ...fmtBase,
   ignorePatterns: [
-    "./cli/**",
-    "./docs/**",
-    "./node_modules/**",
-    "./api/**",
-    "./mcp/**",
-    "./router/**",
-    "./iac/**",
+    "cli/**",
+    "contract/**",
+    "tools/**",
+    "docs/**",
+    "node_modules/**",
+    "api/**",
+    "mcp/**",
+    "router/**",
+    "iac/**",
   ],
 });

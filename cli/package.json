@@ -19,7 +19,6 @@
     "format": "oxfmt",
     "lint": "oxlint --type-aware",
     "test": "vitest run",
-    "test:unit": "vitest run",
     "test:watch": "vitest",
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
@@ -37,6 +36,7 @@
     "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
     "typescript": "catalog:build",
+    "vite-tsconfig-paths": "6.1.1",
     "vitest": "catalog:maintenance"
   }
 }

@@ -185,4 +185,12 @@ const base = defineConfig({
 const { options: _options, ...workspaceBase } = base;
 export { workspaceBase };
 
+// Default config for the one-level-deep TypeScript workspaces. Object spread
+// instead of oxlint `extends`, which drops env/globals/overrides.
+export const workspaceConfig = defineConfig({
+  ...workspaceBase,
+  jsPlugins: antiSlopJsPlugins(".."),
+  ignorePatterns: [...agentIgnores, "*.d.ts", "**/*.d.ts"],
+});
+
 export default base;

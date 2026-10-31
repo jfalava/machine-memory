@@ -1,6 +1,14 @@
 {
   "$schema": "./node_modules/@effect/tsgo/schema.json",
+  // Shared by every TypeScript workspace except docs (Astro has its own base).
   "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
     "plugins": [
       {
         "name": "@effect/language-service",

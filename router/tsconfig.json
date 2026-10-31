@@ -1,13 +1,6 @@
 {
   "extends": "../tsconfig.effect.json",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
-    "target": "ESNext",
-    "module": "Preserve",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "skipLibCheck": true,
-    "noEmit": true,
     "types": ["@cloudflare/workers-types", "bun-types"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]

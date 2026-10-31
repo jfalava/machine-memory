@@ -47,7 +47,7 @@
     "eslint": "10.13.0",
     "eslint-plugin-astro": "3.2.1",
     "oxfmt": "catalog:maintenance",
-    "oxlint": "catalog:build",
+    "oxlint": "catalog:maintenance",
     "oxlint-tsgolint": "catalog:build",
     "pagefind": "1.5.2",
     "prettier": "3.9.10",
