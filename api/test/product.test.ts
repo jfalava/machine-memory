@@ -968,7 +968,7 @@ test.each(["update", "delete"])(
   },
 );
 
-test("mutation during index submission stays pending and tombstones periodically repair late delivery", async () => {
+test("mutation during index submission stays pending and tombstones repair late delivery once", async () => {
   const id = await insert();
   const now = Date.now();
   upsert.mockImplementationOnce(async () => {
@@ -989,6 +989,25 @@ test("mutation during index submission stays pending and tombstones periodically
   expect(deleteByIds).toHaveBeenCalledTimes(1);
   await drain(now + 3_600_001);
   expect(deleteByIds).toHaveBeenCalledTimes(2);
+  await drain(now + 30 * 3_600_000);
+  expect(deleteByIds).toHaveBeenCalledTimes(2);
+});
+
+test("an unchanged active memory is embedded once, repaired once, then left alone", async () => {
+  const id = await insert();
+  const now = Date.now();
+  for (const hours of [0, 1.01, 2.02, 30, 300]) {
+    await drain(now + hours * 3_600_000);
+  }
+  expect(embed).toHaveBeenCalledTimes(2);
+  expect(upsert).toHaveBeenCalledTimes(2);
+  await db
+    .prepare("UPDATE memories SET content = ? WHERE id = ?")
+    .bind("edited", id)
+    .run();
+  await drain(now + 301 * 3_600_000);
+  expect(embed).toHaveBeenCalledTimes(3);
+  expect(embed.mock.calls[2][0]).toContain("edited");
 });
 
 test("embedding parser rejects invalid dimensions and nonfinite values", () => {

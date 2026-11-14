@@ -9,12 +9,17 @@ import {
 } from "@machine-memory/contract";
 import { Schema } from "effect";
 
+// Each delivery is re-sent once, an hour later, to overwrite a mutation that
+// Vectorize applied late. Repeating it forever re-embeds unchanged memories;
+// index drift beyond that window is repaired with `reindex`.
 const REPAIR_INTERVAL_MS = 60 * 60 * 1000;
+const REPAIRED = Number.MAX_SAFE_INTEGER;
 const BATCH_SIZE = 20;
 
 type PendingVector = {
   memory_id: number;
   generation: number;
+  delivered_generation: number;
   attempts: number;
 };
 
@@ -99,7 +104,7 @@ export async function drainVectorSync(
   now = Date.now(),
 ): Promise<void> {
   const jobs = await db
-    .prepare(`SELECT memory_id, generation, attempts FROM memory_vector_sync
+    .prepare(`SELECT memory_id, generation, delivered_generation, attempts FROM memory_vector_sync
     WHERE next_attempt_at <= ? AND (generation > delivered_generation OR last_delivered_at <= ?)
     ORDER BY next_attempt_at, memory_id LIMIT ?`)
     .bind(now, now - REPAIR_INTERVAL_MS, BATCH_SIZE)
@@ -129,7 +134,10 @@ export async function drainVectorSync(
         .bind(
           job.generation,
           now,
-          now + REPAIR_INTERVAL_MS,
+          // Write triggers and reindex reset next_attempt_at to 0.
+          job.delivered_generation === job.generation
+            ? REPAIRED
+            : now + REPAIR_INTERVAL_MS,
           job.memory_id,
           job.generation,
         )
