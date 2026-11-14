@@ -5,6 +5,15 @@ export function printJson(data: JsonValue) {
   console.info(JSON.stringify(data));
 }
 
+/**
+ * One line on stderr. Warnings about lost content or a wrong repository go
+ * here in every output mode, so piping stdout through jq, head or cut cannot
+ * hide them.
+ */
+export function warnOnStderr(message: string): void {
+  console.error(`machine-memory: ${message}`);
+}
+
 /** Parsed command flags keyed by `--name`: string flags map to their value, set boolean flags to `true`. */
 export type CommandFlags = ReadonlyMap<string, string | true>;
 

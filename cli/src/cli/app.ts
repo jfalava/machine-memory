@@ -1,15 +1,19 @@
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Predicate, Schema } from "effect";
 import { CliError, CliOutput, Command } from "effect/cli";
 import * as Layer from "effect/Layer";
 import pc from "picocolors";
 
-import { printJson } from "../cli-utils";
+import { printJson, warnOnStderr } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
 import { CommandError } from "../effect/errors";
-import { parseRepositorySlug, setRepositoryOverride } from "../repository";
+import { parseRepositorySlug, setRepositoryTarget } from "../repository";
 import { UpgradeError } from "../upgrade";
+import { staleMemoryBlockWarning } from "./commands/agents-md-content";
 import { builtinCommands, featureCommands } from "./commands/definitions";
 import { commandHelpPayload, helpPayload } from "./help";
 import {
@@ -94,7 +98,9 @@ function extractRepositoryFlags(args: ReadonlyArray<string>): RepositoryFlags {
     } else if (arg === "--repo") {
       repo = args[index + 1];
       if (repo === undefined || repo.startsWith("--")) {
-        throw new Error("--repo requires an owner/name value.");
+        throw new Error(
+          "--repo requires a repository slug such as owner/name.",
+        );
       }
       index += 1;
     } else if (arg.startsWith("--repo=")) {
@@ -108,12 +114,33 @@ function extractRepositoryFlags(args: ReadonlyArray<string>): RepositoryFlags {
 
 function applyRepositoryFlags(rawArgs: ReadonlyArray<string>): string[] {
   const flags = extractRepositoryFlags(rawArgs);
-  setRepositoryOverride(
-    flags.repo === undefined
-      ? undefined
-      : { slug: parseRepositorySlug(flags.repo), allowNew: flags.allowNew },
-  );
+  setRepositoryTarget({
+    slug:
+      flags.repo === undefined ? undefined : parseRepositorySlug(flags.repo),
+    allowNew: flags.allowNew,
+  });
   return flags.args;
+}
+
+/** Commands that write, explain or do not read the block. */
+const BLOCK_CHECK_EXEMPT = new Set(["init", "help", "version", "upgrade"]);
+
+/**
+ * Agents follow the AGENTS.md block in their checkout, so a block written by
+ * an older CLI keeps steering them wrong. Every other command says so once.
+ */
+function warnIfMemoryBlockIsStale(command: string | undefined): void {
+  if (command === undefined || BLOCK_CHECK_EXEMPT.has(command)) {
+    return;
+  }
+  const path = resolve(process.cwd(), "AGENTS.md");
+  if (!existsSync(path)) {
+    return;
+  }
+  const warning = staleMemoryBlockWarning(readFileSync(path, "utf8"));
+  if (warning !== undefined) {
+    warnOnStderr(warning);
+  }
 }
 
 function prettyRequested(args: ReadonlyArray<string>): boolean {
@@ -341,6 +368,7 @@ export function runCli(rawArgs: ReadonlyArray<string>) {
       process.exitCode = 1;
     });
   }
+  warnIfMemoryBlockIsStale(commandPathName);
   return Command.runWith(rootCommand, { version: VERSION })(args).pipe(
     Effect.provide(
       Layer.mergeAll(

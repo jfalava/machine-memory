@@ -673,6 +673,64 @@ test("strong upsert preserves omitted metadata and clears expiry on type convers
   });
 });
 
+test("writes refuse missing-value content and a stale expected update count", async () => {
+  const id = await insert("kept content");
+  for (const content of ["null", " undefined ", "  "]) {
+    expect((await productError("add", { content })).status).toBe(400);
+    expect((await productError("update", { id, content })).status).toBe(400);
+  }
+  const stale = await productError("update", {
+    id,
+    content: "based on an old read",
+    expected_update_count: 3,
+  });
+  expect(stale.status).toBe(409);
+  expect(stale.error).toContain("update_count 0");
+  expect((await product("get", { id })).result).toMatchObject({
+    content: "kept content",
+    update_count: 0,
+  });
+  const fresh = await product("update", {
+    id,
+    content: "based on the current read",
+    expected_update_count: 0,
+  });
+  expect(fresh.result.memory.update_count).toBe(1);
+});
+
+test("a missing id names the repository that holds it", async () => {
+  const id = await insert("elsewhere", "other/repo");
+  const wrongRepository = await productError("get", { id });
+  expect(wrongRepository.status).toBe(404);
+  expect(wrongRepository.error).toContain("in repository 'o/r'");
+  expect(wrongRepository.error).toContain("belongs to repository 'other/repo'");
+  const absent = await productError("update", { id: id + 100, content: "x" });
+  expect(absent.status).toBe(404);
+  expect(absent.error).not.toContain("belongs to");
+});
+
+test("a weak upsert match refuses unless forced, and no match creates", async () => {
+  const existing = await insert("cache invalidation uses the redis keyspace");
+  const weak = {
+    content: "redis connection pool size is twenty",
+    upsert_match: "redis",
+  };
+  const refused = await productError("add", weak);
+  expect(refused.status).toBe(400);
+  expect(refused.error).toContain(`#${existing}`);
+  const forced = await product("add", { ...weak, force: true });
+  expect(forced.result.id).not.toBe(existing);
+  expect(forced.result.upsert_match?.id).toBe(existing);
+  const unmatched = await product("add", {
+    content: "terraform state lives in the bucket",
+    upsert_match: "zzzunmatched",
+  });
+  expect(unmatched.result).not.toHaveProperty("upsert_match");
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
+  ).toBe(3);
+});
+
 test("match mutations do not select inactive rows", async () => {
   const id = await insert("inactive match needle");
   await product("deprecate", { ids: [id] });

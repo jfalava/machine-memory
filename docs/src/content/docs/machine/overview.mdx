@@ -39,16 +39,33 @@ machine-memory query "backend" --remote --pretty
 
 Commands act on the repository named by the current checkout's `origin`
 remote. To read or write another repository's memories without changing
-directory, pass `--repo owner/name` anywhere on the command line, or set
-`MACHINE_MEMORY_REPO`. The flag wins over the variable.
+directory, pass `--repo <slug>` anywhere on the command line, or set
+`MACHINE_MEMORY_REPO`. The flag wins over the variable. A slug is the remote's
+path: `owner/name`, `@namespace/name`, or `group/subgroup/name` for a GitLab
+subgroup, which keeps every segment.
 
 ```sh
 machine-memory query "node overlay" --repo jfalava/outfit --remote
 ```
 
-A mistyped slug would silently start a new namespace, so `add` and `import`
-refuse a `--repo` that has no memories yet unless `--allow-new-repo` is
-given.
+A mistyped slug, or a checkout whose remote maps to an unexpected slug, would
+silently start a new namespace. `add` and `import` therefore refuse a
+repository that has no memories yet, whether the slug came from `--repo` or
+from the Git remote, and list the repositories that do have memories. Pass
+`--allow-new-repo` to start the repository on purpose. An empty database has
+nothing to confuse the slug with, so its first write needs no flag.
+
+Object-shaped read output names the `repository` it ran against. A read that
+finds nothing in a repository without memories adds a `warning` that lists the
+repositories that do have memories.
+
+## Warnings on stderr
+
+Lines on stderr that start with `machine-memory:` report content an update
+dropped, records that may rely on changed content, a repository without
+memories, an ID that belongs to another repository, and an `AGENTS.md` block
+written by an older CLI. They are printed in every output mode, so piping
+stdout through `jq`, `head` or `cut` cannot hide them.
 
 ## Commands
 

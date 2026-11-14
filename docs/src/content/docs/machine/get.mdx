@@ -16,6 +16,10 @@ machine-memory get <id,id,...> (--local|--remote)
 returns one object; multiple IDs return a `results` array and report any
 missing IDs separately.
 
+IDs are unique across repositories. When a missing ID exists in another
+repository, the output lists it under `found_elsewhere` as
+`{ id, repository }` and stderr names the `--repo` to pass.
+
 Output flags: `--json-min` prints `{count, ids, results}` with each result
 reduced to `{id, memory_type, certainty, status, tags}`; `--quiet` prints only
 `{count, ids}` (plus `missing_ids`); `--brief` prints one-line summaries.

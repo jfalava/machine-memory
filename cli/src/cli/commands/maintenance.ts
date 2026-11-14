@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import {
   EvidenceSchema,
   ValidationGapsSchema,
+  memoryContentError,
   sqliteDateToMs,
   type EvidenceKind,
 } from "@machine-memory/contract";
@@ -108,7 +109,7 @@ function importObject(rawEntry: JsonValue): JsonObject | null {
 
 function parseImportContent(entry: JsonObject): string | undefined {
   const content = jsonString(entry.content) ?? "";
-  return content || undefined;
+  return memoryContentError(content) === undefined ? content : undefined;
 }
 
 function parseImportEnums(entry: JsonObject):

@@ -1,4 +1,8 @@
-import { compareMemoryFact, droppedDetails } from "@machine-memory/contract";
+import {
+  compareMemoryFact,
+  droppedDetails,
+  memoryContentError,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { usageError } from "../../cli-utils";
@@ -12,6 +16,10 @@ export function handleDiffCommand(commandCtx: CommandContext) {
     const fact = commandCtx.positionals.slice(1).join(" ").trim();
     if (!idRaw || !fact) {
       usageError("Usage: diff <id> <new_content>");
+    }
+    const invalid = memoryContentError(fact);
+    if (invalid !== undefined) {
+      usageError(invalid);
     }
     const id = Number(idRaw);
     if (!Number.isInteger(id)) {

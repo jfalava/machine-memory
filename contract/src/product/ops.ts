@@ -5,6 +5,7 @@ import { Schema } from "effect";
 
 import {
   CertaintySchema,
+  MemoryContentSchema,
   MemoryStatusSchema,
   MemoryTypeSchema,
   OptionalTagsFilterSchema,
@@ -32,7 +33,7 @@ import {
 } from "../literals";
 
 const RepositorySchema = RepositoryInputSchema.annotateKey({
-  description: `GitHub repository owner/name, at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes. Required for repository operations; call list_repositories first if unsure.`,
+  description: `Repository slug such as owner/name, @namespace/name or group/subgroup/name, at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes. Required for repository operations; call list_repositories first if unsure.`,
 });
 
 const searchLimit = SearchLimitInputSchema.annotateKey({
@@ -232,7 +233,7 @@ export const MemoryVerifyArgsSchema = Schema.Struct({
 export const MemoryDiffArgsSchema = Schema.Struct({
   repository: RepositorySchema,
   id: memoryId,
-  content: Schema.NonEmptyString.annotateKey({
+  content: MemoryContentSchema.annotateKey({
     description:
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),
@@ -240,7 +241,7 @@ export const MemoryDiffArgsSchema = Schema.Struct({
 
 export const MemoryAddArgsInputSchema = Schema.Struct({
   repository: RepositorySchema,
-  content: Schema.NonEmptyString.annotateKey({
+  content: MemoryContentSchema.annotateKey({
     description:
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),
@@ -314,7 +315,7 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
     description:
       "Topic query identifying the update target. Exactly one of id or match is required.",
   }),
-  content: Schema.optionalKey(Schema.NonEmptyString),
+  content: Schema.optionalKey(MemoryContentSchema),
   tags: optionalString.annotateKey({
     description: "Comma-separated tags, e.g. area:cli,topic:backend.",
   }),
@@ -331,6 +332,12 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
   }),
   superseded_by: Schema.optionalKey(positiveInt).annotateKey({
     description: "Id of the memory that supersedes this one.",
+  }),
+  expected_update_count: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  ).annotateKey({
+    description:
+      "update_count from the read this update is based on. A different stored count refuses the update, so a concurrent change is not overwritten.",
   }),
 });
 
@@ -350,7 +357,7 @@ export const MemoryRestoreArgsSchema = Schema.Struct({
 });
 
 export const MemorySizeArgsInputSchema = Schema.Struct({
-  content: Schema.NonEmptyString.annotateKey({
+  content: MemoryContentSchema.annotateKey({
     description:
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),

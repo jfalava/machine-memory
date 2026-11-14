@@ -52,6 +52,8 @@ export const CliOutputSchema = Schema.StructWithRest(
     id: Schema.optionalKey(Schema.Int),
     error: Schema.optionalKey(Schema.String),
     note: Schema.optionalKey(Schema.String),
+    repository: Schema.optionalKey(Schema.String),
+    warning: Schema.optionalKey(Schema.String),
     current_update_count: Schema.optionalKey(Schema.NullOr(Schema.Int)),
     results: Schema.optionalKey(Schema.Array(CliRowSchema)),
     targets: Schema.optionalKey(Schema.Array(CliRowSchema)),

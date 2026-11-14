@@ -41,6 +41,7 @@ import {
   printBriefLines,
   queryEmptyResultPayload,
   queryNeighborhoodMatches,
+  readScope,
   scoreRowsWithDetails,
   sortByScoreThenRecency,
   stringValue,
@@ -100,12 +101,14 @@ function minimalScoredResultSummary(row: JsonObject): JsonObject {
 function minimalScoredPayload(
   results: JsonObject[],
   options: {
+    scope: JsonObject;
     jsonMin: boolean;
     scoreWeights?: JsonObject;
     summarize?: (row: JsonObject) => JsonObject;
   },
 ): JsonObject {
   const payload: JsonObject = {
+    ...options.scope,
     count: results.length,
     no_strong_match: !hasStrongMatchRow(results),
     ids: resultIds(results),
@@ -125,6 +128,7 @@ function printScoredResults(
   commandCtx: Pick<CommandContext, "command" | "outputMode">,
   results: JsonObject[],
   options: {
+    scope: JsonObject;
     explainScore: boolean;
     semantic?: boolean;
     scoreWeights?: JsonObject;
@@ -137,6 +141,7 @@ function printScoredResults(
   if (outputMode.jsonMin || outputMode.quiet) {
     printJson(
       minimalScoredPayload(results, {
+        scope: options.scope,
         jsonMin: outputMode.jsonMin,
         scoreWeights: showScoreWeights ? options.scoreWeights : undefined,
       }),
@@ -149,6 +154,7 @@ function printScoredResults(
   }
   if (options.wrapResults) {
     const output = {
+      ...options.scope,
       no_strong_match: !hasStrongMatchRow(results),
       results,
     } satisfies JsonObject;
@@ -164,18 +170,21 @@ function printScoredResults(
 function printEmptyQueryResults(
   commandCtx: Pick<CommandContext, "command" | "outputMode">,
   term: string,
-  filters: ReturnType<typeof parseCommonFilters>,
-  queryTokens: string[],
+  empty: {
+    scope: JsonObject;
+    filters: ReturnType<typeof parseCommonFilters>;
+    queryTokens: string[];
+  },
 ) {
   const { outputMode } = commandCtx;
   if (outputMode.brief) {
     printBriefLines([]);
     return;
   }
-  printCommandOutput(
-    commandCtx,
-    queryEmptyResultPayload(term, filters, queryTokens),
-  );
+  printCommandOutput(commandCtx, {
+    ...empty.scope,
+    ...queryEmptyResultPayload(term, empty.filters, empty.queryTokens),
+  });
 }
 
 function termMatchQuery(term: string): SearchMatchQuery {
@@ -396,12 +405,18 @@ export function handleQueryCommand(commandCtx: CommandContext) {
     const results = orderRowsByMatchStrength(
       annotateMatches(fetched.results, termMatchQuery(term)),
     );
+    const scope = yield* readScope(requireDatabase(commandCtx), results.length);
     yield* Effect.sync(() => {
       if (results.length === 0) {
-        printEmptyQueryResults(commandCtx, term, filters, queryTokens);
+        printEmptyQueryResults(commandCtx, term, {
+          scope,
+          filters,
+          queryTokens,
+        });
         return;
       }
       printScoredResults(commandCtx, results, {
+        scope,
         explainScore,
         semantic,
         scoreWeights: hybrid
@@ -431,9 +446,11 @@ export function handleListCommand(commandCtx: CommandContext) {
     const normalized = rows
       .map((row) => normalizeSqliteRow(row))
       .slice(0, parseResultLimit(flags, 100));
+    const scope = yield* readScope(database, normalized.length);
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
         const payload = {
+          ...scope,
           count: normalized.length,
           ids: resultIds(normalized),
         } satisfies JsonObject;
@@ -537,12 +554,13 @@ function printSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   results: JsonObject[],
-  options: FetchResultsOptions,
+  options: { explainScore: boolean; scope: JsonObject },
 ) {
   const { outputMode } = commandCtx;
   if (outputMode.jsonMin || outputMode.quiet) {
     printJson(
       minimalScoredPayload(results, {
+        scope: options.scope,
         jsonMin: outputMode.jsonMin,
         scoreWeights: options.explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
       }),
@@ -555,6 +573,7 @@ function printSuggestResults(
   }
 
   const output = {
+    ...options.scope,
     files: snapshot.files,
     normalized_files: snapshot.files,
     normalized_path_terms: snapshot.normalizedPathTerms,
@@ -580,8 +599,12 @@ export function handleSuggestCommand(commandCtx: CommandContext) {
       explainScore,
       limit: parseResultLimit(commandCtx.flags),
     });
+    const scope = yield* readScope(requireDatabase(commandCtx), results.length);
     yield* Effect.sync(() =>
-      printSuggestResults(commandCtx, snapshot, results, { explainScore }),
+      printSuggestResults(commandCtx, snapshot, results, {
+        explainScore,
+        scope,
+      }),
     );
   });
 }
@@ -751,10 +774,12 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         sweepMatchQuery(snapshot, queryTerm),
       ),
     ).slice(0, limit);
+    const scope = yield* readScope(requireDatabase(commandCtx), results.length);
     yield* Effect.sync(() => {
       if (outputMode.jsonMin || outputMode.quiet) {
         printJson(
           minimalScoredPayload(results, {
+            scope,
             jsonMin: outputMode.jsonMin,
             scoreWeights: explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
             summarize: (row) => ({
@@ -770,6 +795,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         return;
       }
       const output = {
+        ...scope,
         files: snapshot.files,
         normalized_files: snapshot.files,
         normalized_path_terms: snapshot.normalizedPathTerms,

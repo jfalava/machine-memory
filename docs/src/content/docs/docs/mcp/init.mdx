@@ -12,11 +12,13 @@ The managed section lives between HTML markers and can be replaced safely:
 
 ```html
 <!-- machine-memory:start -->
+<!-- machine-memory:version 2 mcp -->
 …
 <!-- machine-memory:end -->
 ```
 
-Everything outside the markers is preserved.
+Everything outside the markers is preserved. The version line lets the CLI
+tell a checkout that its block is older than the current one.
 
 ## Public script (no CLI)
 
@@ -90,14 +92,21 @@ Exactly one of `--local`, `--remote`, or `--mcp` is required.
 
 The MCP block tells agents to:
 
-- Use MCP tools only, including maintenance (`memory_doctor`, `memory_stats`, `memory_gc`, `memory_deprecate`) and explicit bulk deletion (`memory_delete_many`)
-- Pass an exact `owner/name` repository slug (no default); reads are loose (wrong slug returns empty, nothing lost) but writes are strict, so call `list_repositories` before every write when unsure
-- Follow `offset` while `has_more` is true on `memory_list` and `list_repositories`; repository entries include status counts
-- Scan with `memory_suggest` for known files; verify with `memory_verify`/`memory_diff`; maintain with `memory_update` via `match` or `memory_add` via `upsert_match` (weak matches need `force: true`)
-- Set `memory_type`/`certainty` explicitly (`memory_add` defaults to `convention`/`inferred`); `expires_after_days` works only for `status` memories
-- Preflight long content with `memory_size`; respect on-flight size rejection on writes
-- Treat search results as ranked candidates, not an exhaustive list; rely on `match_strength` and `no_strong_match` rather than scores, and prefer known IDs, `memory_suggest`, and `tags` filters
-- Set certainty from evidence: name the `evidence` kinds (`user_requirement`, `observed_implementation`, `verified_mechanism`, `tested_behavior`) and list `validation_gaps`; `verified` without evidence is rejected
+The MCP block is about 2,500 bytes, because agents read it on every turn. It tells agents to:
+
+- Pass the repository slug of the checkout's origin remote and confirm it with `list_repositories` before the first write
+- Scan once before changing code with `memory_suggest` (known files) or `memory_query` (a topic, or a task that touches no files), then read the relevant records with `memory_get`, judging results by `match_strength`
+- Follow the user when an instruction contradicts a stored record, and update the record
+- Write one fact per record, keep delivery state in one expiring `status` record, and leave out pixel values, UI state, deploy outcomes and facts about one machine
+- Preflight size with `memory_size`
+- Read a record before `memory_update` and keep the details that still hold; create with `memory_add` and `upsert_match`
+- Act on `dropped` and `review_candidates`
+- Name `evidence` kinds for `certainty: verified`
+- Keep memory writes with the parent agent when delegating
+- Review the task's writes before the final response
+
+The tool descriptions carry the detail: pagination, filters, defaults and the weak-match rule.
+
 - Keep durable knowledge separate from delivery status; say whether work is local, committed, pushed, or deployed in an expiring `status` record
 - Carry over unrelated details when replacing a record (`memory_diff` and `memory_update` report `dropped` details), and resolve the `review_candidates` that updates and deprecations return
 - Let the parent agent own memory writes; child agents return persistence candidates with evidence

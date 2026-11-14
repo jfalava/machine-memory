@@ -15,10 +15,10 @@ import * as Effect from "effect/Effect";
 
 import {
   fetchProductRow,
+  memoryNotFound,
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
-import { memoryNotFound } from "./http-failure";
 import {
   historyCountSelect,
   historySelect,
@@ -86,7 +86,7 @@ export const productReadHandlers = (
     Effect.gen(function* () {
       const row = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!row) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       return row;
     }),
@@ -203,7 +203,7 @@ export const productReadHandlers = (
     Effect.gen(function* () {
       const row = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!row) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       const result = compareMemoryFact(row.content, input.fact);
       return result.conflict
@@ -226,7 +226,7 @@ export const productReadHandlers = (
     Effect.gen(function* () {
       const row = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!row) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       const result = compareMemoryFact(row.content, input.content);
       return {

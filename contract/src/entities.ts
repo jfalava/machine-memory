@@ -18,17 +18,62 @@ export const MemoryTypeSchema = Schema.Literals(MEMORY_TYPES);
 export const CertaintySchema = Schema.Literals(CERTAINTY_LEVELS);
 export const MemoryStatusSchema = Schema.Literals(MEMORY_STATUSES);
 
-const maxNamespaceBytes = Schema.makeFilter(
-  (value: string) =>
-    new TextEncoder().encode(value).byteLength <= MAX_NAMESPACE_BYTES,
-  {
-    expected: `repository must be at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes.`,
-  },
-);
+const SLUG_SEGMENT = /^[A-Za-z0-9_.~-]+$/;
 
-/** Non-empty repository slug with the Worker namespace byte ceiling. */
-export const RepositorySchema = Schema.NonEmptyString.check(maxNamespaceBytes);
+/**
+ * Why `value` is not a repository slug, or undefined when it is one. A slug is
+ * the remote's path: two or more `/`-separated segments, so a GitLab subgroup
+ * keeps every segment, with an optional leading `@` (Amp namespaces).
+ */
+export function repositorySlugError(value: string): string | undefined {
+  if (new TextEncoder().encode(value).byteLength > MAX_NAMESPACE_BYTES) {
+    return `repository must be at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes.`;
+  }
+  const segments = value.replace(/^@/, "").split("/");
+  if (
+    segments.length < 2 ||
+    !segments.every((segment) => SLUG_SEGMENT.test(segment))
+  ) {
+    return "repository must be a slug such as owner/name, @namespace/name or group/subgroup/name: letters, digits, '.', '_', '-' and '~' in two or more '/'-separated segments.";
+  }
+  return undefined;
+}
+
+/** Repository slug with the Worker namespace byte ceiling. */
+export const RepositorySchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) => repositorySlugError(value) === undefined,
+    {
+      expected: `a repository slug such as owner/name, @namespace/name or group/subgroup/name, at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes`,
+    },
+  ),
+);
 export type Repository = typeof RepositorySchema.Type;
+
+const JUNK_CONTENT = new Set(["null", "undefined"]);
+
+/**
+ * Why `content` cannot be stored as a memory, or undefined when it can. Shells
+ * and string coercion turn a missing value into the words null and undefined.
+ */
+export function memoryContentError(content: string): string | undefined {
+  const trimmed = content.trim();
+  if (trimmed === "") {
+    return "Memory content is empty.";
+  }
+  if (JUNK_CONTENT.has(trimmed.toLowerCase())) {
+    return `Memory content is the literal '${trimmed}', which is a missing value, not a memory.`;
+  }
+  return undefined;
+}
+
+/** Memory content that is not blank and not a coerced missing value. */
+export const MemoryContentSchema = Schema.String.check(
+  Schema.makeFilter(
+    (value: string) => memoryContentError(value) === undefined,
+    { expected: "memory content that is not empty, 'null' or 'undefined'" },
+  ),
+);
 
 export const SearchLimitSchema = Schema.Int.check(
   Schema.isBetween({ minimum: 1, maximum: SEARCH_LIMIT_MAX }),

@@ -10,8 +10,8 @@ import {
 } from "../../cli-utils";
 import type { JsonObject } from "../../json";
 import {
-  activeRepositoryOverride,
   repositoryForCurrentDirectory,
+  repositoryIsExplicit,
 } from "../../repository";
 import {
   parseStoredEvidence,
@@ -78,7 +78,7 @@ function checkpointFlags(flags: CommandFlags): CommandFlags {
   if (hasFlag(flags, "--files") || hasFlag(flags, "--files-json")) {
     return flags;
   }
-  if (activeRepositoryOverride() !== undefined) {
+  if (repositoryIsExplicit()) {
     return flags;
   }
   const files = touchedFiles();

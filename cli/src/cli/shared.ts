@@ -40,6 +40,7 @@ import {
   getFlagValue,
   hasFlag,
   usageError,
+  warnOnStderr,
 } from "../cli-utils";
 import {
   CERTAINTY_LEVELS,
@@ -67,8 +68,9 @@ import {
   type JsonValue,
 } from "../json";
 import {
-  activeRepositoryOverride,
+  allowsNewRepository,
   repositoryForCurrentDirectory,
+  similarRepositories,
 } from "../repository";
 import {
   parseStoredEvidence,
@@ -782,34 +784,136 @@ export function findReviewCandidates(
   );
 }
 
+/** What a database holds for the targeted repository when that is nothing. */
+export type UnknownRepository = {
+  readonly repository: string;
+  /** Repositories that do have memories, most similar slugs first. */
+  readonly others: string[];
+};
+
+/** Undefined when the targeted repository has memories. */
+export function findUnknownRepository(
+  database: MemoryDatabaseApi,
+): Effect.Effect<UnknownRepository | undefined, MemoryDatabaseError> {
+  const repository = repositoryForCurrentDirectory();
+  return Effect.gen(function* () {
+    const found = yield* database.get(
+      "SELECT 1 AS found FROM memories WHERE repository = ? LIMIT 1",
+      [repository],
+    );
+    if (found) {
+      return undefined;
+    }
+    const rows = yield* database.all(
+      "SELECT repository FROM memories GROUP BY repository ORDER BY repository",
+    );
+    const known = rows.map((row) => stringValue(jsonObject(row)?.repository));
+    return { repository, others: similarRepositories(repository, known) };
+  });
+}
+
+const OTHER_REPOSITORIES_SHOWN = 12;
+
+/** "Repositories with memories: a, b." or "" when the database is empty. */
+function otherRepositoriesText(unknown: UnknownRepository): string {
+  if (unknown.others.length === 0) {
+    return "";
+  }
+  const shown = unknown.others.slice(0, OTHER_REPOSITORIES_SHOWN);
+  const more = unknown.others.length - shown.length;
+  return ` Repositories with memories: ${shown.join(", ")}${more > 0 ? `, and ${more} more` : ""}.`;
+}
+
 /**
- * A mistyped --repo would silently start a new namespace, so creating records
- * there requires --allow-new-repo until the repository has memories.
+ * `repository` for a read's output. When the read found nothing because the
+ * repository holds no memories at all, adds `warning` and repeats it on stderr:
+ * a wrong slug otherwise looks like "nothing is known about this".
+ */
+export function readScope(
+  database: MemoryDatabaseApi,
+  found: number,
+): Effect.Effect<JsonObject, MemoryDatabaseError> {
+  const scope: JsonObject = { repository: repositoryForCurrentDirectory() };
+  if (found > 0) {
+    return Effect.succeed(scope);
+  }
+  return findUnknownRepository(database).pipe(
+    Effect.map((unknown) => {
+      if (unknown === undefined) {
+        return scope;
+      }
+      const warning = `Repository '${unknown.repository}' has no memories.${otherRepositoriesText(unknown)}${unknown.others.length > 0 ? " Pass --repo <slug> to read one of them." : ""}`;
+      warnOnStderr(warning);
+      return { ...scope, warning };
+    }),
+  );
+}
+
+/**
+ * Ids are unique across repositories, so an id missing from the targeted one
+ * may sit in another. Returns `{ id, repository }` for each id that does, and
+ * says so on stderr.
+ */
+export function findElsewhere(
+  database: MemoryDatabaseApi,
+  missingIds: number[],
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
+  if (missingIds.length === 0) {
+    return Effect.succeed([]);
+  }
+  return database
+    .all(
+      `SELECT id, repository FROM memories WHERE id IN (${missingIds.map(() => "?").join(", ")}) ORDER BY id`,
+      missingIds,
+    )
+    .pipe(
+      Effect.map((rows) => {
+        const elsewhere = rows.flatMap((row) => {
+          const found = jsonObject(row);
+          return found
+            ? [
+                {
+                  id: Number(found.id),
+                  repository: stringValue(found.repository),
+                },
+              ]
+            : [];
+        });
+        for (const entry of elsewhere) {
+          warnOnStderr(
+            `Memory ${entry.id} is not in repository '${repositoryForCurrentDirectory()}'; it belongs to '${entry.repository}'. Pass --repo ${entry.repository} to use it.`,
+          );
+        }
+        return elsewhere;
+      }),
+    );
+}
+
+/**
+ * A mistyped --repo, or a checkout whose remote maps to an unexpected slug,
+ * would silently start a new namespace beside the intended one. Creating
+ * records in a repository without memories therefore requires
+ * --allow-new-repo, unless the database is empty and there is nothing to confuse it with.
  */
 export function assertWritableRepository(
   database: MemoryDatabaseApi,
   command: string,
 ): Effect.Effect<void, MemoryDatabaseError | CommandError> {
-  const override = activeRepositoryOverride();
-  if (override === undefined || override.allowNew) {
+  if (allowsNewRepository()) {
     return Effect.void;
   }
-  return database
-    .get("SELECT 1 AS found FROM memories WHERE repository = ? LIMIT 1", [
-      override.slug,
-    ])
-    .pipe(
-      Effect.flatMap((row) =>
-        row
-          ? Effect.void
-          : Effect.fail(
-              commandError(
-                command,
-                `Repository '${override.slug}' has no memories. Check the --repo slug, or pass --allow-new-repo to start it.`,
-              ),
+  return findUnknownRepository(database).pipe(
+    Effect.flatMap((unknown) =>
+      unknown === undefined || unknown.others.length === 0
+        ? Effect.void
+        : Effect.fail(
+            commandError(
+              command,
+              `Repository '${unknown.repository}' has no memories.${otherRepositoriesText(unknown)} Pass --repo <slug> to write to one of them, or --allow-new-repo to start '${unknown.repository}'.`,
             ),
-      ),
-    );
+          ),
+    ),
+  );
 }
 
 export function collectDirectoriesEffect(

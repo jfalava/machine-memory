@@ -22,15 +22,30 @@ This command creates `AGENTS.md` when it does not exist, or replaces the content
 
 The generated block tells future agents how to scan memory, which backend to use, and how to maintain durable project context. The selected backend is written into the block so its examples stay consistent with the command you ran.
 
-Every backend's block also covers memory hygiene:
+The block is about 2,500 bytes, because agents read it on every turn. Each rule is one line:
 
-- Search results are ranked candidates, not an exhaustive list. Agents judge relevance by each result's `match_strength` and the response's `no_strong_match` rather than by scores, prefer known IDs, file-scoped suggestions, and tag filters, and read full records before relying on them.
-- Certainty follows evidence: agents record which kinds support a claim (`user_requirement`, `observed_implementation`, `verified_mechanism`, `tested_behavior`) and the remaining validation gaps. `verified` without evidence is rejected, and `doctor` lists legacy verified memories for review.
-- Durable decisions and mechanisms stay separate from delivery status. An expiring `status` record says whether work is local, committed, pushed, or deployed.
-- Updates carry over unrelated valid details, guided by the `dropped` report from `update --dry-run` and `diff`, and the `review_candidates` returned by updates and deprecations are reconciled.
-- The end-of-task review starts from `machine-memory checkpoint`, and other repositories are addressed with `--repo owner/name` rather than by changing directory.
-- In delegated work, the parent agent owns memory writes. Child agents return persistence candidates with evidence.
-- Before the final response, agents run an end-of-task checkpoint that classifies each finding as already covered, new durable knowledge, superseded or conflicting, transient status, or intentionally omitted.
+- Scan once before changing code, by files or by topic, and read the records that bear on the task. Results are candidates judged by `match_strength`.
+- The user's explicit instruction wins over a stored record, which is then updated.
+- One fact per record. Delivery state goes in one expiring `status` record. Pixel values, UI state, deploy outcomes and facts about one machine stay out.
+- Check size before writing.
+- An update replaces the whole content, so read the record first; `add --upsert-match` updates a strong match instead of adding a duplicate.
+- Act on `dropped` and `review_candidates`.
+- `verified` needs evidence kinds.
+- In delegated work, the parent agent writes memory. Child agents return findings with evidence.
+- Run `machine-memory checkpoint` before the final response.
+
+`machine-memory help workflow` explains each step in full: search modes, what to store, recovery with `history` and `restore`, reconciling dependent records, evidence kinds, delegation and the checkpoint classification.
+
+## Block version
+
+The line after the start marker records the block's version and backend:
+
+```html
+<!-- machine-memory:start -->
+<!-- machine-memory:version 2 remote -->
+```
+
+When the block in the current directory is older than the one the installed CLI writes, every command except `init`, `help`, `version` and `upgrade` prints one line on stderr that names the `init` command to run. A block without a version line counts as version 1.
 
 ## Backend selection
 

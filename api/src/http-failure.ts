@@ -22,9 +22,6 @@ export const badRequest = (error: string) =>
 export const notFound = (error: string) =>
   Effect.fail(new HttpFailure({ status: 404, error }));
 
-export const memoryNotFound = (id: number, repository: string) =>
-  notFound(`No memory found with id ${id} in repository '${repository}'.`);
-
 export const conflict = (error: string) =>
   Effect.fail(new HttpFailure({ status: 409, error }));
 

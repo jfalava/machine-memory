@@ -9,13 +9,18 @@ sidebar:
 
 ```sh
 machine-memory update <id> <content> (--local|--remote)
-machine-memory update <id,id,...> --from-file <path> (--local|--remote)
+machine-memory update <id> --from-file <path> (--local|--remote)
 machine-memory update --match "unique topic" <content> (--local|--remote)
 ```
 
-Provide either one or more IDs or `--match <query>`, then provide inline
-content or `--from-file <path>`. Updating multiple IDs returns the updated
-rows, missing IDs, and a count.
+Provide either one ID or `--match <query>`, then provide inline content or
+`--from-file <path>`. An update replaces the content of exactly one memory:
+several IDs are refused, because one text written to several records erases
+them. Content that is empty, `null` or `undefined` is refused too.
+
+`--expected-update-count <n>` pins the update to the read it is based on. Pass
+the `update_count` from your `get`; when the stored count differs, another
+write happened in between and the update is refused with nothing written.
 
 ## Metadata
 

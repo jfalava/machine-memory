@@ -10,7 +10,9 @@ export {
   type Repository,
   MemorySummarySchema,
   StoredMemoryRowSchema,
+  memoryContentError,
   normalizeStoredMemoryRow,
+  repositorySlugError,
   type MemorySummary,
 } from "./entities";
 export {
@@ -88,6 +90,7 @@ export {
   semanticCandidateCount,
   buildFtsQuery,
   compareMemoryFact,
+  decideUpsert,
   deriveFileNeighborhood,
   extractPathTerms,
   extractTerms,
@@ -95,6 +98,7 @@ export {
   reciprocalRankScore,
   sqliteDateToMs,
   type FileNeighborhood,
+  type UpsertDecision,
 } from "./ranking";
 export {
   DEFAULT_STATUS_EXPIRY_DAYS,

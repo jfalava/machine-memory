@@ -9,10 +9,12 @@ import {
   printCommandOutput,
 } from "../runtime/output";
 import {
+  findElsewhere,
   getMemoryById,
   normalizeCertaintyValue,
   parseIdSpec,
   parseTags,
+  readScope,
   stringValue,
 } from "../shared";
 
@@ -43,19 +45,27 @@ export function handleGetCommand(commandCtx: CommandContext) {
     const missingIds = ids.filter(
       (id) => !rows.some((row) => Number(row.id) === id),
     );
+    // Every object-shaped result names its repository; a miss says where the id is.
+    const scope = yield* readScope(database, rows.length);
+    const elsewhere = yield* findElsewhere(database, missingIds);
+    const missing: JsonObject = {};
+    if (missingIds.length > 0) {
+      missing.missing_ids = missingIds;
+    }
+    if (elsewhere.length > 0) {
+      missing.found_elsewhere = elsewhere;
+    }
     yield* Effect.sync(() => {
       if (outputMode.quiet || outputMode.jsonMin) {
         const payload: JsonObject = {
+          ...scope,
           count: rows.length,
           ids: rows.map((row) => Number(row.id)),
         };
         if (outputMode.jsonMin) {
           Object.assign(payload, { results: rows.map(minimalGetSummary) });
         }
-        if (missingIds.length > 0) {
-          Object.assign(payload, { missing_ids: missingIds });
-        }
-        printJson(payload);
+        printJson({ ...payload, ...missing });
         return;
       }
       if (outputMode.brief) {
@@ -63,14 +73,13 @@ export function handleGetCommand(commandCtx: CommandContext) {
         return;
       }
       if (ids.length === 1) {
-        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
+        printCommandOutput(
+          commandCtx,
+          rows[0] ?? { error: "Not found", ...scope, ...missing },
+        );
         return;
       }
-      const payload = { results: rows };
-      if (missingIds.length > 0) {
-        Object.assign(payload, { missing_ids: missingIds });
-      }
-      printCommandOutput(commandCtx, payload);
+      printCommandOutput(commandCtx, { ...scope, results: rows, ...missing });
     });
   });
 }

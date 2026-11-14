@@ -11,6 +11,7 @@ import type { RuntimeContext } from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { notFound } from "./http-failure";
 import { ftsSelect, rowByIdSelect, type ProductFilters } from "./product-api";
 import { toProductRow, toRankedRow } from "./product-logic";
 import { parseEmbedding } from "./vector-sync";
@@ -62,6 +63,30 @@ export const fetchProductRow = (
       return undefined;
     }
     return toProductRow(first);
+  });
+
+/**
+ * 404 for an id missing from `repository`. Ids are unique across repositories,
+ * so the error names the repository that does hold the id.
+ */
+export const memoryNotFound = (
+  ctx: ApiContext,
+  id: number,
+  repository: string,
+) =>
+  Effect.gen(function* () {
+    const rows = yield* ctx.sql.unsafe<{ repository: string }>(
+      `SELECT repository FROM memories WHERE id = ?`,
+      [id],
+    );
+    const holder = rows[0]?.repository;
+    return yield* notFound(
+      `No memory found with id ${id} in repository '${repository}'.${
+        holder === undefined
+          ? ""
+          : ` Memory ${id} belongs to repository '${holder}'.`
+      }`,
+    );
   });
 
 export const fetchRankedProductRows = (

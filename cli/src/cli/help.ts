@@ -57,20 +57,28 @@ export function helpPayload() {
         "update/deprecate/add --upsert-match: other active records that may rely on the changed or retired premise (strong = shares a literal path or identifier). Update or deprecate them too. Minimal output lists review_candidate_ids.",
       snippet:
         "First 140 characters of content in --json-min summaries, for triage before a full get.",
+      repository:
+        "The repository slug a read ran against. Object-shaped read output carries it; bare row arrays carry it on each row.",
+      warning:
+        "A read found nothing and the repository has no memories at all: the slug is probably not the one the memories were written under. Lists repositories that do have memories. Also printed on stderr.",
+      found_elsewhere:
+        "get: missing ids that exist in another repository, as { id, repository }. Ids are unique across repositories.",
+      stderr:
+        "Lines starting with 'machine-memory:' report dropped content, review candidates, a repository without memories, or a stale AGENTS.md block, in every output mode, so filtering stdout cannot hide them.",
     },
     global_options: {
       pretty:
         "Render human-readable output for machine commands; existing human commands keep their normal output.",
-      repo: "--repo <owner/name> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. The flag wins over the variable.",
+      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without it the slug is the path of the origin remote.",
       allow_new_repo:
-        "--allow-new-repo lets add/import write to a --repo that has no memories yet; without it a mistyped slug is refused.",
+        "--allow-new-repo lets add/import start a repository that has no memories yet. Without it they refuse when the database holds other repositories, whether the slug came from --repo or from the Git remote, and list those repositories.",
     },
     commands: {
-      help: "Show this help message",
+      help: "help [<command>|workflow]: this catalog, one command, or the memory workflow in full (scan, what to store, writes, evidence, delegation, checkpoint).",
       add: {
         usage: ADD_USAGE,
         notes:
-          "--dry-run prints the size report (and, with --upsert-match, the memory that would be matched) without writing. With --upsert-match, a best match that fails the strength bar (score below --upsert-threshold <0-100>, default 32, or similarity below 0.62) requires --force or interactive confirm before a new record is created.",
+          "--dry-run prints the size report and, with --upsert-match, the action the real write takes (update, create or refuse) and the memory that would be matched, without writing; it exits 1 when the write would be refused. With --upsert-match, a best match that fails the strength bar (score below --upsert-threshold <0-100>, default 32, or similarity below 0.62) is refused unless --force (or an interactive confirm) creates a new record. Content that is empty, 'null' or 'undefined' is refused.",
       },
       query: {
         usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--semantic|--hybrid] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -94,7 +102,7 @@ export function helpPayload() {
       update: {
         usage: UPDATE_USAGE,
         notes:
-          "--dry-run prints the per-target size report and any dropped details without writing. A content change returns dropped and review_candidates. Accepts --brief|--json-min|--quiet.",
+          "Replaces the content of exactly one memory; several ids are refused. --expected-update-count <n> refuses the update when the stored update_count differs from the one you read. --dry-run prints the size report and any dropped details without writing. A content change returns dropped and review_candidates, and reports them on stderr. Content that is empty, 'null' or 'undefined' is refused. Accepts --brief|--json-min|--quiet.",
       },
       restore: {
         usage: `restore <id> --revision <revision_id> --expected-update-count <n>${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -280,8 +288,68 @@ function pick(source: JsonObject, keys: readonly string[]): JsonObject {
   );
 }
 
-/** Help for one command; the full catalog for `help` or an unknown name. */
+/**
+ * The memory workflow in full. The AGENTS.md block that `init` writes names
+ * each step in one line and points here for the detail.
+ */
+function workflowHelpPayload(): JsonObject {
+  return {
+    name: "machine-memory",
+    version: VERSION,
+    topic: "workflow",
+    backend:
+      "Every database command takes exactly one of --local or --remote; the AGENTS.md block says which one this repository uses. The examples below write <backend> for it.",
+    scan: [
+      'Before changing code, run one focused read: suggest --files "a.ts,b.ts" for known files, query "<topic>" for a topic or a task that touches no files (--hybrid on a remote database when wording may differ, --semantic for concepts, plain for exact names and paths), or list --tags "area:..." for a broad audit. Repeat only when the touched paths or the scope change.',
+      "Read the full records that bear on the task with get <id,id,...> before relying on them.",
+      "Results are ranked candidates, not an exhaustive or authoritative list. Scores only rank results within one response. Use match_strength (strong, weak, none) and exact_matches; no_strong_match means nothing matched well, and 'nothing relevant' is a valid outcome.",
+      "A read that prints a warning about a repository without memories ran against the wrong slug: pass --repo <slug> with one of the repositories it lists.",
+      "A stored record does not outrank the user: when an explicit instruction contradicts a record, follow the instruction and update the record.",
+    ],
+    what_to_store: [
+      "One fact per record, starting with the command, API path, file path, key, threshold or identifier it is about, so exact searches find it.",
+      "Durable knowledge goes in decision, constraint, preference, reference or gotcha records. A surprising library or tool behavior is a gotcha that leads with the library name, version, behavior and fix.",
+      "Implementation, delivery and verification state goes in one status record with --expires-after-days, updated instead of duplicated. State exactly where work stands (local only, uncommitted, committed, pushed, deployed) and what verification remains; never describe local work as deployed.",
+      "Leave out pixel values, UI state, deploy outcomes, routine test results and anything obvious from the code. Facts about one machine belong in that machine's guidance file, not in a repository's memory.",
+      "Prefer --path and tag-map for tags; otherwise use scoped tags such as area:cli,topic:backend,kind:decision.",
+    ],
+    write: [
+      'Check size first: size "<text>" or --dry-run on add and update; both exit 1 when over budget and name the deficit. See embedding_budget in machine-memory help.',
+      'Change a record with update <id> "<whole new content>" <backend>, or update --match "<topic>" when the id is unknown. An update replaces the whole content: read the record first and carry over the details that still hold, such as source paths, versions and caveats. --expected-update-count <n> refuses the update when the record changed since you read it.',
+      'Create a record with add "<content>" --upsert-match "<topic>" <backend>. A strong match is updated in place; a weak match is refused, because it may be the record you meant: inspect it with --dry-run, then update it by id or pass --force to create a new record.',
+      "update --dry-run and diff <id> report dropped identifiers and sentences before writing. After a write, dropped and review_candidates are also reported on stderr.",
+      "Recover an overwrite with history <id>, then restore <id> --revision <revision_id> --expected-update-count <current_update_count>, using the current count from history. Delete is permanent and removes history; prefer deprecate.",
+    ],
+    reconcile: [
+      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates (strong ones name the same path or identifier): resolve each one or confirm it still holds.",
+      "Consolidate overlapping records instead of adding a partly redundant one. Use deprecate <id> --superseded-by <id> when a record is replaced.",
+    ],
+    evidence: [
+      "Set certainty from evidence, not from how well a record describes the code. --certainty verified is rejected without --evidence.",
+      "user_requirement: an explicit user requirement or preference. observed_implementation: what the code currently does. verified_mechanism: a confirmed technical mechanism. tested_behavior: end-user behavior exercised in tests or real use.",
+      "Seeing that the code does X establishes observed_implementation only, not that X is intended or works on every platform. Record remaining limits with --validation-gaps and keep sources and versions in --refs or --context.",
+    ],
+    delegation: [
+      "The parent agent owns memory. It scans once and passes the relevant record ids and constraints to child agents; a child scans only when its scope differs.",
+      "Children do not write memory unless the parent delegates writes to exactly one child. Otherwise they return candidates: the finding, its evidence (file paths, commands, versions, test output), the evidence kind and related record ids.",
+    ],
+    checkpoint: [
+      "Before the final response, run checkpoint <backend> --json-min: it lists the records written since --since (default 12 hours), the records related to the touched files, and review flags.",
+      "Classify every validated finding of the task, including child results and mechanisms found while investigating approaches that were later abandoned: already covered (cite the id; change it only when evidence, scope or wording is wrong), new durable knowledge (add), superseded or conflicting (update or deprecate, including dependents), transient status (one expiring status record), or intentionally omitted (with a reason).",
+    ],
+    maintenance: [
+      "Run doctor during maintenance, not every task, and review its suggestions before applying them.",
+      "On a remote database, records are canonical and vectors are a retrieval index that syncs after each write; run reindex --remote only after provisioning or changing the index or model.",
+    ],
+    full_help: "machine-memory help",
+  };
+}
+
+/** Help for one command or the workflow topic; the full catalog for `help` or an unknown name. */
 export function commandHelpPayload(command: string | undefined): JsonObject {
+  if (command === "workflow") {
+    return workflowHelpPayload();
+  }
   const full = helpPayload();
   const entry = Object.entries(full.commands).find(
     ([name]) => name === command,

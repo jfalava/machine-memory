@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLI_LIMIT_MAX,
+  decideUpsert,
   decodeRequest,
   decodeResponse,
   encodeResponse,
+  memoryContentError,
   MemoryAddArgsInputSchema,
   MemoryDeleteManyArgsSchema,
   MemoryDeprecateArgsSchema,
@@ -20,8 +22,12 @@ import {
   normalizeMemoryAddArgs,
   normalizeMemoryListArgs,
   normalizeMemoryQueryArgs,
+  PRODUCT_OPERATIONS,
+  repositorySlugError,
   SEARCH_LIMIT_MAX,
 } from "../src/index";
+
+const MemoryUpdateArgsSchema = PRODUCT_OPERATIONS.update.request;
 
 describe("product ops schemas", () => {
   it("documents the limit split", () => {
@@ -82,6 +88,99 @@ describe("product ops schemas", () => {
     ).toBe(false);
     expect(
       decodeRequest(MemoryHistoryArgsSchema, { ...history, limit: 51 }).ok,
+    ).toBe(false);
+  });
+
+  it("refuses content that is blank or a coerced missing value", () => {
+    for (const junk of ["", "   ", "null", " NULL\n", "undefined"]) {
+      expect(memoryContentError(junk)).toBeDefined();
+      expect(
+        decodeRequest(MemoryAddArgsInputSchema, {
+          repository: "owner/name",
+          content: junk,
+        }).ok,
+      ).toBe(false);
+      expect(
+        decodeRequest(MemoryUpdateArgsSchema, {
+          repository: "owner/name",
+          id: 1,
+          content: junk,
+        }).ok,
+      ).toBe(false);
+    }
+    // The words are only junk when they are the whole content.
+    expect(memoryContentError("null is returned when the row is missing")).toBe(
+      undefined,
+    );
+    expect(
+      decodeRequest(MemoryUpdateArgsSchema, {
+        repository: "owner/name",
+        id: 1,
+        certainty: "verified",
+      }).ok,
+    ).toBe(true);
+  });
+
+  it("accepts repository slugs from any git host and rejects the rest", () => {
+    for (const slug of [
+      "owner/name",
+      "@jfalava/clanka",
+      "group/subgroup/project",
+      "~user/repo.name",
+      `o/${"x".repeat(62)}`,
+    ]) {
+      expect(repositorySlugError(slug)).toBe(undefined);
+    }
+    for (const slug of [
+      "",
+      "name",
+      "owner/",
+      "/name",
+      "owner//name",
+      "owner/na me",
+      "owner/@name",
+      "@@owner/name",
+      "https://github.com/owner/name",
+      `o/${"x".repeat(63)}`,
+    ]) {
+      expect(repositorySlugError(slug)).toBeDefined();
+      expect(
+        decodeRequest(MemoryListArgsInputSchema, { repository: slug }).ok,
+      ).toBe(false);
+    }
+  });
+
+  it("decides an upsert from match strength and the override", () => {
+    const strong = { score: 32, similarity: 0.62 };
+    const lowScore = { score: 31, similarity: 0.9 };
+    const lowSimilarity = { score: 90, similarity: 0.61 };
+    const decide = (
+      match: { score: number; similarity: number } | undefined,
+      force: boolean,
+      minScore = 32,
+    ) => decideUpsert({ match, minScore, force });
+    expect(decide(undefined, false)).toBe("create");
+    expect(decide(strong, false)).toBe("update");
+    expect(decide(strong, true)).toBe("update");
+    expect(decide(lowScore, false)).toBe("refuse");
+    expect(decide(lowSimilarity, false)).toBe("refuse");
+    expect(decide(lowScore, true)).toBe("create");
+    expect(decide(lowScore, false, 31)).toBe("update");
+  });
+
+  it("bounds the expected update count on update", () => {
+    const update = { repository: "owner/name", id: 1, content: "new" };
+    expect(
+      decodeRequest(MemoryUpdateArgsSchema, {
+        ...update,
+        expected_update_count: 0,
+      }).ok,
+    ).toBe(true);
+    expect(
+      decodeRequest(MemoryUpdateArgsSchema, {
+        ...update,
+        expected_update_count: -1,
+      }).ok,
     ).toBe(false);
   });
 

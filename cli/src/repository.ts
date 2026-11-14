@@ -1,50 +1,76 @@
 import { execFileSync } from "node:child_process";
 
-import { MAX_NAMESPACE_BYTES } from "@machine-memory/contract";
+import { repositorySlugError } from "@machine-memory/contract";
 
 let cachedRepository: string | undefined;
 
-type RepositoryOverride = {
-  readonly slug: string;
+type RepositoryTarget = {
+  /** Slug from --repo or MACHINE_MEMORY_REPO; undefined infers it from Git. */
+  readonly slug: string | undefined;
+  /** --allow-new-repo: writes may start a repository that has no memories. */
   readonly allowNew: boolean;
 };
 
-let repositoryOverride: RepositoryOverride | undefined;
+let repositoryTarget: RepositoryTarget = { slug: undefined, allowNew: false };
 
-const REPOSITORY_SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-
-/** Validates an explicit owner/name slug from --repo or MACHINE_MEMORY_REPO. */
+/** Validates an explicit slug from --repo or MACHINE_MEMORY_REPO. */
 export function parseRepositorySlug(value: string): string {
   const slug = value.trim();
-  if (
-    !REPOSITORY_SLUG.test(slug) ||
-    new TextEncoder().encode(slug).byteLength > MAX_NAMESPACE_BYTES
-  ) {
+  const error = repositorySlugError(slug);
+  if (error !== undefined) {
     throw new Error(
-      `Invalid repository '${value}'. Use an owner/name slug of at most ${MAX_NAMESPACE_BYTES} bytes, e.g. --repo jfalava/machine-memory.`,
+      `Invalid repository '${value}': ${error} Example: --repo jfalava/machine-memory.`,
     );
   }
   return slug;
 }
 
 /** Process-wide target for every repository-scoped command in this run. */
-export function setRepositoryOverride(
-  override: RepositoryOverride | undefined,
-): void {
-  repositoryOverride = override;
+export function setRepositoryTarget(target: RepositoryTarget): void {
+  repositoryTarget = target;
 }
 
-export function activeRepositoryOverride(): RepositoryOverride | undefined {
-  return repositoryOverride;
+/** True when --repo or MACHINE_MEMORY_REPO names the repository. */
+export function repositoryIsExplicit(): boolean {
+  return repositoryTarget.slug !== undefined;
+}
+
+export function allowsNewRepository(): boolean {
+  return repositoryTarget.allowNew;
+}
+
+/**
+ * Repositories worth naming when `slug` has no memories: those whose
+ * name starts like its name (or the reverse) or whose path is the tail of its
+ * path (or the reverse), else every known repository.
+ */
+export function similarRepositories(
+  slug: string,
+  known: readonly string[],
+): string[] {
+  const key = (value: string) => value.replace(/^@/, "").toLowerCase();
+  const name = (value: string) => key(value).split("/").at(-1) ?? "";
+  const target = key(slug);
+  const others = known.filter((candidate) => candidate !== slug);
+  const similar = others.filter((candidate) => {
+    const other = key(candidate);
+    return (
+      name(candidate).startsWith(name(slug)) ||
+      name(slug).startsWith(name(candidate)) ||
+      other.endsWith(`/${target}`) ||
+      target.endsWith(`/${other}`)
+    );
+  });
+  return similar.length > 0 ? similar : others;
 }
 
 /**
  * The repository commands act on: --repo or MACHINE_MEMORY_REPO when given,
- * otherwise the current checkout's origin remote, normalized to owner/name.
+ * otherwise the path of the current checkout's origin remote.
  */
 export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
-  if (repositoryOverride !== undefined) {
-    return repositoryOverride.slug;
+  if (repositoryTarget.slug !== undefined) {
+    return repositoryTarget.slug;
   }
   if (cachedRepository !== undefined && cwd === process.cwd()) {
     return cachedRepository;
@@ -69,7 +95,7 @@ export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
   const repository = parseRepositoryRemote(remote);
   if (!repository) {
     throw new Error(
-      `Could not infer an owner/name repository from Git remote '${remote}'.`,
+      `Could not infer a repository slug from Git remote '${remote}'. Pass --repo <slug>.`,
     );
   }
 
@@ -79,7 +105,8 @@ export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
   return repository;
 }
 
-function parseRepositoryRemote(remote: string): string | undefined {
+/** The slug for a Git remote URL, or undefined when its path is not one. */
+export function parseRepositoryRemote(remote: string): string | undefined {
   const normalized = remote
     .trim()
     .replace(/\/+$/, "")
@@ -100,11 +127,7 @@ function parseRepositoryRemote(remote: string): string | undefined {
     }
   }
 
-  const parts = path.split("/").filter(Boolean);
-  if (parts.length < 2) {
-    return undefined;
-  }
-  const owner = parts.at(-2);
-  const name = parts.at(-1);
-  return owner && name ? `${owner}/${name}` : undefined;
+  // The whole path is the identity, so a GitLab subgroup keeps every segment.
+  const slug = path.split("/").filter(Boolean).join("/");
+  return repositorySlugError(slug) === undefined ? slug : undefined;
 }

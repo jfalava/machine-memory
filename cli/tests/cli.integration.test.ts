@@ -439,7 +439,12 @@ describe("CLI integration", () => {
     expect(deleted.json).toEqual({ deleted: id });
 
     const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
-    expect(fetched.json).toEqual({ error: "Not found" });
+    expect(fetched.json).toEqual({
+      error: "Not found",
+      repository: "jfalava/machine-memory",
+      missing_ids: [id],
+      warning: "Repository 'jfalava/machine-memory' has no memories.",
+    });
   });
 
   it("isolates records from other repositories in a shared database", async () => {
@@ -467,7 +472,163 @@ describe("CLI integration", () => {
     expect(queried.json.ids).toEqual([Number(local.json.id)]);
 
     const fetched = await runCli(cwd, dbPath, "get", String(foreignId));
-    expect(fetched.json).toEqual({ error: "Not found" });
+    expect(fetched.json).toEqual({
+      error: "Not found",
+      repository: "jfalava/machine-memory",
+      missing_ids: [foreignId],
+      found_elsewhere: [
+        { id: foreignId, repository: "someone/another-repository" },
+      ],
+    });
+    expect(fetched.stderr).toContain("--repo someone/another-repository");
+  });
+
+  it("refuses missing-value content and one content for several records", async () => {
+    const { cwd, dbPath } = await createProject();
+    const first = await runCli(cwd, dbPath, "add", "first fact", "--quiet");
+    const second = await runCli(cwd, dbPath, "add", "second fact", "--quiet");
+    const firstId = Number(first.json.id);
+    const secondId = Number(second.json.id);
+
+    for (const junk of ["null", "undefined", "  "]) {
+      const added = await runCli(cwd, dbPath, "add", junk);
+      expect(added.code).not.toBe(0);
+      const updated = await runCli(
+        cwd,
+        dbPath,
+        "update",
+        String(firstId),
+        junk,
+      );
+      expect(updated.code).not.toBe(0);
+    }
+    const diffed = await runCli(cwd, dbPath, "diff", String(firstId), "null");
+    expect(diffed.code).not.toBe(0);
+    const file = join(cwd, "import.json");
+    await writeFile(
+      file,
+      JSON.stringify([{ content: "imported fact" }, { content: "null" }]),
+    );
+    const imported = await runCli(cwd, dbPath, "import", file, "--json-min");
+    expect(imported.json.imported).toBe(0);
+    expect(String(imported.json.error)).toContain("index 1: missing_content");
+
+    const both = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      `${firstId},${secondId}`,
+      "one text for two records",
+    );
+    expect(both.code).not.toBe(0);
+    expect(String(both.json.error)).toContain("2 ids were given");
+
+    const rows = await runCliRows(cwd, dbPath, "list");
+    expect(rows.rows.map((row) => row.content)).toEqual([
+      "second fact",
+      "first fact",
+    ]);
+  });
+
+  it("pins an update to its read and reports lost content on stderr", async () => {
+    const { cwd, dbPath } = await createProject();
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploys run through scripts/deploy.sh. Rollbacks use scripts/rollback.sh.",
+      "--type",
+      "decision",
+      "--quiet",
+    );
+    const id = String(added.json.id);
+
+    const stale = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      id,
+      "based on an old read",
+      "--expected-update-count",
+      "4",
+    );
+    expect(stale.code).toBe(1);
+    expect(String(stale.json.error)).toContain("update_count 0");
+    const kept = await runCli(cwd, dbPath, "get", id);
+    expect(kept.json.update_count).toBe(0);
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      id,
+      "Deploys run through scripts/deploy.sh.",
+      "--expected-update-count",
+      "0",
+      "--json-min",
+    );
+    expect(updated.code).toBe(0);
+    expect(updated.json).toHaveProperty("dropped");
+    // stdout may be piped through a filter; the loss is also on stderr.
+    expect(updated.stderr).toContain(`Update of memory ${id} dropped`);
+    const current = await runCli(cwd, dbPath, "get", id);
+    expect(current.json.update_count).toBe(1);
+  });
+
+  it("warns about a repository without memories and guards writes to it", async () => {
+    const { cwd, dbPath } = await createProject();
+    // An empty database has nothing to confuse the slug with: no list of others.
+    const empty = await runCli(cwd, dbPath, "list", "--quiet");
+    expect(empty.json.warning).toBe(
+      "Repository 'jfalava/machine-memory' has no memories.",
+    );
+    // The same project recorded under its Amp slug: a different repository.
+    await insertMemoryFromRepository(
+      dbPath,
+      "@jfalava/machine-memory",
+      "Recorded under the Amp slug",
+    );
+
+    const queried = await runCli(cwd, dbPath, "query", "slug", "--json-min");
+    expect(queried.json.repository).toBe("jfalava/machine-memory");
+    expect(queried.json.warning).toContain("@jfalava/machine-memory");
+    expect(queried.stderr).toContain("has no memories");
+    const listed = await runCli(cwd, dbPath, "list", "--quiet");
+    expect(listed.json.warning).toContain("--repo <slug>");
+
+    const refused = await runCli(cwd, dbPath, "add", "Would start a namespace");
+    expect(refused.code).not.toBe(0);
+    expect(String(refused.json.error)).toContain("@jfalava/machine-memory");
+    expect(String(refused.json.error)).toContain("--allow-new-repo");
+
+    // --repo accepts the slug auto-detection produced, leading @ included.
+    const other = await runCliRows(
+      cwd,
+      dbPath,
+      "list",
+      "--repo",
+      "@jfalava/machine-memory",
+    );
+    expect(other.rows.map((row) => row.content)).toEqual([
+      "Recorded under the Amp slug",
+    ]);
+    expect(other.stderr).not.toContain("has no memories");
+
+    const started = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Starts the namespace on purpose",
+      "--allow-new-repo",
+      "--quiet",
+    );
+    expect(started.code).toBe(0);
+    const own = await runCli(cwd, dbPath, "list", "--quiet");
+    expect(own.json).toEqual({
+      repository: "jfalava/machine-memory",
+      count: 1,
+      ids: [Number(started.json.id)],
+    });
   });
 
   it("applies path tag mappings when adding a memory", async () => {
@@ -1023,6 +1184,10 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "--quiet",
     );
     expect(added.code).toBe(0);
+    // The block above predates block versions, so every command says so.
+    expect(added.stderr).toContain(
+      "The machine-memory block in AGENTS.md is version 1",
+    );
 
     const requests: {
       path: string;
@@ -1107,12 +1272,8 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       );
       const agentsMd = await readFile(join(cwd, "AGENTS.md"), "utf8");
       expect(agentsMd).toContain("# Project instructions");
-      expect(agentsMd).toContain(
-        "Every database-backed command requires exactly one backend flag: use `--remote` for this repository.",
-      );
-      expect(agentsMd).not.toContain(
-        "For this one use `--local` for this repository.",
-      );
+      expect(agentsMd).toContain("Every database command takes `--remote`.");
+      expect(agentsMd).not.toContain("local instructions");
     } finally {
       await new Promise<void>((resolveServer, rejectServer) =>
         server.close((error) =>
@@ -1165,7 +1326,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(error).toMatch(/over the 512-byte embedding estimate by \d+ bytes/);
 
     const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
-    expect(fetched.json).toEqual({ error: "Not found" });
+    expect(fetched.json.error).toBe("Not found");
   });
 
   it("validates retained metadata before updating an upsert match", async () => {
@@ -1319,7 +1480,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
 
     const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
-    expect(fetched.json).toEqual({ error: "Not found" });
+    expect(fetched.json.error).toBe("Not found");
   });
 
   it("reports the update size per target with --dry-run without writing", async () => {
@@ -1355,12 +1516,11 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       cwd,
       dbPath,
       "update",
-      `${id},${id + 1}`,
+      String(id),
       "small content",
       "--dry-run",
       "--local",
     );
-    // Missing ids are filtered before measurement; the found target fits.
     expect(okDry.code).toBe(0);
     expect(okDry.json.count).toBe(1);
     const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
@@ -1398,21 +1558,37 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(strong.json.size?.within_budget).toBe(true);
 
-    // A weak match would NOT be updated; the write path creates a new record.
-    const weak = await runCli(
-      cwd,
-      dbPath,
+    // The dry run reports what the real write does: a weak match is refused,
+    // creates only with --force, and nothing matching creates.
+    const weakArgs = [
       "add",
       "unrelated omega psi quantum flux capacitor notes",
       "--upsert-match",
       "alpha beta gamma",
       "--dry-run",
       "--local",
-    );
-    expect(weak.code).toBe(0);
-    expect(weak.json.action).toBe("create");
+    ];
+    const weak = await runCli(cwd, dbPath, ...weakArgs);
+    expect(weak.code).toBe(1);
+    expect(weak.json.action).toBe("refuse");
     expect(weak.json.would_match?.id).toBe(existingId);
     expect(String(weak.json.note)).toContain("not a strong upsert match");
+    const forced = await runCli(cwd, dbPath, ...weakArgs, "--force");
+    expect(forced.code).toBe(0);
+    expect(forced.json.action).toBe("create");
+    expect(forced.json.would_match?.id).toBe(existingId);
+    const unmatched = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "unrelated omega psi quantum flux capacitor notes",
+      "--upsert-match",
+      "zzzunmatched",
+      "--dry-run",
+    );
+    expect(unmatched.code).toBe(0);
+    expect(unmatched.json.action).toBe("create");
+    expect(unmatched.json).not.toHaveProperty("would_match");
 
     const fetched = await runCli(
       cwd,
@@ -1537,7 +1713,11 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "--quiet",
       "--local",
     );
-    expect(quiet.json).toEqual({ count: 1, ids: [id] });
+    expect(quiet.json).toEqual({
+      repository: "jfalava/machine-memory",
+      count: 1,
+      ids: [id],
+    });
 
     const brief = await runCliText(
       cwd,

@@ -2,9 +2,12 @@ import { createInterface } from "node:readline/promises";
 
 import {
   canonicalTags,
+  decideUpsert,
   droppedDetails,
   hasDroppedDetails,
+  memoryContentError,
   type EvidenceKind,
+  type UpsertDecision,
   compareMemoryFact,
   UPSERT_DEFAULT_MIN_SCORE,
   UPSERT_MIN_SIMILARITY,
@@ -17,6 +20,7 @@ import {
   hasFlag,
   printJson,
   usageError,
+  warnOnStderr,
 } from "../../cli-utils";
 import {
   assertBgeBreakdown,
@@ -226,6 +230,34 @@ function reconciliationFields(
   return fields;
 }
 
+/** Tells stderr what a write lost, since stdout may be piped through a filter. */
+function warnReconciliation(
+  subject: string,
+  reconciliation: Reconciliation | undefined,
+): void {
+  const findings: string[] = [];
+  const count = (value: JsonValue | undefined) =>
+    Array.isArray(value) ? value.length : 0;
+  const identifiers = count(reconciliation?.dropped?.identifiers);
+  const sentences = count(reconciliation?.dropped?.sentences);
+  if (identifiers > 0 || sentences > 0) {
+    findings.push(
+      `dropped ${identifiers} identifier(s) and ${sentences} sentence(s) of the old content`,
+    );
+  }
+  const candidates = reconciliation?.reviewCandidates ?? [];
+  if (candidates.length > 0) {
+    findings.push(
+      `${candidates.length} record(s) may rely on the old content: ${candidates.map((row) => `#${Number(row.id)}`).join(", ")}`,
+    );
+  }
+  if (findings.length > 0) {
+    warnOnStderr(
+      `${subject} ${findings.join("; ")}. See dropped and review_candidates in the output.`,
+    );
+  }
+}
+
 /**
  * Pure token-budget analysis for the embedding text a write would produce.
  * Uses the real BGE tokenizer when reachable and degrades to the Worker's
@@ -375,6 +407,21 @@ function assertAddEvidence(metadata: AddMetadata, existing?: JsonObject) {
   );
 }
 
+/** Content that is present and not a coerced missing value. */
+function requireMemoryContent(
+  content: string | undefined,
+  usage: string,
+): string {
+  if (!content) {
+    usageError(`Usage: ${usage}`);
+  }
+  const invalid = memoryContentError(content);
+  if (invalid !== undefined) {
+    usageError(`${invalid} Nothing was written.`);
+  }
+  return content;
+}
+
 function resolveAddContent(
   flags: CommandFlags,
   positionals: string[],
@@ -386,11 +433,7 @@ function resolveAddContent(
       if (contentFromArg && contentFromFile !== undefined) {
         usageError(`Usage: ${ADD_USAGE}`);
       }
-      const content = contentFromFile ?? contentFromArg;
-      if (!content) {
-        usageError(`Usage: ${ADD_USAGE}`);
-      }
-      return content;
+      return requireMemoryContent(contentFromFile ?? contentFromArg, ADD_USAGE);
     }),
   );
 }
@@ -450,41 +493,36 @@ function upsertComparableText(content: string, metadata: AddMetadata): string {
   return [content, metadata.tags, metadata.memo].join(" ");
 }
 
-function isStrongUpsertMatch(
-  matched: JsonObject,
-  content: string,
-  metadata: AddMetadata,
-  minScore: number = UPSERT_DEFAULT_MIN_SCORE,
-): boolean {
-  const matchedText = [
-    stringValue(matched.content),
-    stringValue(matched.tags),
-    stringValue(matched.context),
-  ].join(" ");
-  const incomingText = upsertComparableText(content, metadata);
-  const similarity = compareMemoryFact(matchedText, incomingText).similarity;
-  const score = Number(matched.score ?? 0);
-  return similarity >= UPSERT_MIN_SIMILARITY && score >= minScore;
-}
+/** FTS score and unrounded similarity of the best match; decideUpsert reads both. */
+type UpsertMatchScores = { score: number; similarity: number };
 
-function upsertMatchInfo(
+function upsertMatchScores(
   matched: JsonObject,
   content: string,
   metadata: AddMetadata,
-): JsonObject {
+): UpsertMatchScores {
   const matchedText = [
     stringValue(matched.content),
     stringValue(matched.tags),
     stringValue(matched.context),
   ].join(" ");
   return {
-    id: Number(matched.id ?? 0),
     score: Number(matched.score ?? 0),
-    similarity:
-      Math.round(
-        compareMemoryFact(matchedText, upsertComparableText(content, metadata))
-          .similarity * 1000,
-      ) / 1000,
+    similarity: compareMemoryFact(
+      matchedText,
+      upsertComparableText(content, metadata),
+    ).similarity,
+  };
+}
+
+function upsertMatchInfo(
+  matched: JsonObject,
+  scores: UpsertMatchScores,
+): JsonObject {
+  return {
+    id: Number(matched.id ?? 0),
+    score: scores.score,
+    similarity: Math.round(scores.similarity * 1000) / 1000,
     memory_type: stringValue(matched.memory_type, "convention"),
     status: stringValue(matched.status, "active"),
     // 120 characters plus the ellipsis.
@@ -651,37 +689,43 @@ function maybeHandleAddUpsert(
   if (upsertQuery === undefined) {
     return Effect.succeed(false);
   }
-  const dryRun = hasFlag(flags, "--dry-run");
-  const force = hasFlag(flags, "--force");
   return Effect.gen(function* () {
     const minScore = yield* resolveUpsertMinScore(flags);
     const matched = yield* findMemoryByMatch(database, upsertQuery);
-    const strong =
-      matched !== null &&
-      isStrongUpsertMatch(matched, content, metadata, minScore);
-    const info =
-      matched !== null ? upsertMatchInfo(matched, content, metadata) : null;
+    const scores =
+      matched === null
+        ? undefined
+        : upsertMatchScores(matched, content, metadata);
+    const decision = decideUpsert({
+      match: scores,
+      minScore,
+      force: hasFlag(flags, "--force"),
+    });
+    const info = matched && scores ? upsertMatchInfo(matched, scores) : null;
     const summary = info ? summarizeUpsertMatch(info) : null;
-    assertAddEvidence(metadata, strong && matched ? matched : undefined);
+    assertAddEvidence(
+      metadata,
+      decision === "update" && matched ? matched : undefined,
+    );
 
-    if (dryRun) {
+    if (hasFlag(flags, "--dry-run")) {
       return yield* runAddUpsertDryRun({
         content,
         metadata,
         outputMode,
         matched,
-        strong,
+        decision,
         info,
         summary,
         minScore,
       });
     }
 
-    if (matched !== null && !strong && summary) {
-      yield* enforceWeakMatchGate(summary, minScore, force);
+    if (decision === "refuse" && summary) {
+      yield* enforceWeakMatchGate(summary, minScore);
     }
 
-    if (strong && matched) {
+    if (decision === "update" && matched) {
       return yield* runStrongUpsertUpdate({
         database,
         matched,
@@ -743,15 +787,16 @@ function runStrongUpsertUpdate(params: {
       );
     }
     const reconciliation = yield* reconcileWrite(database, canonical, content);
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      warnReconciliation(`Upsert into memory ${matchedId}`, reconciliation);
       printUpsertResult(outputMode, "updated", matchedId, {
         tokenReport: params.tokenReportEnabled ? breakdown : undefined,
         reconciliation: reconciliationFields(
           reconciliation,
           hasMinimalOutput(outputMode),
         ),
-      }),
-    );
+      });
+    });
     return true;
   });
 }
@@ -789,7 +834,7 @@ type AddUpsertDryRunParams = {
   metadata: AddMetadata;
   outputMode: CommandContext["outputMode"];
   matched: JsonObject | null;
-  strong: boolean;
+  decision: UpsertDecision;
   info: JsonObject | null;
   summary: UpsertMatchSummary | null;
   minScore: number;
@@ -799,18 +844,22 @@ function addUpsertDryRunPayload(
   params: AddUpsertDryRunParams,
   size: BgeTokenBreakdown,
 ): JsonObject {
-  const { strong, info, summary, minScore } = params;
+  const { decision, info, summary, minScore } = params;
   const payload: JsonObject = {
     command: "add",
     dry_run: true,
-    action: strong ? "update" : "create",
+    action: decision,
   };
   if (info) {
     Object.assign(payload, { would_match: info });
   }
-  if (!strong && summary) {
+  if (decision !== "update" && summary) {
     Object.assign(payload, {
-      note: `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, similarity ${summary.similarity}; needs score >= ${minScore} AND similarity >= ${UPSERT_MIN_SIMILARITY}); without --force this write creates a NEW record instead of updating #${summary.id}.`,
+      note: `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, similarity ${summary.similarity}; needs score >= ${minScore} AND similarity >= ${UPSERT_MIN_SIMILARITY}); ${
+        decision === "refuse"
+          ? `this write is refused. Update #${summary.id} by id, pass --force to create a new record, or lower --upsert-threshold.`
+          : `--force creates a NEW record instead of updating #${summary.id}.`
+      }`,
     });
   }
   Object.assign(payload, { size: embeddingSizeReport(size) });
@@ -822,7 +871,7 @@ function runAddUpsertDryRun(
 ): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
   return Effect.gen(function* () {
     const prospectiveParts =
-      params.strong && params.matched
+      params.decision === "update" && params.matched
         ? memoryVectorEmbeddingParts(
             addUpsertEmbeddingDocument(
               params.matched,
@@ -837,7 +886,8 @@ function runAddUpsertDryRun(
         { command: "add", outputMode: params.outputMode },
         addUpsertDryRunPayload(params, size),
       );
-      if (!size.within_limit) {
+      // A dry run exits the way the real write would.
+      if (!size.within_limit || params.decision === "refuse") {
         process.exitCode = 1;
       }
     });
@@ -845,14 +895,11 @@ function runAddUpsertDryRun(
   });
 }
 
+/** A refused weak match fails, or asks for confirmation on a terminal. */
 function enforceWeakMatchGate(
   summary: UpsertMatchSummary,
   minScore: number,
-  force: boolean,
 ): Effect.Effect<void, CommandError> {
-  if (force) {
-    return Effect.void;
-  }
   const refusal = () =>
     commandError("add", weakMatchGateMessage(summary, minScore));
   if (!process.stdin.isTTY) {
@@ -1200,11 +1247,10 @@ function resolveUpdateContent(
       if (contentFromArg && contentFromFile !== undefined) {
         usageError(`Usage: ${UPDATE_USAGE}`);
       }
-      const content = contentFromFile ?? contentFromArg;
-      if (!content) {
-        usageError(`Usage: ${UPDATE_USAGE}`);
-      }
-      return content;
+      return requireMemoryContent(
+        contentFromFile ?? contentFromArg,
+        UPDATE_USAGE,
+      );
     }),
   );
 }
@@ -1532,6 +1578,41 @@ function validateProspectiveUpdates(
   });
 }
 
+/** One content belongs to one record; the same text on several ids erases them. */
+function assertSingleContentTarget(targetIds: number[]): void {
+  if (targetIds.length === 0) {
+    usageError(`Usage: ${UPDATE_USAGE}`);
+  }
+  if (targetIds.length > 1) {
+    usageError(
+      `update replaces the content of one memory, and ${targetIds.length} ids were given (${targetIds.join(", ")}). Update each memory with its own content. Nothing was written.`,
+    );
+  }
+}
+
+/** --expected-update-count pins the update to the read it was based on. */
+function assertExpectedUpdateCount(
+  flags: CommandFlags,
+  prospective: ProspectiveUpdate[],
+): Effect.Effect<void, CommandError> {
+  const expected = parseIntegerFlag(flags, "--expected-update-count");
+  if (expected === undefined) {
+    return Effect.void;
+  }
+  if (expected === null || expected < 0) {
+    usageError("--expected-update-count must be a non-negative integer.");
+  }
+  const stale = prospective.find((entry) => entry.updateCount !== expected);
+  return stale === undefined
+    ? Effect.void
+    : Effect.fail(
+        commandError(
+          "update",
+          `Memory ${stale.id} has update_count ${stale.updateCount}, not the expected ${expected}; read it again before updating. Nothing was written.`,
+        ),
+      );
+}
+
 export function handleUpdateCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { flags } = commandCtx;
@@ -1546,9 +1627,7 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       contentFromArg,
       commandCtx.fileSystem,
     );
-    if (targetIds.length === 0) {
-      usageError(`Usage: ${UPDATE_USAGE}`);
-    }
+    assertSingleContentTarget(targetIds);
     const tokenReportEnabled = hasFlag(flags, "--token-report");
     const prospective = yield* prospectiveUpdateDocuments(
       flags,
@@ -1556,6 +1635,7 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       targetIds,
       content,
     );
+    yield* assertExpectedUpdateCount(flags, prospective);
     if (hasFlag(flags, "--dry-run")) {
       yield* runUpdateDryRun(commandCtx, prospective);
       return;
@@ -1592,6 +1672,12 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
           unprocessed: result.unprocessed ?? [],
         });
         return;
+      }
+      for (const reconciliation of reconciliations) {
+        warnReconciliation(
+          `Update of memory ${reconciliation.id}`,
+          reconciliation,
+        );
       }
       printUpdateResults({
         commandCtx,
@@ -1676,6 +1762,10 @@ function printDeprecateResults(params: {
     hasMinimalOutput(commandCtx.outputMode),
   );
   const { outputMode } = commandCtx;
+  warnReconciliation(
+    `Deprecating ${rows.map((row) => `#${Number(row.id)}`).join(", ")}:`,
+    { id: 0, reviewCandidates: params.reviewCandidates },
+  );
   if (targetIds.length === 1 && !rows.length) {
     printCommandOutput(commandCtx, {
       id: targetIds[0],

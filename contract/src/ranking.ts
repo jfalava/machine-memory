@@ -1,4 +1,4 @@
-import { SEARCH_LIMIT_MAX } from "./literals";
+import { SEARCH_LIMIT_MAX, UPSERT_MIN_SIMILARITY } from "./literals";
 import type { FactCheckResult } from "./product/results";
 
 /**
@@ -118,6 +118,33 @@ export function compareMemoryFact(
       .filter((term) => !candidateTerms.has(term))
       .slice(0, 12),
   };
+}
+
+export type UpsertDecision = "update" | "create" | "refuse";
+
+/**
+ * What `add` with an upsert match query does with its best match: update a
+ * strong match, create when nothing matched or a weak match is overridden, and
+ * refuse a weak match otherwise. Dry runs and real writes share this decision.
+ */
+export function decideUpsert(input: {
+  readonly match:
+    | { readonly score: number; readonly similarity: number }
+    | undefined;
+  readonly minScore: number;
+  readonly force: boolean;
+}): UpsertDecision {
+  const { match } = input;
+  if (match === undefined) {
+    return "create";
+  }
+  if (
+    match.similarity >= UPSERT_MIN_SIMILARITY &&
+    match.score >= input.minScore
+  ) {
+    return "update";
+  }
+  return input.force ? "create" : "refuse";
 }
 
 export function normalizeSuggestPath(value: string): string {

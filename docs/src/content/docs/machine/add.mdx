@@ -43,7 +43,13 @@ machine-memory add "New wording" --upsert-match "topic" \
 
 `--dry-run` never writes: without `--upsert-match` it prints the size report
 for a would-be `create`, and with it, the candidate plus the prospective
-merged-document size. It exits `1` when the text is over budget.
+merged-document size. `action` is what the real write does: `update` for a
+strong match, `create` when nothing matches or `--force` overrides a weak
+match, and `refuse` for a weak match without `--force`. It exits `1` when the
+text is over budget or the write would be refused.
+
+Content that is empty, `null` or `undefined` is refused: those are missing
+values turned into text by a shell or a script.
 
 ## Options
 

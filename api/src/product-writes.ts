@@ -2,6 +2,7 @@ import {
   buildFtsQuery,
   canonicalTags,
   compareMemoryFact,
+  decideUpsert,
   decodeRequest,
   droppedDetails,
   embeddingSizeReport,
@@ -33,6 +34,7 @@ import * as Effect from "effect/Effect";
 import {
   fetchProductRow,
   fetchRankedProductRows,
+  memoryNotFound,
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
@@ -40,7 +42,6 @@ import {
   badRequest,
   conflict,
   embeddingBudgetError,
-  memoryNotFound,
   notFound,
 } from "./http-failure";
 import {
@@ -363,9 +364,6 @@ const upsertProductAdd = (
       [best.row.content, best.row.tags, best.row.context].join(" "),
       [args.content, args.tags ?? "", args.context ?? ""].join(" "),
     );
-    const strong =
-      check.similarity >= UPSERT_MIN_SIMILARITY &&
-      best.score >= args.upsert_threshold;
     const info: UpsertMatchInfo = {
       id: best.row.id,
       score: best.score,
@@ -374,12 +372,17 @@ const upsertProductAdd = (
       status: best.row.status,
       content_head: contentHead(best.row.content),
     };
-    if (!strong && !args.force) {
+    const decision = decideUpsert({
+      match: info,
+      minScore: args.upsert_threshold,
+      force: args.force === true,
+    });
+    if (decision === "refuse") {
       return yield* badRequest(
         `Best match #${info.id} is not a strong upsert match (score ${info.score}, similarity ${info.similarity}; needs score >= ${args.upsert_threshold} AND similarity >= ${UPSERT_MIN_SIMILARITY}). Inspect it with product/get, rerun with force true, or lower upsert_threshold.`,
       );
     }
-    if (!strong) {
+    if (decision === "create") {
       return yield* createProduct(ctx, args, info);
     }
     return yield* applyStrongUpsert(ctx, input, info);
@@ -504,7 +507,7 @@ const applyProductUpdate = (
   Effect.gen(function* () {
     const existing = yield* fetchProductRow(ctx, input.repository, targetId);
     if (!existing) {
-      return yield* memoryNotFound(targetId, input.repository);
+      return yield* memoryNotFound(ctx, targetId, input.repository);
     }
     const invalid = validateUpdateFields(existing, targetId, input);
     if (invalid !== undefined) {
@@ -512,6 +515,14 @@ const applyProductUpdate = (
     }
     if (matched !== undefined && existing.status !== "active") {
       return yield* conflict("Match is no longer active; retry.");
+    }
+    if (
+      input.expected_update_count !== undefined &&
+      input.expected_update_count !== existing.update_count
+    ) {
+      return yield* conflict(
+        `Memory ${targetId} has update_count ${existing.update_count}, not the expected ${input.expected_update_count}; read it again before updating.`,
+      );
     }
     if (
       input.superseded_by !== undefined &&
@@ -596,7 +607,7 @@ export const productWriteHandlers = (
     Effect.gen(function* () {
       const current = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!current) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       const snapshot = yield* ctx.sql.unsafe<JsonObject>(
         `SELECT * FROM memory_history WHERE repository = ? AND memory_id = ? AND revision_id = ?`,
