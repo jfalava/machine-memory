@@ -20,7 +20,7 @@ New and updated memories synchronize automatically, so reindexing is normally a 
 
 The command requires `--remote`; local databases do not have a Vectorize binding.
 
-Success means the work is durably queued, not that semantic search already reflects it. The coordinator retries failed delivery with exponential backoff and periodically repairs delivered entries. Re-running the command is safe; it never indexes a client-side snapshot.
+Success means the work is durably queued, not that semantic search already reflects it. The coordinator retries failed delivery with exponential backoff and re-sends each delivery once an hour later, in case Vectorize applied an older mutation after it. It does not re-embed unchanged memories after that, so run this command to repair vectors that went missing later. Re-running the command is safe; it never indexes a client-side snapshot.
 
 ## Output
 

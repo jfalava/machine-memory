@@ -12,6 +12,7 @@
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:iac",
     "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",

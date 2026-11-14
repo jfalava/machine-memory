@@ -1,5 +1,5 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { RuntimeContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -110,7 +110,15 @@ export function handleOAuthPath(
       createOauthProvider(new URL("/mcp", webRequest.url).href),
     );
     return yield* Effect.promise(() =>
-      provider.fetch(webRequest, oauthEnv, execCtx.raw),
+      // SAFETY: the same runtime object. Alchemy types it with the module copy
+      // of workers-types, whose mapVirtualHost Request lacks the DOM fields
+      // bun-types merges into the global ExecutionContext's Request.
+      provider.fetch(
+        webRequest,
+        oauthEnv,
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- justified above: two workers-types views of one ExecutionContext, not a domain type narrowing.
+        execCtx.raw as unknown as ExecutionContext,
+      ),
     );
   });
 

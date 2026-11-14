@@ -15,7 +15,7 @@ The [Alchemy stack](https://github.com/jfalava/machine-memory/tree/master/iac) u
 | **MCP worker**     | API-only gateway: MCP tools at `/mcp` + OAuth (`/authorize`, `/callback`, …) forwarded to `/product/*` over a service binding     |
 | **Docs worker**    | Optional static docs site (catch-all on the router)                                                                               |
 | D1 database        | Canonical memory rows, FTS, migration identity mappings, and durable vector intent                                                |
-| Vector coordinator | Singleton Durable Object; its alarm is the sole Vectorize writer, with retries and periodic repair                                |
+| Vector coordinator | Singleton Durable Object; its alarm is the sole Vectorize writer, with retries and one repair per delivery                        |
 | Vectorize index    | Semantic embeddings                                                                                                               |
 | Workers AI         | BGE embeddings for writes and semantic search                                                                                     |
 | KV (OAuth)         | Authorization state and tokens when MCP is enabled                                                                                |

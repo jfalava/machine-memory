@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import { run } from "@alchemy.run/test/Core";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import { Stage } from "alchemy/Stage";
 import * as State from "alchemy/State";
-import { run } from "alchemy/Test/Core";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";

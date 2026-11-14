@@ -1,5 +1,5 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import type { RuntimeContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";

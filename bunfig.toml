@@ -1,5 +1,5 @@
 [install]
-minimunReleaseAge = 86400
+minimumReleaseAge = 86400
 minimumReleaseAgeExcludes = [
   "@types/node",
   "@effect/tsgo",
@@ -7,5 +7,6 @@ minimumReleaseAgeExcludes = [
   "effect",
   "@effect/*",
   "alchemy",
+  "@alchemy.run/*",
   "@distilled.cloud/*",
 ]
