@@ -5,7 +5,10 @@ import {
 import { Cause, Effect, Exit, Schema } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
-import { handleReindexCommand } from "@/cli/commands/reindex";
+import {
+  handleIndexCommand,
+  handleReindexCommand,
+} from "@/cli/commands/reindex";
 import type { CommandContext } from "@/cli/runtime/context";
 import {
   combineHybridResults,
@@ -23,6 +26,15 @@ import type { SqlQueryBinding } from "@/db";
 import { MemoryDatabase, type MemoryDatabaseApi } from "@/effect/database";
 import { MemoryDatabaseError } from "@/effect/errors";
 import { remoteLayer } from "@/effect/remote-database";
+
+const decodeIndexStatus = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.StructWithRest(
+      Schema.Struct({ oldest_pending_seconds: Schema.NullOr(Schema.Finite) }),
+      [Schema.Record(Schema.String, Schema.Json)],
+    ),
+  ),
+);
 
 describe("Effect application boundaries", () => {
   it("preserves the existing pure memory semantics", () => {
@@ -216,6 +228,221 @@ describe("Effect application boundaries", () => {
       expect(run.mock.calls[0]?.[0]).toContain("UPDATE memory_vector_sync");
       expect(run.mock.calls[0]?.[0]).toContain("WHERE repository = ?");
       expect(info).toHaveBeenCalledWith(expect.stringContaining('"queued":1'));
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  type IndexFlag = [string, string | true];
+
+  /** A remote database whose writes and reads are recorded by the test. */
+  function indexContext(
+    command: string,
+    flags: IndexFlag[],
+    database: Pick<MemoryDatabaseApi, "run" | "get" | "all">,
+    positionals: string[] = [],
+  ): CommandContext {
+    return {
+      flags: new Map<string, string | true>([["--remote", true], ...flags]),
+      positionals,
+      outputMode: {
+        brief: false,
+        jsonMin: false,
+        noConflicts: false,
+        pretty: false,
+        quiet: false,
+      },
+      command,
+      database: {
+        ...database,
+        vectorize: { search: () => Effect.succeed({ count: 0, matches: [] }) },
+      },
+      // SAFETY: the index commands never read context.fileSystem.
+      fileSystem: {} as CommandContext["fileSystem"],
+    };
+  }
+
+  const reindexCases: {
+    flags: IndexFlag[];
+    where: string | undefined;
+    params: (string | number)[];
+  }[] = [
+    {
+      flags: [["--failed-only", true]],
+      where:
+        "WHERE repository = ? AND generation > delivered_generation AND last_error IS NOT NULL",
+      params: ["jfalava/machine-memory"],
+    },
+    {
+      flags: [["--id", "7,9"]],
+      where: "WHERE repository = ? AND memory_id IN (?, ?)",
+      params: ["jfalava/machine-memory", 7, 9],
+    },
+    {
+      flags: [
+        ["--all-repos", true],
+        ["--failed-only", true],
+      ],
+      where:
+        "WHERE generation > delivered_generation AND last_error IS NOT NULL",
+      params: [],
+    },
+    {
+      flags: [["--all-repos", true]],
+      where: undefined,
+      params: [],
+    },
+  ];
+  it.each(reindexCases)(
+    "reindex narrows the queued rows: $flags",
+    async ({ flags, where, params }) => {
+      const run = vi.fn((_sql: string, _params?: unknown[]) =>
+        Effect.succeed({ changes: 1 }),
+      );
+      const info = vi
+        .spyOn(console, "info")
+        .mockImplementation(() => undefined);
+      try {
+        const exit = await Effect.runPromiseExit(
+          handleReindexCommand(
+            indexContext("reindex", flags, {
+              run,
+              get: () => Effect.undefined,
+              all: () => Effect.succeed([]),
+            }),
+          ),
+        );
+        expect(exit._tag).toBe("Success");
+        const [sql, bound] = run.mock.calls[0] ?? [];
+        if (where === undefined) {
+          expect(sql).not.toContain("WHERE");
+        } else {
+          expect(String(sql).replace(/\s+/g, " ")).toContain(where);
+        }
+        expect(sql).toContain("queued_at = unixepoch() * 1000");
+        expect(bound).toEqual(params);
+      } finally {
+        info.mockRestore();
+      }
+    },
+  );
+
+  it("reindex refuses --id together with --all-repos", async () => {
+    const run = vi.fn(() => Effect.succeed({ changes: 1 }));
+    const exit = await Effect.runPromiseExit(
+      Effect.suspend(() =>
+        handleReindexCommand(
+          indexContext(
+            "reindex",
+            [
+              ["--all-repos", true],
+              ["--id", "7"],
+            ],
+            {
+              run,
+              get: () => Effect.undefined,
+              all: () => Effect.succeed([]),
+            },
+          ),
+        ),
+      ),
+    );
+    expect(exit._tag).toBe("Failure");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("index status reports pending, retrying and parked records with their errors", async () => {
+    const now = Date.now();
+    const get = vi.fn((_sql: string, _params?: unknown[]) =>
+      Effect.succeed({
+        pending: 3,
+        retrying: 2,
+        parked: 1,
+        oldest_queued_at: now - 90_000,
+      }),
+    );
+    const all = vi.fn((_sql: string, _params?: unknown[]) =>
+      Effect.succeed([
+        { error: "AI unavailable", parked: 0, count: 2, ids: "4,5" },
+        {
+          error: "Memory is over by 1 bytes of 2,000.",
+          parked: 1,
+          count: 1,
+          ids: "9",
+        },
+      ]),
+    );
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      const exit = await Effect.runPromiseExit(
+        handleIndexCommand(
+          indexContext(
+            "index",
+            [],
+            { run: () => Effect.succeed({}), get, all },
+            ["status"],
+          ),
+        ),
+      );
+      expect(exit._tag).toBe("Success");
+      expect(get.mock.calls[0]?.[1]?.at(-1)).toBe("jfalava/machine-memory");
+      const printed = decodeIndexStatus(String(info.mock.calls[0]?.[0]));
+      expect(printed).toMatchObject({
+        repository: "jfalava/machine-memory",
+        all_repositories: false,
+        pending: 3,
+        retrying: 2,
+        parked: 1,
+        failures: [
+          { error: "AI unavailable", state: "retrying", count: 2, ids: [4, 5] },
+          {
+            error: "Memory is over by 1 bytes of 2,000.",
+            state: "parked",
+            count: 1,
+            ids: [9],
+          },
+        ],
+      });
+      expect(printed.oldest_pending_seconds).toBeGreaterThanOrEqual(90);
+      expect(printed.oldest_pending_seconds).toBeLessThan(120);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("index status --all-repos reads every repository", async () => {
+    const get = vi.fn((_sql: string, _params?: unknown[]) =>
+      Effect.succeed({
+        pending: 0,
+        retrying: 0,
+        parked: 0,
+        oldest_queued_at: null,
+      }),
+    );
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    try {
+      await Effect.runPromise(
+        handleIndexCommand(
+          indexContext(
+            "index",
+            [["--all-repos", true]],
+            {
+              run: () => Effect.succeed({}),
+              get,
+              all: () => Effect.succeed([]),
+            },
+            ["status"],
+          ),
+        ),
+      );
+      expect(get.mock.calls[0]?.[0]).not.toContain("repository = ?");
+      expect(decodeIndexStatus(String(info.mock.calls[0]?.[0]))).toMatchObject({
+        repository: null,
+        all_repositories: true,
+        pending: 0,
+        oldest_pending_seconds: null,
+        failures: [],
+      });
     } finally {
       info.mockRestore();
     }

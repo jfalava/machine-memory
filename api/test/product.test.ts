@@ -64,7 +64,6 @@ beforeAll(async () => {
     ],
   });
   db = await mf.getD1Database("DB");
-  // D1 exec splits on lines. Keep each complete trigger as one prepared statement.
   for (const name of [
     "0001_machine_memory",
     "0002_vector_sync",
@@ -72,14 +71,20 @@ beforeAll(async () => {
     "0004_memory_history",
     "0005_memory_evidence",
     "0006_memory_evidence_triggers",
+    "0007_embedding_budget",
+    "0008_vector_sync_queue",
   ]) {
-    const sql = await readFile(
-      new URL(`../../iac/migrations/${name}.sql`, import.meta.url),
-      "utf8",
-    );
-    await db.exec(sql.replace(/--[^\n]*/g, "").replace(/\n/g, " "));
+    await applyMigration(name);
   }
 });
+// D1 exec splits on lines. Keep each complete trigger as one prepared statement.
+async function applyMigration(name: string) {
+  const sql = await readFile(
+    new URL(`../../iac/migrations/${name}.sql`, import.meta.url),
+    "utf8",
+  );
+  await db.exec(sql.replace(/--[^\n]*/g, "").replace(/\n/g, " "));
+}
 afterAll(async () => {
   await mf?.dispose();
 });
@@ -536,13 +541,13 @@ test("failed writes and invalid legacy restores leave both history and vector in
   ).rejects.toThrow();
   for (const [column, value, message] of [
     ["refs", "not json", "current schema"],
-    ["refs", "[]", "embedding budget"],
+    ["refs", "[]", "over by 100 bytes of 2,000"],
   ]) {
     await db
       .prepare(
         `UPDATE memory_history SET ${column} = ?, content = ? WHERE revision_id = ?`,
       )
-      .bind(value, "x".repeat(600), revision)
+      .bind(value, "x".repeat(2100), revision)
       .run();
     const invalid = await productError("restore", {
       id,
@@ -875,7 +880,7 @@ test("migration retries retain inactive records and distinct metadata by source 
 test.each<Record<string, JsonValue>>([
   { refs: "{}" },
   { refs: "[1]" },
-  { content: "x".repeat(600) },
+  { content: "x".repeat(2001) },
   { expires_after_days: 3 },
 ])(
   "migration preflights the whole batch before a bad final row: %j",
@@ -923,7 +928,8 @@ test("supersession rejects cross-repository/self/missing targets and repairs del
 });
 
 test("SQL guards reject complementary oversized patches and invalid refs atomically", async () => {
-  const id = await insert("x".repeat(300));
+  // 1,800 + "\nTags: " (7) + 90 = 1,897 bytes fits; "\nContext: " (10) + 94 does not.
+  const id = await insert("x".repeat(1800));
   await db
     .prepare("UPDATE memories SET tags = ? WHERE id = ?")
     .bind("t".repeat(90), id)
@@ -931,9 +937,18 @@ test("SQL guards reject complementary oversized patches and invalid refs atomica
   await expect(
     db
       .prepare("UPDATE memories SET context = ? WHERE id = ?")
-      .bind("c".repeat(90), id)
+      .bind("c".repeat(94), id)
       .run(),
-  ).rejects.toThrow(/512/);
+  ).rejects.toThrow(/2000 byte embedding budget/);
+  // One byte less lands exactly on the cap, which the trigger accepts.
+  await db
+    .prepare("UPDATE memories SET context = ? WHERE id = ?")
+    .bind("c".repeat(93), id)
+    .run();
+  await db
+    .prepare("UPDATE memories SET context = '' WHERE id = ?")
+    .bind(id)
+    .run();
   await expect(
     db
       .prepare("UPDATE memories SET refs = ? WHERE id = ?")
@@ -949,10 +964,22 @@ test("SQL guards reject complementary oversized patches and invalid refs atomica
 });
 
 test("deprecating an exactly-full active embedding deletes rather than re-embeds", async () => {
-  // Metadata contributes 59 bytes, plus two special tokens: 451 + 59 + 2 = 512.
-  const added = await product("add", { content: "x".repeat(451) });
+  // 1,000 two-byte characters are exactly the 2,000-byte cap.
+  const added = await product("add", { content: "é".repeat(1000) });
   expect(added.status).toBe(200);
-  expect(added.result.size?.bytes_estimate).toBe(512);
+  expect(added.result.size).toMatchObject({
+    bytes: 2000,
+    remaining_bytes: 0,
+    within_budget: true,
+  });
+  const over = await productError("add", {
+    content: "é".repeat(1000),
+    tags: "area:api",
+  });
+  expect(over.status).toBe(400);
+  expect(over.error).toContain(
+    "Memory is over by 15 bytes of 2,000: content 2,000, tags 15, context 0 bytes.",
+  );
   expect((await product("deprecate", { ids: [added.result.id] })).status).toBe(
     200,
   );
@@ -993,6 +1020,79 @@ test("failed embedding/index delivery retries without rewriting or duplicating c
       .bind(id)
       .first("update_count"),
   ).toBe(0);
+});
+
+test("a memory that cannot be embedded is parked, reported by stats, and re-queued by a write", async () => {
+  const id = await insert("fits");
+  const waiting = await insert("waits for the index");
+  const now = Date.now();
+  // Only SQL that bypasses the size trigger can store a row over the cap.
+  await db.prepare("DROP TRIGGER memories_validate_update").run();
+  await db
+    .prepare("UPDATE memories SET content = ? WHERE id = ?")
+    .bind("x".repeat(2001), id)
+    .run();
+  await applyMigration("0007_embedding_budget");
+  embed.mockRejectedValueOnce(new Error("AI unavailable"));
+  await drain(now);
+  expect(embed).toHaveBeenCalledTimes(1);
+  expect(await job(id)).toMatchObject({
+    delivered_generation: 0,
+    attempts: 1,
+    next_attempt_at: Number.MAX_SAFE_INTEGER,
+    last_error: "Memory is over by 1 bytes of 2,000.",
+  });
+  // Later drains skip the parked row and retry only the outage.
+  await drain(now + 600_000);
+  expect(embed).toHaveBeenCalledTimes(2);
+  expect((await job(id))?.attempts).toBe(1);
+  expect((await job(waiting))?.delivered_generation).toBe(1);
+
+  const queuedAt = Number((await job(id))?.queued_at);
+  expect(Math.abs(queuedAt - now)).toBeLessThan(5000);
+  const stats = await product("stats", {});
+  expect(stats.result.index).toEqual({
+    pending: 0,
+    retrying: 0,
+    parked: 1,
+    oldest_pending_seconds: null,
+    failures: [
+      {
+        error: "Memory is over by 1 bytes of 2,000.",
+        state: "parked",
+        count: 1,
+        ids: [id],
+      },
+    ],
+  });
+
+  await db
+    .prepare("UPDATE memories SET content = 'short again' WHERE id = ?")
+    .bind(id)
+    .run();
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 1,
+    parked: 0,
+    failures: [],
+  });
+  await drain(now + 700_000);
+  expect(await job(id)).toMatchObject({ delivered_generation: 3, attempts: 0 });
+});
+
+test("stats reports a failing delivery as retrying with its error", async () => {
+  const id = await insert();
+  embed.mockRejectedValueOnce(new Error("AI unavailable"));
+  await drain();
+  const { index: status } = (await product("stats", {})).result;
+  expect(status).toMatchObject({
+    pending: 0,
+    retrying: 1,
+    parked: 0,
+    failures: [
+      { error: "AI unavailable", state: "retrying", count: 1, ids: [id] },
+    ],
+  });
+  expect(status.oldest_pending_seconds).toBeLessThan(60);
 });
 
 test.each(["update", "delete"])(

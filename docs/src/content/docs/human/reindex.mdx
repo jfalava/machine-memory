@@ -10,17 +10,25 @@ sidebar:
 
 ```sh
 machine-memory reindex --remote
-machine-memory reindex --remote --json-min
-machine-memory reindex --remote --quiet
+machine-memory reindex --failed-only --remote
+machine-memory reindex --id 12,40 --remote
+machine-memory reindex --all-repos --remote
+machine-memory index status --remote
 ```
 
-`reindex` queues all retained memory IDs for the current repository, including deletion tombstones. The API's vector coordinator reads current D1 rows, embeds active memories, and removes inactive or deleted memories from Vectorize. Run it after remote provisioning, after migrating to a new embedding index, or when vectors need to be repaired.
+`reindex` queues all retained memory IDs for the current repository, including deletion tombstones. The API's vector coordinator reads current D1 rows, embeds active memories, and removes inactive or deleted memories from Vectorize. Run it after remote provisioning, after migrating to a new embedding index or model, or when vectors need to be repaired.
 
 New and updated memories synchronize automatically, so reindexing is normally a backfill or recovery operation rather than part of every write.
 
-The command requires `--remote`; local databases do not have a Vectorize binding.
+Both commands require `--remote`; local databases do not have a Vectorize binding.
 
-Success means the work is durably queued, not that semantic search already reflects it. The coordinator retries failed delivery with exponential backoff and re-sends each delivery once an hour later, in case Vectorize applied an older mutation after it. It does not re-embed unchanged memories after that, so run this command to repair vectors that went missing later. Re-running the command is safe; it never indexes a client-side snapshot.
+## Options
+
+- `--failed-only` queues only memories whose last index write failed, both the ones still retrying and the parked ones.
+- `--id <id|id,id,...>` queues the given memories of the current repository.
+- `--all-repos` queues every repository. Use it once after the embedding model or the Vectorize index changes, because the new index starts empty. It cannot be combined with `--id`.
+
+Success means the work is durably queued, not that semantic search already reflects it. The coordinator indexes about 20 memories a minute. It retries a failed delivery with exponential backoff, up to five minutes apart, for as long as Workers AI or Vectorize is unreachable, so an outage heals on its own. A memory that cannot be embedded as stored is parked instead: it is not retried until the memory changes or `reindex` queues it again. The coordinator also re-sends each delivery once an hour later, in case Vectorize applied an older mutation after it. It does not re-embed unchanged memories after that, so run this command to repair vectors that went missing later. Re-running the command is safe; it never indexes a client-side snapshot.
 
 ## Output
 
@@ -29,9 +37,47 @@ Success means the work is durably queued, not that semantic search already refle
 ```json
 {
   "repository": "owner/repository",
+  "all_repositories": false,
   "queued": 24,
   "indexing": "queued"
 }
 ```
 
 2. Use `--quiet` when no success output is desired. Non-TTY output does not emit terminal control sequences.
+
+## index status
+
+`index status` reports where the current repository's memories stand in the semantic index. Add `--all-repos` to cover every repository. [`stats`](/machine/stats) and the MCP tool `memory_stats` report the same object under `index`.
+
+```json
+{
+  "repository": "owner/repository",
+  "all_repositories": false,
+  "pending": 12,
+  "retrying": 2,
+  "parked": 1,
+  "oldest_pending_seconds": 95,
+  "failures": [
+    {
+      "error": "AI unavailable",
+      "state": "retrying",
+      "count": 2,
+      "ids": [40, 41]
+    },
+    {
+      "error": "Memory is over by 12 bytes of 2,000.",
+      "state": "parked",
+      "count": 1,
+      "ids": [12]
+    }
+  ]
+}
+```
+
+- `pending`: written, not indexed yet, and no failure so far.
+- `retrying`: the last index write failed and will be tried again.
+- `parked`: the memory cannot be indexed as stored. Fix the memory, or run `reindex --id <id>` after fixing the cause.
+- `oldest_pending_seconds`: how long the oldest pending or retrying memory has waited; `null` when nothing waits or the age is unknown.
+- `failures`: failed memories grouped by error, with up to 20 ids per group.
+
+The index is up to date when `pending`, `retrying` and `parked` are all `0`. Until then semantic search can miss the waiting memories; keyword search is unaffected.

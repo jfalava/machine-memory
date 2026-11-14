@@ -85,7 +85,7 @@ machine-memory add "Admin shortcuts fire only inside focused forms" \
 
 `--certainty verified` is rejected unless at least one evidence kind is given.
 Evidence and gaps are stored metadata only: they are not embedded and do not
-count toward the embedding budget. `get` and `list` return them as arrays,
+count toward the size limit. `get` and `list` return them as arrays,
 and `--json-min` summaries include `evidence` plus a `validation_gap_count`.
 
 `--from-file` and inline content are mutually exclusive. `--no-conflicts`
@@ -93,36 +93,23 @@ suppresses conflict details; `--brief`, `--json-min`, and `--quiet` select
 smaller responses. A forced create over a weak match includes an
 `upsert_match` object in the response.
 
-## Embedding budget
+## Size limit
 
-Every memory is composed into a single embedding text that must stay below
-512 BGE tokens **and** within the embedding service's conservative byte+2
-estimate (UTF-8 bytes plus two). Either limit alone rejects the write before
-anything is stored, and the error names the exact deficit plus a mechanical
-trim suggestion:
+A memory's embedded text (content, plus `Tags:` and `Context:` lines when set)
+is at most 2,000 UTF-8 bytes. A longer write is refused before anything is
+stored, and the error leads with the number of bytes to remove:
 
 ```sh
-machine-memory add "long content..." --remote
-# error: Memory has 534/512 embedding tokens; the embedding service byte
-#        estimate is 1240/512.  content: 520 tokens ...
-# Memory is over the 512-byte embedding estimate by 728 bytes.
-#   Largest part: content (520 tokens).
-#   Suggestion: ... (truncating content to ~403 bytes makes the byte+2
-#   estimate fit)
+machine-memory add "long content..." --tags "area:cli" --remote
+# error: Memory is over by 728 bytes of 2,000: content 2,713, tags 15,
+#        context 0 bytes. Shorten it, or split it into one record per fact.
+#        Nothing was written.
 ```
 
 Preflight any text without writing with [`size`](/machine/size) or
-`add --dry-run`. Pass `--token-report` to attach the same breakdown to a
-successful response (including with `--json-min` or `--quiet`), so agents can
-budget upcoming writes:
+`add --dry-run`. Every successful write reports how much room the record has
+left, in every output mode:
 
 ```json
-{"id": 42, "tokens": {"source": "tokenizer", "total_tokens": 26,
- "max_tokens": 512, "bytes_estimate": 108, "within_limit": true,
- "over_by": 0, "remaining": 485, "parts": [{"part": "content", "tokens": 8},
- {"part": "tags", "tokens": 8}, ...], "overhead": 8}}
+{ "id": 42, "size": { "bytes": 108, "remaining_bytes": 1892 } }
 ```
-
-When the BGE tokenizer cannot be fetched (for example offline), the gate
-degrades to the embedding service's conservative byte+2 estimate and marks
-the breakdown `"source": "bytes"` without per-part counts.

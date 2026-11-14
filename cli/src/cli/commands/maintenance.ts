@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import {
   EvidenceSchema,
   ValidationGapsSchema,
+  embeddingBudgetMessage,
+  embeddingSizeReport,
   memoryContentError,
   sqliteDateToMs,
   type EvidenceKind,
@@ -17,13 +19,11 @@ import {
   type MemoryStatus,
   type MemoryType,
 } from "../../constants";
-import { assertBgeBreakdown } from "../../effect/bge-tokenizer";
 import type {
   MemoryDatabaseApi,
   MemoryDatabaseError,
 } from "../../effect/database";
 import { commandError, type CommandError } from "../../effect/errors";
-import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
 import {
   jsonNumber,
   jsonObject,
@@ -40,7 +40,6 @@ import {
   parseStoredEvidence,
   parseStoredValidationGaps,
 } from "../features/memory/evidence";
-import { measureEmbeddingFit } from "../features/memory/size-report";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { hasMinimalOutput, printCommandOutput } from "../runtime/output";
 import {
@@ -56,6 +55,7 @@ import {
   sqliteDateForComparison,
   stringValue,
 } from "../shared";
+import { readIndexStatus } from "./reindex";
 
 type ImportNormalized = {
   content: string;
@@ -421,6 +421,21 @@ type ImportPlan = {
   replacement?: ImportPlan;
 };
 
+/** Why an active import entry is over the size limit; undefined when it fits. */
+function importSizeError(plan: ImportPlan, index: number): string | undefined {
+  if (plan.value.statusRaw !== "active") {
+    return undefined;
+  }
+  const size = embeddingSizeReport({
+    content: plan.value.content,
+    tags: plan.value.tags,
+    context: plan.value.memoContext,
+  });
+  return size.within_budget
+    ? undefined
+    : `${embeddingBudgetMessage(`Import index ${index}`, size)} Nothing was imported.`;
+}
+
 function preflightImport(
   database: MemoryDatabaseApi,
   parsed: JsonValue[],
@@ -460,30 +475,9 @@ function preflightImport(
         }
         sources.set(plan.sourceId, plan);
       }
-      if (plan.value.statusRaw === "active") {
-        const size = yield* measureEmbeddingFit(
-          memoryVectorEmbeddingParts({
-            id: "0",
-            repository: repositoryForCurrentDirectory(),
-            content: plan.value.content,
-            tags: plan.value.tags,
-            context: plan.value.memoContext,
-            memory_type: plan.value.memoryTypeRaw,
-            status: plan.value.statusRaw,
-            certainty: plan.value.certaintyNormalized,
-          }),
-        );
-        yield* Effect.try({
-          try: () => assertBgeBreakdown(size, `Import index ${index}`),
-          catch: (cause) =>
-            commandError(
-              "import",
-              cause instanceof Error
-                ? cause.message
-                : "Embedding validation failed.",
-              cause,
-            ),
-        });
+      const oversize = importSizeError(plan, index);
+      if (oversize !== undefined) {
+        return yield* commandError("import", oversize);
       }
       if (!plan.targetId && plan.value.statusRaw === "active") {
         const conflicts = yield* detectPotentialConflicts(database, {
@@ -555,10 +549,16 @@ function orderImportPlans(
 
 export function handleStatsCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const rows = yield* requireDatabase(commandCtx).all(
+    const database = requireDatabase(commandCtx);
+    const repository = repositoryForCurrentDirectory();
+    const rows = yield* database.all(
       "SELECT * FROM memories WHERE repository = ?",
-      [repositoryForCurrentDirectory()],
+      [repository],
     );
+    // Only the remote backend has a semantic index.
+    const index = database.vectorize
+      ? yield* readIndexStatus(database, repository)
+      : undefined;
     const memories = rows.map((row) => normalizeSqliteRow(row));
     const accumulator = createStatsAccumulator();
     for (const memory of memories) {
@@ -568,7 +568,7 @@ export function handleStatsCommand(commandCtx: CommandContext) {
       if (commandCtx.outputMode.quiet) {
         return;
       }
-      printCommandOutput(commandCtx, {
+      const stats: JsonObject = {
         total_memories: memories.length,
         breakdown_by_memory_type: accumulator.byType,
         breakdown_by_certainty: accumulator.byCertainty,
@@ -576,7 +576,11 @@ export function handleStatsCommand(commandCtx: CommandContext) {
         oldest_memory: accumulator.oldest,
         memories_not_updated_over_90_days: accumulator.staleCount,
         memories_with_no_tags: accumulator.noTagsCount,
-      });
+      };
+      if (index !== undefined) {
+        stats.index = index;
+      }
+      printCommandOutput(commandCtx, stats);
     });
   });
 }

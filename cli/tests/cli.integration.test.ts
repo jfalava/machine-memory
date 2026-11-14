@@ -7,13 +7,13 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { MigrationRequestInputSchema } from "@machine-memory/contract";
 import { Schema } from "effect";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   type CliOutput,
@@ -21,16 +21,6 @@ import {
   decodeCliOutput,
   decodeCliRows,
 } from "./fixtures/cli-output";
-import { tokenizerConfig, tokenizerJson } from "./fixtures/tokenizer";
-
-let tokenizerServer: Server;
-/** Tokenizer download overrides that point the CLI at the local test server. */
-type TokenizerEnv = {
-  MACHINE_MEMORY_BGE_TOKENIZER_URL?: string;
-  MACHINE_MEMORY_BGE_TOKENIZER_CONFIG_URL?: string;
-};
-
-let tokenizerEnv: TokenizerEnv = {};
 
 type RunResult = {
   code: number;
@@ -89,7 +79,6 @@ function execBun(
         ...options,
         env: {
           ...process.env,
-          ...tokenizerEnv,
           ...options.env,
         },
       },
@@ -258,43 +247,6 @@ afterEach(async () => {
       await rm(directory, { recursive: true, force: true });
     }
   }
-});
-
-beforeAll(async () => {
-  tokenizerServer = createServer((request, response) => {
-    const url = request.url ?? "";
-    if (url.endsWith("/tokenizer.json")) {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(tokenizerJson));
-      return;
-    }
-    if (url.endsWith("/tokenizer_config.json")) {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(tokenizerConfig));
-      return;
-    }
-    response.writeHead(404, { "content-type": "application/json" });
-    response.end(JSON.stringify({ error: "not found" }));
-  });
-  await new Promise<void>((resolvePromise) =>
-    tokenizerServer.listen(0, "127.0.0.1", resolvePromise),
-  );
-  const address = tokenizerServer.address();
-  const port =
-    address === null || Schema.is(Schema.String)(address) ? 0 : address.port;
-  const baseUrl = `http://127.0.0.1:${port}`;
-  tokenizerEnv = {
-    MACHINE_MEMORY_BGE_TOKENIZER_URL: `${baseUrl}/tokenizer.json`,
-    MACHINE_MEMORY_BGE_TOKENIZER_CONFIG_URL: `${baseUrl}/tokenizer_config.json`,
-  };
-});
-
-afterAll(async () => {
-  await new Promise<void>((resolvePromise, rejectPromise) =>
-    tokenizerServer.close((error) =>
-      error ? rejectPromise(error) : resolvePromise(),
-    ),
-  );
 });
 
 describe("CLI integration", () => {
@@ -983,6 +935,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     expect(updated.json).toEqual({
       id: Number(premiseId),
       review_candidate_ids: [dependentId],
+      size: { bytes: 76, remaining_bytes: 1924 },
     });
 
     const deprecated = await runCli(cwd, dbPath, "deprecate", premiseId);
@@ -1283,7 +1236,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     }
   });
 
-  it("attaches an embedding token breakdown with --token-report", async () => {
+  it("reports used and remaining bytes on a successful add", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(
       cwd,
@@ -1292,20 +1245,43 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "hello",
       "--tags",
       "cli",
-      "--token-report",
       "--quiet",
     );
     expect(added.code).toBe(0);
-    const tokens = added.json.tokens;
-    expect(tokens).toBeDefined();
-    expect(tokens?.source).toBe("tokenizer");
-    expect(tokens?.within_limit).toBe(true);
-    expect(tokens?.over_by).toBe(0);
-    expect(Number(tokens?.total_tokens)).toBeGreaterThan(0);
-    const parts = tokens?.parts ?? [];
-    expect(parts.map((entry) => entry.part)).toEqual(
-      expect.arrayContaining(["content", "memory_type", "status", "certainty"]),
+    // "hello" (5) + "\nTags: cli" (10)
+    expect(added.json.size).toEqual({ bytes: 15, remaining_bytes: 1985 });
+  });
+
+  it("accepts a memory of exactly 2,000 bytes and refuses 2,001", async () => {
+    const { cwd, dbPath } = await createProject();
+    // 1,990 content bytes + "\nTags: cli" (10 bytes) = 2,000.
+    const atLimit = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "é".repeat(995),
+      "--tags",
+      "cli",
+      "--quiet",
     );
+    expect(atLimit.code).toBe(0);
+    expect(atLimit.json.size).toEqual({ bytes: 2000, remaining_bytes: 0 });
+
+    const over = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      `${"é".repeat(995)}a`,
+      "--tags",
+      "cli",
+      "--local",
+    );
+    expect(over.code).toBe(1);
+    expect(String(over.json.error ?? "")).toBe(
+      "Memory is over by 1 bytes of 2,000: content 1,991, tags 10, context 0 bytes. Shorten it, or split it into one record per fact. Nothing was written.",
+    );
+    const second = await runCli(cwd, dbPath, "get", "2", "--local");
+    expect(second.json.error).toBe("Not found");
   });
 
   it("rejects an oversized add before writing and reports the breakdown", async () => {
@@ -1319,11 +1295,8 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(addResult.code).toBe(1);
     const error = String(addResult.json.error ?? "");
-    expect(error).toContain("embedding tokens");
-    expect(error).toContain("byte estimate");
-    expect(error).toContain("Both limits bind");
-    expect(error).toContain("content: 602 tokens");
-    expect(error).toMatch(/over the 512-byte embedding estimate by \d+ bytes/);
+    expect(error).toContain("is over by 1,599 bytes of 2,000");
+    expect(error).toContain("content 3,599, tags 0, context 0 bytes");
 
     const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
     expect(fetched.json.error).toBe("Not found");
@@ -1331,7 +1304,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
 
   it("validates retained metadata before updating an upsert match", async () => {
     const { cwd, dbPath } = await createProject();
-    const original = Array.from({ length: 10 }, () => "alpha beta gamma").join(
+    const original = Array.from({ length: 58 }, () => "alpha beta gamma").join(
       " ",
     );
     const added = await runCli(
@@ -1356,15 +1329,17 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       cwd,
       dbPath,
       "add",
-      Array.from({ length: 20 }, () => "alpha beta gamma").join(" "),
+      Array.from({ length: 60 }, () => "alpha beta gamma").join(" "),
       "--upsert-match",
       "alpha beta gamma",
-      "--token-report",
       "--quiet",
     );
     expect(upserted.code).toBe(1);
     expect(String(upserted.json.error ?? "")).toContain(`Memory ${id}`);
-    expect(String(upserted.json.error ?? "")).toContain("byte estimate");
+    // The new content fits alone; with the retained context it does not.
+    expect(String(upserted.json.error ?? "")).toContain(
+      "is over by 14 bytes of 2,000: content 1,019, tags 0, context 995 bytes",
+    );
 
     const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
     expect(fetched.json.content).toBe(original);
@@ -1394,14 +1369,15 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(updated.code).toBe(1);
     expect(String(updated.json.error ?? "")).toContain(`Memory ${id}`);
-    expect(String(updated.json.error ?? "")).toContain("byte estimate");
-    expect(String(updated.json.error ?? "")).toContain("Both limits bind");
+    expect(String(updated.json.error ?? "")).toContain(
+      "is over by 1,599 bytes of 2,000",
+    );
 
     const fetched = await runCli(cwd, dbPath, "get", String(id), "--local");
     expect(fetched.json.content).toBe("original content");
   });
 
-  it("attaches token breakdowns to a successful update with --token-report", async () => {
+  it("reports used and remaining bytes on a successful update", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(
       cwd,
@@ -1420,26 +1396,34 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       "update",
       String(id),
       "replacement content",
-      "--token-report",
       "--local",
     );
     expect(updated.code).toBe(0);
     expect(updated.json.content).toBe("replacement content");
-    expect(updated.json.tokens).toMatchObject({
-      source: "tokenizer",
-      within_limit: true,
-    });
+    expect(updated.json.size).toEqual({ bytes: 19, remaining_bytes: 1981 });
   });
 
   it("preflights the embedding budget with the size command", async () => {
     const { cwd, dbPath } = await createProject();
-    const within = await runCli(cwd, dbPath, "size", "hello world");
+    const within = await runCli(
+      cwd,
+      dbPath,
+      "size",
+      "hello world",
+      "--tags",
+      "cli",
+      "--context",
+      "why",
+    );
     expect(within.code).toBe(0);
-    expect(within.json.within_budget).toBe(true);
-    expect(within.json.binding_limit).toBeNull();
-    const limits = within.json.limits;
-    expect(limits?.tokens?.pass).toBe(true);
-    expect(limits?.bytes_estimate?.pass).toBe(true);
+    expect(within.json).toMatchObject({
+      bytes: 34,
+      max_bytes: 2000,
+      within_budget: true,
+      over_by_bytes: 0,
+      remaining_bytes: 1966,
+      parts: { content: 11, tags: 10, context: 13 },
+    });
 
     // --remote is accepted as a no-op for the non-database size command.
     const withRemote = await runCli(
@@ -1451,12 +1435,15 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(withRemote.code).toBe(0);
 
-    const over = await runCli(cwd, dbPath, "size", "é".repeat(400));
+    // 1,001 two-byte characters: under 2,000 characters, over 2,000 bytes.
+    const over = await runCli(cwd, dbPath, "size", "é".repeat(1001));
     expect(over.code).toBe(1);
-    expect(over.json.within_budget).toBe(false);
-    expect(over.json.binding_limit).toBe("bytes");
-    expect(over.json.over_by_bytes).toBeGreaterThan(0);
-    expect(String(over.json.limits?.tokens?.pass)).toBe("true");
+    expect(over.json).toMatchObject({
+      bytes: 2002,
+      within_budget: false,
+      over_by_bytes: 2,
+      remaining_bytes: -2,
+    });
   });
 
   it("reports the add size with --dry-run without writing", async () => {
@@ -1475,9 +1462,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(dry.json.action).toBe("create");
     const size = dry.json.size;
     expect(size?.within_budget).toBe(false);
-    expect(size?.trimmed_suggestion).toMatch(
-      /truncating content to ~\d+ bytes/,
-    );
+    expect(size?.over_by_bytes).toBe(1599);
 
     const fetched = await runCli(cwd, dbPath, "get", "1", "--local");
     expect(fetched.json.error).toBe("Not found");
@@ -1500,7 +1485,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
       dbPath,
       "update",
       String(id),
-      "é".repeat(400),
+      "é".repeat(1001),
       "--dry-run",
       "--local",
     );
@@ -1510,7 +1495,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(dry.json.count).toBe(1);
     const targets = dry.json.targets ?? [];
     expect(targets[0]?.id).toBe(id);
-    expect(targets[0]?.size?.binding_limit).toBe("bytes");
+    expect(targets[0]?.size?.over_by_bytes).toBe(2);
 
     const okDry = await runCli(
       cwd,
@@ -1842,7 +1827,7 @@ describe("audit write regressions", () => {
   });
 
   it.each([
-    { content: "x".repeat(600) },
+    { content: "x".repeat(2001) },
     { refs: [1] },
     { expires_after_days: 3 },
   ])(

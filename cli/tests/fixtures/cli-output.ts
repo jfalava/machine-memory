@@ -7,27 +7,7 @@ const unnamedKeys = [Schema.Record(Schema.String, Schema.Json)] as const;
 const SizeReportSchema = Schema.StructWithRest(
   Schema.Struct({
     within_budget: Schema.optionalKey(Schema.Boolean),
-    binding_limit: Schema.optionalKey(Schema.NullOr(Schema.String)),
-    trimmed_suggestion: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  }),
-  unnamedKeys,
-);
-
-const LimitCheckSchema = Schema.StructWithRest(
-  Schema.Struct({ pass: Schema.Boolean }),
-  unnamedKeys,
-);
-
-const TokenReportSchema = Schema.StructWithRest(
-  Schema.Struct({
-    parts: Schema.optionalKey(
-      Schema.Array(
-        Schema.StructWithRest(
-          Schema.Struct({ part: Schema.String, tokens: Schema.Int }),
-          unnamedKeys,
-        ),
-      ),
-    ),
+    over_by_bytes: Schema.optionalKey(Schema.Int),
   }),
   unnamedKeys,
 );
@@ -64,17 +44,7 @@ export const CliOutputSchema = Schema.StructWithRest(
     findings: Schema.optionalKey(Schema.JsonObject),
     commands: Schema.optionalKey(Schema.JsonObject),
     output_fields: Schema.optionalKey(Schema.JsonObject),
-    tokens: Schema.optionalKey(TokenReportSchema),
     size: Schema.optionalKey(SizeReportSchema),
-    limits: Schema.optionalKey(
-      Schema.StructWithRest(
-        Schema.Struct({
-          tokens: Schema.optionalKey(LimitCheckSchema),
-          bytes_estimate: Schema.optionalKey(LimitCheckSchema),
-        }),
-        unnamedKeys,
-      ),
-    ),
   }),
   unnamedKeys,
 );

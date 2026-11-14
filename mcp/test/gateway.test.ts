@@ -94,14 +94,12 @@ const FULL_ROW = {
 } satisfies MemoryRow;
 
 const SIZE = {
-  source: "bytes",
-  bytes_estimate: 100,
-  max_bytes_estimate: 512,
+  bytes: 100,
+  max_bytes: 2000,
   within_budget: true,
-  binding_limit: null,
   over_by_bytes: 0,
-  remaining: 412,
-  limits: { bytes_estimate: { value: 100, limit: 512, pass: true } },
+  remaining_bytes: 1900,
+  parts: { content: 80, tags: 20, context: 0 },
 };
 
 const WRITE = { written_to: "o/r", id: 7, memory: FULL_ROW, size: SIZE };
@@ -206,6 +204,13 @@ const PASS_THROUGH_CASES: ReadonlyArray<
       oldest_memory: { id: 7, created_at: FULL_ROW.created_at },
       memories_not_updated_over_90_days: 0,
       memories_with_no_tags: 0,
+      index: {
+        pending: 1,
+        retrying: 0,
+        parked: 0,
+        oldest_pending_seconds: 12,
+        failures: [],
+      },
     },
   ],
   [
@@ -632,12 +637,11 @@ describe("mcp gateway to api product routes", () => {
   test("memory_size surfaces over-budget as a tool error with the report", async () => {
     const size = {
       ...SIZE,
-      bytes_estimate: 600,
+      bytes: 2088,
       within_budget: false,
-      binding_limit: "bytes",
       over_by_bytes: 88,
-      remaining: -88,
-      limits: { bytes_estimate: { value: 600, limit: 512, pass: false } },
+      remaining_bytes: -88,
+      parts: { content: 2068, tags: 20, context: 0 },
     };
     const seen: SeenCall[] = [];
     const client = await linkedClient({

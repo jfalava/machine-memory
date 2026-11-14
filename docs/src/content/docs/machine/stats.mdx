@@ -15,3 +15,8 @@ machine-memory stats (--local|--remote)
 certainty, tag frequency, the oldest memory, memories not updated for more
 than 90 days, and memories without tags. It includes all statuses. The summary
 is already minimal; `--quiet` silences output entirely.
+
+With `--remote`, the summary also has `index`: how many of the repository's
+memories are `pending`, `retrying` or `parked` in the semantic index, how long
+the oldest has waited, and the failures grouped by error. See
+[`index status`](/human/reindex#index-status).

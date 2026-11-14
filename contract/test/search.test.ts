@@ -86,15 +86,19 @@ describe("search match assessment", () => {
     ).toBe("none");
   });
 
-  it("uses calibrated bge-base cosine bars for semantic-only matches", () => {
+  it("uses calibrated bge-m3 cosine bars for semantic-only matches", () => {
     const base = { queryTerms: ["unrelated"], identifiers: [], text: "x" };
-    expect(assessMatch({ ...base, semanticScore: 0.875 }).match_strength).toBe(
+    expect(assessMatch({ ...base, semanticScore: 0.63 }).match_strength).toBe(
       "strong",
     );
-    expect(assessMatch({ ...base, semanticScore: 0.726 }).match_strength).toBe(
+    expect(assessMatch({ ...base, semanticScore: 0.629 }).match_strength).toBe(
       "weak",
     );
-    expect(assessMatch({ ...base, semanticScore: 0.643 }).match_strength).toBe(
+    expect(assessMatch({ ...base, semanticScore: 0.55 }).match_strength).toBe(
+      "weak",
+    );
+    // Unrelated questions peak near 0.50 on bge-m3.
+    expect(assessMatch({ ...base, semanticScore: 0.549 }).match_strength).toBe(
       "none",
     );
   });

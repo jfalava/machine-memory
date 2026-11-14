@@ -5,6 +5,7 @@ import {
   decideUpsert,
   decodeRequest,
   droppedDetails,
+  embeddingBudgetMessage,
   embeddingSizeReport,
   evidenceWriteError,
   extractQueryIdentifiers,
@@ -38,12 +39,7 @@ import {
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
-import {
-  badRequest,
-  conflict,
-  embeddingBudgetError,
-  notFound,
-} from "./http-failure";
+import { badRequest, conflict, notFound } from "./http-failure";
 import {
   INSERT_SQL,
   insertParams,
@@ -52,7 +48,6 @@ import {
 } from "./product-api";
 import {
   contentHead,
-  embeddingTextForMemory,
   scoredResultRow,
   scoreMemoryRows,
   toProductRow,
@@ -261,9 +256,9 @@ const createProduct = (
       validation_gaps: args.validation_gaps,
       expires_after_days: args.expires_after_days ?? null,
     };
-    const size = embeddingSizeReport(embeddingTextForMemory(insert));
+    const size = embeddingSizeReport(insert);
     if (!size.within_budget) {
-      return yield* badRequest(embeddingBudgetError("Document text"));
+      return yield* badRequest(embeddingBudgetMessage("Memory", size));
     }
     const memory = yield* insertProductRow(ctx, insert);
     const result: MemoryWriteResult = {
@@ -314,9 +309,9 @@ const applyStrongUpsert = (
     if (invalid !== undefined) {
       return yield* badRequest(invalid);
     }
-    const size = embeddingSizeReport(embeddingTextForMemory(prospective));
+    const size = embeddingSizeReport(prospective);
     if (!size.within_budget) {
-      return yield* badRequest(embeddingBudgetError("Document text"));
+      return yield* badRequest(embeddingBudgetMessage("Memory", size));
     }
     const update = updateSets({
       content: input.content,
@@ -433,19 +428,15 @@ const validateUpdateFields = (
   return evidenceWriteError(input, existing);
 };
 
-/** Embedding text of the memory as it would be after the update. */
-const prospectiveUpdateText = (
+/** The embedded fields of the memory as they would be after the update. */
+const prospectiveUpdateDocument = (
   existing: MemoryRow,
   input: ProductRequest<"update">,
-) =>
-  embeddingTextForMemory({
-    content: input.content ?? existing.content,
-    tags: input.tags ?? existing.tags,
-    context: input.context ?? existing.context,
-    memory_type: input.memory_type ?? existing.memory_type,
-    status: input.status ?? existing.status,
-    certainty: input.certainty ?? existing.certainty,
-  });
+) => ({
+  content: input.content ?? existing.content,
+  tags: input.tags ?? existing.tags,
+  context: input.context ?? existing.context,
+});
 
 const persistProductUpdate = (
   ctx: ApiContext,
@@ -532,9 +523,11 @@ const applyProductUpdate = (
         "Replacement must exist in the same repository.",
       );
     }
-    const size = embeddingSizeReport(prospectiveUpdateText(existing, input));
+    const size = embeddingSizeReport(
+      prospectiveUpdateDocument(existing, input),
+    );
     if ((input.status ?? existing.status) === "active" && !size.within_budget) {
-      return yield* badRequest(embeddingBudgetError("Document text"));
+      return yield* badRequest(embeddingBudgetMessage("Memory", size));
     }
     return yield* persistProductUpdate(ctx, input, targetId, existing, {
       size,
@@ -644,10 +637,10 @@ export const productWriteHandlers = (
           "The historical replacement no longer exists in this repository.",
         );
       }
-      const size = embeddingSizeReport(embeddingTextForMemory(history));
+      const size = embeddingSizeReport(history);
       if (history.status === "active" && !size.within_budget) {
         return yield* badRequest(
-          "The historical memory exceeds the current embedding budget.",
+          embeddingBudgetMessage("The historical memory", size),
         );
       }
       const rowData = yield* ctx.d1

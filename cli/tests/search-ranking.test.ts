@@ -137,12 +137,12 @@ describe("search ranking regressions from the memory usage audit", () => {
         {
           id: 30,
           content: "Docs sidebar order lists Installation first.",
-          semantic_score: 0.52,
+          semantic_score: 0.41,
         },
         {
           id: 31,
           content: "Release binaries are code-signed.",
-          semantic_score: 0.64,
+          semantic_score: 0.5,
         },
       ],
       { terms: extractTerms("banana bread recipe"), identifiers: [] },

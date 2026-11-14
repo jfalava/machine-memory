@@ -1,10 +1,20 @@
 export { decodeRequest, decodeResponse, encodeResponse } from "./codec";
 export {
   composeEmbeddingText,
+  embeddingBudgetMessage,
+  embeddingTextError,
   embeddingSizeReport,
-  estimateEmbeddingTokens,
   validateEmbeddingText,
+  type EmbeddingDocumentParts,
+  type EmbeddingSizeReport,
 } from "./embedding";
+export {
+  IndexStatusSchema,
+  indexStatusFromRows,
+  indexStatusQueries,
+  VECTOR_SYNC_NEVER,
+  type IndexStatus,
+} from "./index-status";
 export {
   type MemoryRow,
   type Repository,
@@ -29,7 +39,7 @@ export {
   EVIDENCE_KINDS,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
-  MAX_EMBEDDING_TOKENS,
+  MAX_EMBEDDING_BYTES,
   MAX_MIGRATION_LINKS,
   MAX_MIGRATION_ROWS,
   MAX_NAMESPACE_BYTES,
@@ -64,6 +74,7 @@ export {
   evidenceWriteError,
 } from "./evidence";
 export {
+  MATCH_THRESHOLDS,
   SEARCH_SCORE_WEIGHTS,
   assessMatch,
   certaintyPoints,

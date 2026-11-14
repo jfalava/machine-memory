@@ -4,6 +4,10 @@ import {
   canonicalTags,
   decideUpsert,
   droppedDetails,
+  embeddingBudgetMessage,
+  embeddingSizeReport,
+  type EmbeddingDocumentParts,
+  type EmbeddingSizeReport,
   hasDroppedDetails,
   memoryContentError,
   type EvidenceKind,
@@ -22,20 +26,12 @@ import {
   usageError,
   warnOnStderr,
 } from "../../cli-utils";
-import {
-  assertBgeBreakdown,
-  type BgeTokenBreakdown,
-  type EmbeddingTextPart,
-} from "../../effect/bge-tokenizer";
 import type {
   MemoryDatabaseApi,
   MemoryDatabaseError,
 } from "../../effect/database";
 import { commandError, type CommandError } from "../../effect/errors";
-import {
-  memoryVectorEmbeddingParts,
-  type MemoryVectorDocument,
-} from "../../effect/vectorize";
+import type { MemoryVectorDocument } from "../../effect/vectorize";
 import {
   jsonNumber,
   jsonObject,
@@ -50,10 +46,6 @@ import {
   parseStoredEvidence,
   parseValidationGapsFlag,
 } from "../features/memory/evidence";
-import {
-  embeddingSizeReport,
-  measureEmbeddingFit,
-} from "../features/memory/size-report";
 import {
   ADD_USAGE,
   DEPRECATE_USAGE,
@@ -258,54 +250,33 @@ function warnReconciliation(
   }
 }
 
-/**
- * Pure token-budget analysis for the embedding text a write would produce.
- * Uses the real BGE tokenizer when reachable and degrades to the Worker's
- * conservative byte estimate when it is not, so offline writes stay safe
- * without ever silently accepting text the embedding service would reject.
- */
+/** The size report of the embedded text a write would produce, or the refusal. */
 function validateEmbeddingFit(
   command: string,
   label: string,
-  parts: EmbeddingTextPart[],
-): Effect.Effect<BgeTokenBreakdown, CommandError> {
-  return measureEmbeddingFit(parts).pipe(
-    Effect.mapError((cause) =>
-      commandError(command, cause.message, cause.cause),
-    ),
-    Effect.flatMap((breakdown) =>
-      Effect.try({
-        try: () => {
-          assertBgeBreakdown(breakdown, label);
-          return breakdown;
-        },
-        catch: (cause) =>
-          commandError(
-            command,
-            cause instanceof Error
-              ? cause.message
-              : "Embedding validation failed.",
-            cause,
-          ),
-      }),
-    ),
-  );
+  document: EmbeddingDocumentParts,
+): Effect.Effect<EmbeddingSizeReport, CommandError> {
+  const size = embeddingSizeReport(document);
+  return size.within_budget
+    ? Effect.succeed(size)
+    : Effect.fail(
+        commandError(
+          command,
+          `${embeddingBudgetMessage(label, size)} Nothing was written.`,
+        ),
+      );
+}
+
+/** Used and remaining bytes, reported by every successful write. */
+function sizeSummary(size: EmbeddingSizeReport): JsonObject {
+  return { bytes: size.bytes, remaining_bytes: size.remaining_bytes };
 }
 
 function addEmbeddingDocumentParts(
   content: string,
   metadata: AddMetadata,
-): EmbeddingTextPart[] {
-  return memoryVectorEmbeddingParts({
-    id: "0",
-    repository: repositoryForCurrentDirectory(),
-    content,
-    tags: metadata.tags,
-    context: metadata.memo,
-    memory_type: metadata.memoryType,
-    status: "active",
-    certainty: metadata.certainty,
-  });
+): EmbeddingDocumentParts {
+  return { content, tags: metadata.tags, context: metadata.memo };
 }
 
 function addUpsertEmbeddingDocument(
@@ -633,17 +604,17 @@ function printUpsertResult(
   mode: "created" | "updated",
   id: number,
   extras: {
-    tokenReport?: BgeTokenBreakdown;
+    sizeReport?: EmbeddingSizeReport;
     matchInfo?: JsonObject;
     reconciliation?: JsonObject;
   } = {},
 ) {
-  const { tokenReport, matchInfo, reconciliation = {} } = extras;
+  const { sizeReport, matchInfo, reconciliation = {} } = extras;
   const payload: JsonObject = matchInfo
     ? { mode, id, upsert_match: matchInfo, ...reconciliation }
     : { mode, id, ...reconciliation };
-  if (tokenReport) {
-    Object.assign(payload, { tokens: tokenReport });
+  if (sizeReport) {
+    Object.assign(payload, { size: sizeSummary(sizeReport) });
   }
   printCommandOutput({ command: "add", outputMode }, payload);
 }
@@ -681,10 +652,9 @@ function maybeHandleAddUpsert(
     content: string;
     metadata: AddMetadata;
     outputMode: CommandContext["outputMode"];
-    tokenReportEnabled: boolean;
   },
 ) {
-  const { flags, content, metadata, outputMode, tokenReportEnabled } = options;
+  const { flags, content, metadata, outputMode } = options;
   const upsertQuery = parseAddUpsertQuery(flags);
   if (upsertQuery === undefined) {
     return Effect.succeed(false);
@@ -732,7 +702,6 @@ function maybeHandleAddUpsert(
         content,
         metadata,
         outputMode,
-        tokenReportEnabled,
       });
     }
     return yield* runUpsertCreate({
@@ -740,7 +709,6 @@ function maybeHandleAddUpsert(
       content,
       metadata,
       outputMode,
-      tokenReportEnabled,
       info,
     });
   });
@@ -752,7 +720,6 @@ function runStrongUpsertUpdate(params: {
   content: string;
   metadata: AddMetadata;
   outputMode: CommandContext["outputMode"];
-  tokenReportEnabled: boolean;
 }): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
   return Effect.gen(function* () {
     const { database, matched, content, metadata, outputMode } = params;
@@ -767,9 +734,7 @@ function runStrongUpsertUpdate(params: {
     const breakdown = yield* validateEmbeddingFit(
       "add",
       `Memory ${matchedId}`,
-      memoryVectorEmbeddingParts(
-        addUpsertEmbeddingDocument(canonical, content, metadata),
-      ),
+      addUpsertEmbeddingDocument(canonical, content, metadata),
     );
     const updated = jsonObject(
       yield* updateFromAddPayload(
@@ -790,7 +755,7 @@ function runStrongUpsertUpdate(params: {
     yield* Effect.sync(() => {
       warnReconciliation(`Upsert into memory ${matchedId}`, reconciliation);
       printUpsertResult(outputMode, "updated", matchedId, {
-        tokenReport: params.tokenReportEnabled ? breakdown : undefined,
+        sizeReport: breakdown,
         reconciliation: reconciliationFields(
           reconciliation,
           hasMinimalOutput(outputMode),
@@ -806,7 +771,6 @@ function runUpsertCreate(params: {
   content: string;
   metadata: AddMetadata;
   outputMode: CommandContext["outputMode"];
-  tokenReportEnabled: boolean;
   info: JsonObject | null;
 }): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
   return Effect.gen(function* () {
@@ -821,7 +785,7 @@ function runUpsertCreate(params: {
       jsonNumber(jsonObject(createdResult)?.lastInsertRowid) ?? 0;
     yield* Effect.sync(() =>
       printUpsertResult(outputMode, "created", createdId, {
-        tokenReport: params.tokenReportEnabled ? breakdown : undefined,
+        sizeReport: breakdown,
         matchInfo: params.info ?? undefined,
       }),
     );
@@ -842,7 +806,7 @@ type AddUpsertDryRunParams = {
 
 function addUpsertDryRunPayload(
   params: AddUpsertDryRunParams,
-  size: BgeTokenBreakdown,
+  size: EmbeddingSizeReport,
 ): JsonObject {
   const { decision, info, summary, minScore } = params;
   const payload: JsonObject = {
@@ -862,7 +826,7 @@ function addUpsertDryRunPayload(
       }`,
     });
   }
-  Object.assign(payload, { size: embeddingSizeReport(size) });
+  Object.assign(payload, { size });
   return payload;
 }
 
@@ -872,22 +836,20 @@ function runAddUpsertDryRun(
   return Effect.gen(function* () {
     const prospectiveParts =
       params.decision === "update" && params.matched
-        ? memoryVectorEmbeddingParts(
-            addUpsertEmbeddingDocument(
-              params.matched,
-              params.content,
-              params.metadata,
-            ),
+        ? addUpsertEmbeddingDocument(
+            params.matched,
+            params.content,
+            params.metadata,
           )
         : addEmbeddingDocumentParts(params.content, params.metadata);
-    const size = yield* measureEmbeddingFit(prospectiveParts);
+    const size = embeddingSizeReport(prospectiveParts);
     yield* Effect.sync(() => {
       printCommandOutput(
         { command: "add", outputMode: params.outputMode },
         addUpsertDryRunPayload(params, size),
       );
       // A dry run exits the way the real write would.
-      if (!size.within_limit || params.decision === "refuse") {
+      if (!size.within_budget || params.decision === "refuse") {
         process.exitCode = 1;
       }
     });
@@ -997,12 +959,12 @@ function addInsert(
   );
 }
 
-function attachTokenReport(
+function attachSizeSummary(
   payload: JsonObject,
-  tokenReport: BgeTokenBreakdown | undefined,
+  sizeReport: EmbeddingSizeReport | undefined,
 ): void {
-  if (tokenReport) {
-    Object.assign(payload, { tokens: tokenReport });
+  if (sizeReport) {
+    Object.assign(payload, { size: sizeSummary(sizeReport) });
   }
 }
 
@@ -1010,7 +972,7 @@ function briefAddPayload(params: {
   createdId: number;
   conflictCount: number;
   statusCascadeCount: number;
-  tokenReport?: BgeTokenBreakdown;
+  sizeReport?: EmbeddingSizeReport;
 }): JsonObject {
   const payload: JsonObject = {
     id: params.createdId,
@@ -1018,7 +980,7 @@ function briefAddPayload(params: {
     conflict_count: params.conflictCount,
     status_cascade_count: params.statusCascadeCount,
   };
-  attachTokenReport(payload, params.tokenReport);
+  attachSizeSummary(payload, params.sizeReport);
   return payload;
 }
 
@@ -1031,7 +993,7 @@ function printAddResult(params: {
   includeConflicts: boolean;
   potentialConflicts: JsonObject[];
   statusCascade: JsonObject[];
-  tokenReport?: BgeTokenBreakdown;
+  sizeReport?: EmbeddingSizeReport;
 }) {
   const {
     outputMode,
@@ -1042,11 +1004,13 @@ function printAddResult(params: {
     includeConflicts,
     potentialConflicts,
     statusCascade,
-    tokenReport,
+    sizeReport,
   } = params;
   if (outputMode.jsonMin || outputMode.quiet) {
     printJson(
-      tokenReport ? { id: createdId, tokens: tokenReport } : { id: createdId },
+      sizeReport
+        ? { id: createdId, size: sizeSummary(sizeReport) }
+        : { id: createdId },
     );
     return;
   }
@@ -1056,7 +1020,7 @@ function printAddResult(params: {
         createdId,
         conflictCount: potentialConflicts.length,
         statusCascadeCount: statusCascade.length,
-        tokenReport,
+        sizeReport,
       }),
     );
     return;
@@ -1085,8 +1049,8 @@ function printAddResult(params: {
       },
     });
   }
-  if (tokenReport) {
-    attachTokenReport(payload, tokenReport);
+  if (sizeReport) {
+    attachSizeSummary(payload, sizeReport);
   }
   printCommandOutput({ command: "add", outputMode }, payload);
 }
@@ -1097,7 +1061,7 @@ function runAddDryRun(
   metadata: AddMetadata,
 ): Effect.Effect<void, CommandError> {
   return Effect.gen(function* () {
-    const size = yield* measureEmbeddingFit(
+    const size = embeddingSizeReport(
       addEmbeddingDocumentParts(content, metadata),
     );
     yield* Effect.sync(() => {
@@ -1107,10 +1071,10 @@ function runAddDryRun(
           command: "add",
           dry_run: true,
           action: "create",
-          size: embeddingSizeReport(size),
+          size,
         } satisfies JsonObject,
       );
-      if (!size.within_limit) {
+      if (!size.within_budget) {
         process.exitCode = 1;
       }
     });
@@ -1122,7 +1086,7 @@ function runPlainAddInsert(params: {
   commandCtx: CommandContext;
   content: string;
   metadata: AddMetadata;
-  tokenReport: BgeTokenBreakdown | undefined;
+  sizeReport: EmbeddingSizeReport | undefined;
   conflictState: {
     includeConflicts: boolean;
     potentialConflicts: JsonObject[];
@@ -1149,7 +1113,7 @@ function runPlainAddInsert(params: {
         includeConflicts: params.conflictState.includeConflicts,
         potentialConflicts: params.conflictState.potentialConflicts,
         statusCascade,
-        tokenReport: params.tokenReport,
+        sizeReport: params.sizeReport,
       }),
     );
   });
@@ -1166,14 +1130,12 @@ export function handleAddCommand(commandCtx: CommandContext) {
       commandCtx.fileSystem,
     );
     const metadata = yield* resolveAddMetadata(flags, commandCtx.fileSystem);
-    const tokenReportEnabled = hasFlag(flags, "--token-report");
     if (
       yield* maybeHandleAddUpsert(database, {
         flags,
         content,
         metadata,
         outputMode,
-        tokenReportEnabled,
       })
     ) {
       return;
@@ -1188,7 +1150,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
       "Memory",
       addEmbeddingDocumentParts(content, metadata),
     );
-    const tokenReport = tokenReportEnabled ? embeddingBreakdown : undefined;
+    const sizeReport = embeddingBreakdown;
     const conflictState = yield* detectAddConflicts(
       database,
       outputMode,
@@ -1200,7 +1162,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
       commandCtx,
       content,
       metadata,
-      tokenReport,
+      sizeReport,
       conflictState,
     });
   });
@@ -1404,17 +1366,13 @@ function runBatchMemoryUpdate(
 function printMinimalUpdateResult(
   outputMode: CommandContext["outputMode"],
   id: number | undefined,
-  breakdown: BgeTokenBreakdown | undefined,
+  breakdown: EmbeddingSizeReport | undefined,
   reconciliation: JsonObject,
 ): void {
-  if (!outputMode.brief) {
-    printJson({ id, ...reconciliation });
-    return;
-  }
-  const compact: JsonObject = { id, status: "updated", ...reconciliation };
-  if (breakdown) {
-    Object.assign(compact, { tokens: breakdown });
-  }
+  const compact: JsonObject = outputMode.brief
+    ? { id, status: "updated", ...reconciliation }
+    : { id, ...reconciliation };
+  attachSizeSummary(compact, breakdown);
   printJson(compact);
 }
 
@@ -1422,12 +1380,10 @@ function printSingleUpdateResult(params: {
   commandCtx: CommandContext;
   firstId: number | undefined;
   row: JsonObject | undefined;
-  tokenReportEnabled: boolean;
-  tokenBreakdowns: Map<number, BgeTokenBreakdown>;
+  sizeReports: Map<number, EmbeddingSizeReport>;
   reconciliation?: Reconciliation;
 }): void {
-  const { commandCtx, firstId, row, tokenReportEnabled, tokenBreakdowns } =
-    params;
+  const { commandCtx, firstId, row, sizeReports } = params;
   const minimalFields = reconciliationFields(params.reconciliation, true);
   const { outputMode } = commandCtx;
   if (!row) {
@@ -1443,17 +1399,15 @@ function printSingleUpdateResult(params: {
     printMinimalUpdateResult(
       outputMode,
       firstId,
-      firstId !== undefined ? tokenBreakdowns.get(firstId) : undefined,
+      firstId !== undefined ? sizeReports.get(firstId) : undefined,
       minimalFields,
     );
     return;
   }
-  if (tokenReportEnabled && firstId !== undefined) {
-    const breakdown = tokenBreakdowns.get(firstId);
-    if (breakdown) {
-      Object.assign(row, { tokens: breakdown });
-    }
-  }
+  attachSizeSummary(
+    row,
+    firstId !== undefined ? sizeReports.get(firstId) : undefined,
+  );
   Object.assign(row, reconciliationFields(params.reconciliation, false));
   printCommandOutput(commandCtx, row);
 }
@@ -1463,26 +1417,17 @@ function printUpdateResults(params: {
   targetIds: number[];
   rows: JsonObject[];
   missingIds: number[];
-  tokenReportEnabled: boolean;
-  tokenBreakdowns: Map<number, BgeTokenBreakdown>;
+  sizeReports: Map<number, EmbeddingSizeReport>;
   reconciliations: Reconciliation[];
 }): void {
-  const {
-    commandCtx,
-    targetIds,
-    rows,
-    missingIds,
-    tokenReportEnabled,
-    tokenBreakdowns,
-  } = params;
+  const { commandCtx, targetIds, rows, missingIds, sizeReports } = params;
   const { outputMode } = commandCtx;
   if (targetIds.length === 1) {
     printSingleUpdateResult({
       commandCtx,
       firstId: targetIds[0],
       row: rows[0],
-      tokenReportEnabled,
-      tokenBreakdowns,
+      sizeReports,
       reconciliation: params.reconciliations[0],
     });
     return;
@@ -1491,33 +1436,22 @@ function printUpdateResults(params: {
   const reconciliation = params.reconciliations
     .map((entry) => ({ id: entry.id, ...reconciliationFields(entry, minimal) }))
     .filter((entry) => Object.keys(entry).length > 1);
-  if (minimal) {
-    const compact: JsonObject = {
-      updated_ids: rows.map((row) => Number(row.id)),
-      not_found: missingIds,
-      count: rows.length,
-    };
-    if (reconciliation.length > 0) {
-      compact.reconciliation = reconciliation;
-    }
-    printJson(compact);
-    return;
-  }
-  const payload: JsonObject = {
-    updated: rows,
-    not_found: missingIds,
-    count: rows.length,
-  };
+  const payload: JsonObject = minimal
+    ? { updated_ids: rows.map((row) => Number(row.id)) }
+    : { updated: rows };
+  Object.assign(payload, { not_found: missingIds, count: rows.length });
   if (reconciliation.length > 0) {
     payload.reconciliation = reconciliation;
   }
-  if (tokenReportEnabled && tokenBreakdowns.size > 0) {
-    Object.assign(payload, {
-      tokens: [...tokenBreakdowns.entries()].map(([id, breakdown]) => ({
-        id,
-        ...breakdown,
-      })),
-    });
+  if (sizeReports.size > 0) {
+    payload.sizes = [...sizeReports.entries()].map(([id, size]) => ({
+      id,
+      ...sizeSummary(size),
+    }));
+  }
+  if (minimal) {
+    printJson(payload);
+    return;
   }
   printCommandOutput(commandCtx, payload);
 }
@@ -1530,13 +1464,11 @@ function runUpdateDryRun(
     const targets: JsonObject[] = [];
     let anyOverBudget = false;
     for (const entry of prospective) {
-      const size = yield* measureEmbeddingFit(
-        memoryVectorEmbeddingParts(entry.document),
-      );
-      anyOverBudget = anyOverBudget || !size.within_limit;
+      const size = embeddingSizeReport(entry.document);
+      anyOverBudget = anyOverBudget || !size.within_budget;
       const target: JsonObject = {
         id: entry.id,
-        size: embeddingSizeReport(size),
+        size,
       };
       const dropped = droppedFor(entry.previous, entry.document.content);
       if (dropped) {
@@ -1560,21 +1492,18 @@ function runUpdateDryRun(
 
 function validateProspectiveUpdates(
   prospective: Array<{ id: number; document: MemoryVectorDocument }>,
-  tokenReportEnabled: boolean,
-): Effect.Effect<Map<number, BgeTokenBreakdown>, CommandError> {
+): Effect.Effect<Map<number, EmbeddingSizeReport>, CommandError> {
   return Effect.gen(function* () {
-    const tokenBreakdowns = new Map<number, BgeTokenBreakdown>();
+    const sizeReports = new Map<number, EmbeddingSizeReport>();
     for (const entry of prospective) {
       const breakdown = yield* validateEmbeddingFit(
         "update",
         `Memory ${entry.id}`,
-        memoryVectorEmbeddingParts(entry.document),
+        entry.document,
       );
-      if (tokenReportEnabled) {
-        tokenBreakdowns.set(entry.id, breakdown);
-      }
+      sizeReports.set(entry.id, breakdown);
     }
-    return tokenBreakdowns;
+    return sizeReports;
   });
 }
 
@@ -1628,7 +1557,6 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       commandCtx.fileSystem,
     );
     assertSingleContentTarget(targetIds);
-    const tokenReportEnabled = hasFlag(flags, "--token-report");
     const prospective = yield* prospectiveUpdateDocuments(
       flags,
       database,
@@ -1640,10 +1568,7 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
       yield* runUpdateDryRun(commandCtx, prospective);
       return;
     }
-    const tokenBreakdowns = yield* validateProspectiveUpdates(
-      prospective,
-      tokenReportEnabled,
-    );
+    const sizeReports = yield* validateProspectiveUpdates(prospective);
     const { sets, params } = updateSetsAndParams(flags, content);
     const result = yield* runBatchMemoryUpdate(
       database,
@@ -1684,8 +1609,7 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
         targetIds,
         rows,
         missingIds,
-        tokenReportEnabled,
-        tokenBreakdowns,
+        sizeReports,
         reconciliations,
       });
     });

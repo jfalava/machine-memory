@@ -164,7 +164,7 @@ export function createMemoryServer(
   register(
     "memory_stats",
     "stats",
-    "Summarize one repository's memory health and distribution: status, type, certainty, tags, oldest record, stale records, and untagged records. This is read-only; a wrong repository slug returns zero counts.",
+    "Summarize one repository's memory health and distribution: status, type, certainty, tags, oldest record, stale records, and untagged records. The index field reports the semantic index: records pending (written, not indexed yet), retrying (last index write failed and will be tried again), and parked (cannot be indexed until the record changes), plus failures grouped by error; semantic search can miss records until all three are 0. This is read-only; a wrong repository slug returns zero counts.",
   );
 
   register(
@@ -196,13 +196,13 @@ export function createMemoryServer(
   register(
     "memory_add",
     "add",
-    `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. With upsert_match, a strong existing match is updated in place (echoes mode and upsert_match); a weak match refuses to create unless force is true. New records echo potential_conflicts so near-duplicates stay visible. certainty verified requires a non-empty evidence array naming what was established (user_requirement, observed_implementation, verified_mechanism, tested_behavior); record remaining limits in validation_gaps. evidence and validation_gaps are not embedded. Rejects the write when the composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
+    `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. With upsert_match, a strong existing match is updated in place (echoes mode and upsert_match); a weak match refuses to create unless force is true. New records echo potential_conflicts so near-duplicates stay visible. certainty verified requires a non-empty evidence array naming what was established (user_requirement, observed_implementation, verified_mechanism, tested_behavior); record remaining limits in validation_gaps. evidence and validation_gaps are not embedded. Refuses a memory whose content, tags and context together exceed 2,000 UTF-8 bytes; call memory_size to preflight.`,
   );
 
   register(
     "memory_update",
     "update",
-    `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change. A content or status change returns dropped (identifiers and sentences the new content lost) and review_candidates (other active records that may rely on the old premise); resolve both. evidence and validation_gaps replace the stored arrays when given ([] clears). Setting certainty verified, or clearing evidence on a verified record, requires a non-empty evidence array. Commits the row and queues vector indexing together; semantic search catches up asynchronously. Rejects active memories when the resulting composed embedding text exceeds the 512 byte+2 budget; call memory_size to preflight.`,
+    `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change. A content or status change returns dropped (identifiers and sentences the new content lost) and review_candidates (other active records that may rely on the old premise); resolve both. evidence and validation_gaps replace the stored arrays when given ([] clears). Setting certainty verified, or clearing evidence on a verified record, requires a non-empty evidence array. Commits the row and queues vector indexing together; semantic search catches up asynchronously. Refuses an active memory whose resulting content, tags and context together exceed 2,000 UTF-8 bytes; call memory_size to preflight.`,
     notFoundOrError,
   );
 
@@ -223,7 +223,7 @@ export function createMemoryServer(
     "memory_size",
     {
       description:
-        "Preflight the embedding budget for a prospective memory without writing. Uses the same conservative UTF-8 bytes+2 estimate enforced on every write (max 512). Call this before memory_add or memory_update when content may be long; oversize writes are rejected.",
+        "Measures a prospective memory against the 2,000-byte limit without writing. The limit counts the UTF-8 bytes of content, tags, and context together. Returns bytes, remaining_bytes, over_by_bytes, and the bytes each field uses; an over-limit report comes back as a tool error. memory_add and memory_update refuse a memory over the limit, so call this first when the content may be long.",
       inputSchema: mcpInputSchema(PRODUCT_OPERATIONS.size.request),
     },
     async (args: ProductRequest<"size">) => {

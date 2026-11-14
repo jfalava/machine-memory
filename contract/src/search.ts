@@ -7,14 +7,17 @@ export const MatchStrengthSchema = Schema.Literals(MATCH_STRENGTHS);
 /**
  * Absolute relevance bars. Scores are batch-relative or prior-heavy, so these
  * thresholds are what tell an agent whether a result actually matches the
- * query. Semantic bars are calibrated for bge-base-en-v1.5 cosine similarity,
- * where unrelated memories commonly land between 0.52 and 0.65.
+ * query. Semantic bars are calibrated for bge-m3 cosine similarity on 184
+ * records and one written question each (2026-11-14): the right record scored
+ * 0.49-0.64 (p10-p90), the best wrong record 0.56 at the median and 0.61 at
+ * p90, and unrelated questions peaked at 0.33-0.50. Re-measure when
+ * EMBEDDING_MODEL changes.
  */
 export const MATCH_THRESHOLDS = {
   strongCoverage: 0.6,
   weakCoverage: 0.3,
-  strongSemantic: 0.75,
-  weakSemantic: 0.68,
+  strongSemantic: 0.63,
+  weakSemantic: 0.55,
 } as const;
 
 /** Relevance components dominate; recency, certainty, and churn only break ties. */

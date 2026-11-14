@@ -9,7 +9,7 @@ const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
  * checkouts that still carry an older block are told to run `init` again. A
  * block without a version line predates versions and counts as 1.
  */
-export const MEMORY_BLOCK_VERSION = 2;
+export const MEMORY_BLOCK_VERSION = 3;
 
 export type AgentsMemoryBackend = "local" | "remote" | "mcp";
 
@@ -80,7 +80,7 @@ export function agentsMdContent(backend: AgentsMemoryBackend): string {
     `- Before changing code, scan once and read the records that bear on the task: ${terms.scanFiles} for known files, or ${terms.scanTopic} for a topic or a task that touches no files; then ${terms.read}. Results are candidates: judge them by \`match_strength\`, and "nothing relevant" is a valid outcome.`,
     "- When the user's instruction contradicts a stored record, follow the user and update the record.",
     `- Write one fact per record and start it with the command, path or identifier it is about. Store decisions, constraints, preferences, references and gotchas. Put delivery state in one \`status\` record with ${terms.expiry}. Leave out pixel values, UI state and deploy outcomes, and put facts about one machine in that machine's guidance file.`,
-    `- Check size before writing: ${terms.size}. Content, tags and context share one 512-byte budget.`,
+    `- Check size before writing: ${terms.size}. Content, tags and context share one 2,000-byte limit.`,
     `- Change a record with ${terms.update}. It replaces the content, so read the record first and keep the details that still hold. Create one with ${terms.add}, which updates a strong match instead of adding a duplicate.`,
     `- When a write reports ${terms.lossReport}, restore details dropped by mistake and update or deprecate the listed records.`,
     `- ${terms.evidence}: \`user_requirement\`, \`observed_implementation\`, \`verified_mechanism\` or \`tested_behavior\`. Reading the code proves only \`observed_implementation\`.`,

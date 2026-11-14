@@ -1,4 +1,4 @@
-import { EVIDENCE_KINDS } from "@machine-memory/contract";
+import { EVIDENCE_KINDS, MATCH_THRESHOLDS } from "@machine-memory/contract";
 
 import {
   CERTAINTY_LEVELS,
@@ -10,6 +10,8 @@ import type { JsonObject } from "../json";
 import {
   ADD_USAGE,
   DEPRECATE_USAGE,
+  INDEX_USAGE,
+  REINDEX_USAGE,
   SIZE_USAGE,
   UPDATE_USAGE,
 } from "./features/memory/usage";
@@ -26,21 +28,19 @@ export function helpPayload() {
       "Every database-backed command requires exactly one of --local or --remote. Remote credentials come from MACHINE_MEMORY_DB_URL/MACHINE_MEMORY_DB_TOKEN or the OS keychain.",
     embedding_budget: {
       limit:
-        "A memory's composed embedding text must stay below 512 BGE tokens AND its conservative byte estimate (UTF-8 bytes + 2) must be at most 512. Either limit alone rejects the write before anything is stored.",
+        "A memory's embedded text is at most 2,000 UTF-8 bytes. Longer writes are refused before anything is stored, and the error says how many bytes to remove.",
       composed_text:
-        "content, plus Tags:/Context: lines when present, plus fixed Memory type/Status/Certainty lines.",
+        "content, plus a Tags: line and a Context: line when present. Memory type, status, and certainty are not counted.",
       preflight:
-        'machine-memory size "<text>" reports token count, byte estimate, pass/fail per limit, and which limit binds. add/update accept --dry-run for the same report without writing, and --token-report to attach the breakdown to a real write.',
+        'machine-memory size "<text>" [--tags <tags>] [--context <context>] reports bytes, remaining_bytes, over_by_bytes, and the bytes each field uses. add and update accept --dry-run for the same report without writing.',
     },
     output_fields: {
       conflict_count:
         "Number of active memories that may conflict with newly added content (also listed in potential_conflicts).",
       status_cascade_count:
         "For a newly added status memory: how many other active status memories share its tags and are candidates to deprecate (see status_cascade.suggested_command).",
-      tokens:
-        "Per-part BGE token breakdown with bytes_estimate (UTF-8 bytes + 2) attached when --token-report is passed or a write fails the size gate.",
-      match_strength:
-        "Absolute per-result relevance for query/suggest/sweep. strong: every query identifier found literally (or one plus strong term coverage), at least 60% of query terms, a suggested file path or file name, or semantic similarity >= 0.75. weak: a partial identifier hit, at least 30% of terms, or similarity >= 0.68. Otherwise none. Scores rank within one response; match_strength is comparable across queries.",
+      size: "On a successful add or update: bytes the record's embedded text uses and remaining_bytes of the 2,000-byte limit. size and --dry-run return the full report with over_by_bytes and per-field parts.",
+      match_strength: `Absolute per-result relevance for query/suggest/sweep. strong: every query identifier found literally (or one plus strong term coverage), at least 60% of query terms, a suggested file path or file name, or semantic similarity >= ${MATCH_THRESHOLDS.strongSemantic}. weak: a partial identifier hit, at least 30% of terms, or similarity >= ${MATCH_THRESHOLDS.weakSemantic}. Otherwise none. Scores rank within one response; match_strength is comparable across queries.`,
       no_strong_match:
         "True when no returned result is strong. Treat the results as loosely related candidates, not as the answer.",
       exact_matches:
@@ -97,7 +97,7 @@ export function helpPayload() {
       size: {
         usage: SIZE_USAGE,
         description:
-          "Report the embedding budget for a prospective memory (token count, byte+2 estimate, binding limit) without touching the database. Exit code 1 means it would be rejected.",
+          "Report the size of a prospective memory against the 2,000-byte limit without touching the database. Exit code 1 means the write would be refused.",
       },
       update: {
         usage: UPDATE_USAGE,
@@ -147,7 +147,14 @@ export function helpPayload() {
       stats: { usage: `stats${DATABASE_BACKEND_USAGE}` },
       import: { usage: `import <memories.json>${DATABASE_BACKEND_USAGE}` },
       reindex: {
-        usage: `reindex --remote [--brief|--json-min|--quiet]`,
+        usage: REINDEX_USAGE,
+        description:
+          "Queue records for the semantic index again: the whole current repository by default, only records whose last index write failed with --failed-only, the given records with --id, or every repository with --all-repos. Returns at once; watch progress with index status.",
+      },
+      index: {
+        usage: INDEX_USAGE,
+        description:
+          "Report where records stand in the semantic index: pending (written, not indexed yet), retrying (last index write failed and will be tried again), parked (cannot be indexed until the record changes or reindex re-queues it), oldest_pending_seconds, and failures grouped by error with record ids. stats reports the same under index.",
       },
       export: {
         usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>]${DATABASE_BACKEND_USAGE}`,
@@ -207,7 +214,7 @@ const HELP_FOCUS = {
     fields: [
       "conflict_count",
       "status_cascade_count",
-      "tokens",
+      "size",
       "evidence",
       "validation_gaps",
       "dropped",
@@ -218,7 +225,7 @@ const HELP_FOCUS = {
   update: {
     sections: ["embedding_budget"],
     fields: [
-      "tokens",
+      "size",
       "evidence",
       "validation_gaps",
       "dropped",
@@ -228,8 +235,8 @@ const HELP_FOCUS = {
   },
   size: {
     sections: ["embedding_budget"],
-    fields: ["tokens"],
-    enums: ["memory_type", "certainty"],
+    fields: ["size"],
+    enums: [],
   },
   deprecate: { sections: [], fields: ["review_candidates"], enums: [] },
   diff: { sections: [], fields: ["dropped"], enums: [] },

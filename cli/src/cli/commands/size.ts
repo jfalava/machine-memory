@@ -1,25 +1,17 @@
+import { embeddingSizeReport } from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { getFlagValue } from "../../cli-utils";
 import { commandError } from "../../effect/errors";
-import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
-import {
-  embeddingSizeReport,
-  measureEmbeddingFit,
-} from "../features/memory/size-report";
 import { SIZE_USAGE } from "../features/memory/usage";
 import type { CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
-import {
-  parseContentFromFileFlag,
-  requireCertainty,
-  requireMemoryType,
-} from "../shared";
+import { parseContentFromFileFlag } from "../shared";
 
 /**
- * Preflights the embedding budget for a prospective memory without touching
- * the database: reports the BGE token count, the Worker's byte+2 estimate,
- * pass/fail per limit, and which limit binds. Exits 1 when over budget.
+ * Preflights the size limit for a prospective memory without touching the
+ * database: UTF-8 bytes of the embedded text (content, tags, context) against
+ * the cap, with each field's share. Exits 1 when over budget.
  */
 export function handleSizeCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -38,24 +30,17 @@ export function handleSizeCommand(commandCtx: CommandContext) {
     if (!content) {
       return yield* fail(`Usage: ${SIZE_USAGE}`);
     }
-    const breakdown = yield* measureEmbeddingFit(
-      memoryVectorEmbeddingParts({
-        id: "0",
-        repository: "",
-        content,
-        tags: getFlagValue(flags, "--tags") ?? "",
-        context: getFlagValue(flags, "--context") ?? "",
-        memory_type: requireMemoryType(flags) ?? "convention",
-        status: "active",
-        certainty: requireCertainty(flags) ?? "inferred",
-      }),
-    );
+    const size = embeddingSizeReport({
+      content,
+      tags: getFlagValue(flags, "--tags") ?? "",
+      context: getFlagValue(flags, "--context") ?? "",
+    });
     yield* Effect.sync(() => {
       printCommandOutput(
         { command: "size", outputMode: commandCtx.outputMode },
-        embeddingSizeReport(breakdown),
+        size,
       );
-      if (!breakdown.within_limit) {
+      if (!size.within_budget) {
         process.exitCode = 1;
       }
     });

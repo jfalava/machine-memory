@@ -49,7 +49,7 @@ import {
   handleUpdateCommand,
 } from "./memory-write";
 import { handleMigrateCommand } from "./migrate";
-import { handleReindexCommand } from "./reindex";
+import { handleIndexCommand, handleReindexCommand } from "./reindex";
 import { remoteCommand } from "./remote";
 import { handleSizeCommand } from "./size";
 import { handleTagMapCommand } from "./tag-map";
@@ -75,7 +75,6 @@ const addCommand = effectCommand(
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
     "no-conflicts": booleanFlag("no-conflicts"),
-    "token-report": booleanFlag("token-report"),
     ...outputConfig(),
   },
   [
@@ -95,7 +94,6 @@ const addCommand = effectCommand(
     stringSpec("refs"),
     stringSpec("expires-after-days"),
     booleanSpec("no-conflicts"),
-    booleanSpec("token-report"),
     ...outputSpecs,
   ],
   "write",
@@ -192,7 +190,6 @@ const updateCommand = effectCommand(
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
     "expected-update-count": stringFlag("expected-update-count"),
-    "token-report": booleanFlag("token-report"),
     ...outputConfig(),
   },
   [
@@ -209,7 +206,6 @@ const updateCommand = effectCommand(
     stringSpec("refs"),
     stringSpec("expires-after-days"),
     stringSpec("expected-update-count"),
-    booleanSpec("token-report"),
     ...outputSpecs,
   ],
   "write",
@@ -380,8 +376,6 @@ const sizeCommand = effectCommand(
     "from-file": stringFlag("from-file"),
     tags: stringFlag("tags"),
     context: stringFlag("context"),
-    type: stringFlag("type"),
-    certainty: stringFlag("certainty"),
     local: booleanFlag("local"),
     remote: booleanFlag("remote"),
     ...outputConfig(),
@@ -390,8 +384,6 @@ const sizeCommand = effectCommand(
     stringSpec("from-file"),
     stringSpec("tags"),
     stringSpec("context"),
-    stringSpec("type"),
-    stringSpec("certainty"),
     booleanSpec("local"),
     booleanSpec("remote"),
     ...outputSpecs,
@@ -408,10 +400,31 @@ const importCommand = effectCommand(
 );
 const reindexCommand = effectCommand(
   "reindex",
-  outputConfig(),
-  outputSpecs,
+  {
+    "failed-only": booleanFlag("failed-only"),
+    id: stringFlag("id"),
+    "all-repos": booleanFlag("all-repos"),
+    ...outputConfig(),
+  },
+  [
+    booleanSpec("failed-only"),
+    stringSpec("id"),
+    booleanSpec("all-repos"),
+    ...outputSpecs,
+  ],
   "write",
   handleReindexCommand,
+);
+const indexCommand = effectCommand(
+  "index",
+  {
+    args: positionalArgs(),
+    "all-repos": booleanFlag("all-repos"),
+    ...outputConfig(),
+  },
+  [booleanSpec("all-repos"), ...outputSpecs],
+  "read",
+  handleIndexCommand,
 );
 const exportCommand = effectCommand(
   "export",
@@ -481,6 +494,7 @@ export const featureCommands = [
   sizeCommand,
   importCommand,
   reindexCommand,
+  indexCommand,
   exportCommand,
   migrateCommand,
   tagMapCommand,

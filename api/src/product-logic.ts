@@ -4,7 +4,6 @@ import {
   normalizeSuggestPath,
   normalizeTags,
   sqliteDateToMs,
-  composeEmbeddingText,
   exactMatchPoints,
   ftsRankPoints,
   matchStrengthRank,
@@ -204,7 +203,7 @@ export function summarizeMemoryStats(
   repository: string,
   rows: readonly JsonObject[],
   now = Date.now(),
-): MemoryStatsResult {
+): Omit<MemoryStatsResult, "index"> {
   const accumulator = createStatsAccumulator();
   for (const row of rows) {
     ingestStatsRow(accumulator, row, now);
@@ -305,22 +304,4 @@ export function uniqueLowerPreserveOrder(values: string[]): string[] {
     }
   }
   return unique;
-}
-
-export function embeddingTextForMemory(input: {
-  content: string;
-  tags: string;
-  context: string;
-  memory_type: string;
-  status: string;
-  certainty: string;
-}): string {
-  return composeEmbeddingText({
-    content: input.content,
-    tags: input.tags,
-    context: input.context,
-    memory_type: input.memory_type,
-    status: input.status,
-    certainty: input.certainty,
-  });
 }

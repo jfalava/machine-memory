@@ -8,6 +8,7 @@ import {
   MemoryTypeSchema,
   MemoryStatusSchema,
 } from "../entities";
+import { IndexStatusSchema } from "../index-status";
 import { DroppedDetailsSchema } from "../reconcile";
 import { MatchStrengthSchema } from "../search";
 
@@ -233,6 +234,8 @@ export const MemoryStatsResultSchema = Schema.Struct({
   ),
   memories_not_updated_over_90_days: Schema.Finite,
   memories_with_no_tags: Schema.Finite,
+  /** Where this repository's records stand in the semantic index. */
+  index: IndexStatusSchema,
 });
 export type MemoryStatsResult = typeof MemoryStatsResultSchema.Type;
 export const MemoryStatsSuccessSchema = okResponseSchema(

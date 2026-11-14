@@ -5,6 +5,7 @@ import {
   StoredMemoryRowSchema,
   normalizeStoredMemoryRow,
   validateEmbeddingText,
+  VECTOR_SYNC_NEVER,
   type JsonValue,
 } from "@machine-memory/contract";
 import { Schema } from "effect";
@@ -13,7 +14,7 @@ import { Schema } from "effect";
 // Vectorize applied late. Repeating it forever re-embeds unchanged memories;
 // index drift beyond that window is repaired with `reindex`.
 const REPAIR_INTERVAL_MS = 60 * 60 * 1000;
-const REPAIRED = Number.MAX_SAFE_INTEGER;
+const REPAIRED = VECTOR_SYNC_NEVER;
 const BATCH_SIZE = 20;
 
 type PendingVector = {
@@ -58,6 +59,9 @@ export function aiEmbedding(ai: Ai, text: string): Promise<number[]> {
     );
 }
 
+/** The stored row cannot be embedded as it is, so retrying cannot help. */
+class UnembeddableMemoryError extends Error {}
+
 async function currentVector(
   db: D1Database,
   id: number,
@@ -70,15 +74,22 @@ async function currentVector(
   if (stored === null) {
     return undefined;
   }
-  const row = normalizeStoredMemoryRow(
-    Schema.decodeUnknownSync(StoredMemoryRowSchema)(stored),
-  );
+  let row: ReturnType<typeof normalizeStoredMemoryRow>;
+  let text: string;
+  try {
+    row = normalizeStoredMemoryRow(
+      Schema.decodeUnknownSync(StoredMemoryRowSchema)(stored),
+    );
+    text = validateEmbeddingText(composeEmbeddingText(row), "Memory");
+  } catch (cause) {
+    throw new UnembeddableMemoryError(
+      cause instanceof Error ? cause.message : String(cause),
+    );
+  }
   // Inactive rows need deletion, not a longer status-bearing embedding.
   if (row.status !== "active") {
     return undefined;
   }
-  const text = composeEmbeddingText(row);
-  validateEmbeddingText(text, "Memory");
   const values = await embed(text);
   if (
     values.length !== EMBEDDING_DIMENSIONS ||
@@ -96,6 +107,38 @@ async function currentVector(
       certainty: row.certainty,
     },
   };
+}
+
+/**
+ * Records a failed delivery. A row that cannot be embedded is parked until the
+ * memory changes or reindex re-queues it; any other failure, such as an
+ * unreachable Workers AI or Vectorize, is retried with backoff so an outage
+ * heals on its own.
+ */
+async function recordFailure(
+  db: D1Database,
+  job: PendingVector,
+  failure: { parked: boolean; message: string },
+  now: number,
+): Promise<void> {
+  const delay = Math.min(300_000, 1000 * 2 ** Math.min(job.attempts, 8));
+  await db
+    .prepare(`UPDATE memory_vector_sync SET attempts = attempts + 1,
+    next_attempt_at = ?, last_error = ? WHERE memory_id = ? AND generation = ?`)
+    .bind(
+      failure.parked ? VECTOR_SYNC_NEVER : now + delay,
+      failure.message.slice(0, 500),
+      job.memory_id,
+      job.generation,
+    )
+    .run();
+  console.error(
+    JSON.stringify({
+      event: failure.parked ? "vector_sync_parked" : "vector_sync_retry",
+      id: job.memory_id,
+      error: failure.message,
+    }),
+  );
 }
 
 /** Called only by the coordinator's alarm: there is one mutation-producing drain. */
@@ -143,23 +186,14 @@ export async function drainVectorSync(
         )
         .run();
     } catch (error) {
-      const delay = Math.min(300_000, 1000 * 2 ** Math.min(job.attempts, 8));
-      await db
-        .prepare(`UPDATE memory_vector_sync SET attempts = attempts + 1,
-        next_attempt_at = ?, last_error = ? WHERE memory_id = ? AND generation = ?`)
-        .bind(
-          now + delay,
-          String(error).slice(0, 500),
-          job.memory_id,
-          job.generation,
-        )
-        .run();
-      console.error(
-        JSON.stringify({
-          event: "vector_sync_retry",
-          id: job.memory_id,
-          error: String(error),
-        }),
+      await recordFailure(
+        db,
+        job,
+        {
+          parked: error instanceof UnembeddableMemoryError,
+          message: error instanceof Error ? error.message : String(error),
+        },
+        now,
       );
     }
   }

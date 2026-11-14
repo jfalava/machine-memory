@@ -32,11 +32,11 @@ Call `list_repositories` before writes when the slug is not certain. Derive `own
 | `memory_history`     | List complete previous revisions, newest first, with the current update count |
 | `memory_list`        | List memories with filters and offset pagination                              |
 | `memory_doctor`      | Audit duplicates, status expiry, types, tags, and refs                        |
-| `memory_stats`       | Summarize status, type, certainty, tag, and age distributions                 |
+| `memory_stats`       | Summarize status, type, certainty, tag, and age distributions; index status   |
 | `memory_gc`          | Preview expired status memories; never mutates                                |
 | `memory_verify`      | Check an inferred fact against a memory (consistent / conflict)               |
 | `memory_diff`        | Diff proposed content against a memory (terms added / removed)                |
-| `memory_size`        | Preflight embedding budget without writing                                    |
+| `memory_size`        | Measure a memory against the 2,000-byte limit without writing                 |
 | `memory_add`         | Create a memory (or upsert via `upsert_match`)                                |
 | `memory_update`      | Update content or metadata by id (or `match`)                                 |
 | `memory_restore`     | Restore a reviewed revision in place, refusing a stale update count           |
@@ -53,7 +53,7 @@ Every tool that takes `repository` expects `owner/name`. Rows live in D1; embedd
 ### Maintenance
 
 - `memory_doctor` audits active memories and returns typed findings with every involved id. Findings are suggestions: review them semantically before writing.
-- `memory_stats` reports aggregate status, type, certainty, tag, and age data for one repository.
+- `memory_stats` reports aggregate status, type, certainty, tag, and age data for one repository. Its `index` field reports how many records are `pending`, `retrying` or `parked` in the semantic index and the failures grouped by error.
 - `memory_gc` is always a dry run. It returns active status memories whose `expires_after_days` window has elapsed.
 - `memory_deprecate` accepts `ids` and optional `superseded_by`. It preserves the records and re-syncs their vector metadata.
 - `memory_delete_many` accepts one to 100 explicit `ids`. It is permanent and echoes `deleted_from`, `deleted_ids`, and `not_found`.
@@ -125,18 +125,12 @@ Typical fields on `memory_add` / `memory_update`:
 - `status` — `active`, `deprecated`, `superseded_by`
 - `expires_after_days` — only valid when `memory_type` is `status`
 
-## Embedding size budget
+## Size limit
 
-Composed embedding text (content + optional tags/context + type/status/certainty labels) must stay within the Worker budget:
+A memory's embedded text (content, plus `Tags:` and `Context:` lines when set) is at most 2,000 UTF-8 bytes. Memory type, status, and certainty are not counted. The CLI enforces the same limit.
 
-```text
-UTF-8 bytes + 2 ≤ 512
-```
-
-Same conservative limit the CLI enforces with `machine-memory size` and add/update `--dry-run` (the Worker cannot run the full BGE tokenizer).
-
-- **`memory_size`** — measure without writing; over-budget responses set `isError: true` and include `over_by_bytes` / `within_budget`
-- **`memory_add` / `memory_update`** — reject on flight before any D1 write when over budget
+- **`memory_size`** — measures without writing; a report over the limit sets `isError: true` and includes `over_by_bytes`
+- **`memory_add` / `memory_update`** — refuse a memory over the limit before any D1 write; the error says how many bytes to remove
 
 Call `memory_size` before long writes.
 
@@ -151,11 +145,12 @@ Successful writes echo scope so a wrong namespace is obvious in the transcript:
   "id": 42,
   "memory": { },
   "size": {
-    "source": "bytes",
-    "bytes_estimate": 128,
-    "max_bytes_estimate": 512,
+    "bytes": 128,
+    "max_bytes": 2000,
     "within_budget": true,
-    "over_by_bytes": 0
+    "over_by_bytes": 0,
+    "remaining_bytes": 1872,
+    "parts": { "content": 113, "tags": 15, "context": 0 }
   }
 }
 

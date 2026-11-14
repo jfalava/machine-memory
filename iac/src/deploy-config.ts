@@ -81,7 +81,7 @@ export type DeployConfigEnv = {
 export const DEFAULT_DEPLOY_CONFIG: Omit<DeployConfig, "configPath"> = {
   stackName: "machine-memory-remote-db",
   databaseName: "machine-memory-db",
-  vectorIndexName: "machine-memory-v1",
+  vectorIndexName: "machine-memory-v2",
   oauthKvName: "machine-memory-oauth-kv",
   workers: {
     router: "machine-memory-router",

@@ -76,7 +76,7 @@ stdout through `jq`, `head` or `cut` cannot hide them.
 | [`help`](/machine/help)           | Print the command catalog and enum values as JSON.    |
 | [`version`](/machine/version)     | Print the installed CLI version.                      |
 | [`add`](/machine/add)             | Create a memory, optionally upserting a strong match. |
-| [`size`](/machine/size)           | Preflight the embedding budget without writing.       |
+| [`size`](/machine/size)           | Measure a memory against the 2,000-byte limit.        |
 | [`get`](/machine/get)             | Fetch one or more memories by ID.                     |
 | [`update`](/machine/update)       | Change memory content or metadata.                    |
 | [`deprecate`](/machine/deprecate) | Mark memories deprecated or superseded.               |
@@ -99,11 +99,12 @@ stdout through `jq`, `head` or `cut` cannot hide them.
 
 ### Maintenance and interchange
 
-| Command                       | Purpose                                                         |
-| ----------------------------- | --------------------------------------------------------------- |
-| [`export`](/machine/export)   | Export active memories as JSON.                                 |
-| [`import`](/machine/import)   | Import a JSON memory export with duplicate and conflict checks. |
-| [`migrate`](/machine/migrate) | Apply pending database schema migrations.                       |
-| [`gc`](/machine/gc)           | Preview memories whose expiry window has elapsed.               |
-| [`tag-map`](/machine/tag-map) | Manage path-to-tag mappings used during memory writes.          |
-| [`reindex`](/human/reindex)   | Backfill existing remote memories into Vectorize embeddings.    |
+| Command                                       | Purpose                                                         |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| [`export`](/machine/export)                   | Export active memories as JSON.                                 |
+| [`import`](/machine/import)                   | Import a JSON memory export with duplicate and conflict checks. |
+| [`migrate`](/machine/migrate)                 | Apply pending database schema migrations.                       |
+| [`gc`](/machine/gc)                           | Preview memories whose expiry window has elapsed.               |
+| [`tag-map`](/machine/tag-map)                 | Manage path-to-tag mappings used during memory writes.          |
+| [`reindex`](/human/reindex)                   | Backfill existing remote memories into Vectorize embeddings.    |
+| [`index status`](/human/reindex#index-status) | Report pending, retrying and parked index writes.               |

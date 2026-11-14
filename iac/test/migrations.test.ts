@@ -32,3 +32,41 @@ test("evidence migrations keep columns separate from rerunnable D1-compatible tr
   expect(columns).not.toMatch(/\bTRIGGER\b/i);
   expect(triggers.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
 });
+
+test("the embedding budget migration replaces both validation triggers and is rerunnable", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0007_embedding_budget.sql", import.meta.url),
+    "utf8",
+  );
+  const statements = sql.replace(/^--.*$/gm, "");
+  expect(statements).not.toMatch(/\bCASE\b/i);
+  expect(statements).not.toMatch(/\bALTER\b/i);
+  for (const trigger of [
+    "memories_validate_insert",
+    "memories_validate_update",
+  ]) {
+    expect(statements).toContain(`DROP TRIGGER IF EXISTS ${trigger};`);
+    expect(statements).toContain(`CREATE TRIGGER ${trigger} BEFORE`);
+  }
+  // The cap and the composition match contract's MAX_EMBEDDING_BYTES and composeEmbeddingText.
+  expect(statements.match(/AS BLOB\)\) > 2000;/g)).toHaveLength(2);
+  expect(statements).not.toContain("Memory type:");
+});
+
+test("the vector sync queue migration dates every queued write", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0008_vector_sync_queue.sql", import.meta.url),
+    "utf8",
+  );
+  const statements = sql.replace(/^--.*$/gm, "");
+  expect(statements).not.toMatch(/\bCASE\b/i);
+  for (const trigger of [
+    "memory_vector_insert",
+    "memory_vector_update",
+    "memory_vector_delete",
+  ]) {
+    expect(statements).toContain(`DROP TRIGGER ${trigger};`);
+    expect(statements).toContain(`CREATE TRIGGER ${trigger} AFTER`);
+  }
+  expect(statements.match(/queued_at = excluded\.queued_at;/g)).toHaveLength(3);
+});

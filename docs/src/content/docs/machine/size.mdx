@@ -1,6 +1,6 @@
 ---
 title: size
-description: Preflight the embedding budget for a prospective memory.
+description: Measure a prospective memory against the 2,000-byte limit.
 sidebar:
   order: 3
 ---
@@ -8,64 +8,56 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory size <content> (--local|--remote)
-machine-memory size --from-file <path> (--local|--remote)
+machine-memory size <content> [--tags <tags>] [--context <context>]
+machine-memory size --from-file <path> [--tags <tags>] [--context <context>]
 ```
 
-## Embedding budget
+## Size limit
 
-`size` reports whether a prospective memory would pass the embedding budget
-**without touching the database**. It composes the embedding text exactly like
-an `add` would (content plus tags/context lines plus fixed type/status/certainty
-lines) and reports both limits independently:
+A memory's embedded text is at most **2,000 UTF-8 bytes**. The embedded text is
+the content, plus a `Tags:` line and a `Context:` line when those fields are
+set. Memory type, status, and certainty are not counted.
 
-Every memory's composed embedding text must stay **below 512 BGE tokens**, and
-its conservative byte estimate (**UTF-8 bytes + 2**) must be **at most 512**.
-Either limit rejects the write before anything is stored.
-
-Use these commands to preflight without writing:
+`size` measures a prospective memory against that limit **without touching the
+database**. `add` and `update` refuse a memory over the limit before anything is
+stored, and `--dry-run` on either prints the same report:
 
 ```sh
-machine-memory size "<text>" --remote
+machine-memory size "<text>" --tags "area:cli" --context "why it matters"
 machine-memory add "<text>" --dry-run --remote
 machine-memory update <id> "<text>" --dry-run --remote
 ```
 
-Pass `--token-report` to a real `add` or `update` to include the per-part token
-breakdown. When a memory exceeds the budget, the error states the exact byte or
-token deficit and suggests a mechanical trim.
-
 ```json
 {
-  "source": "tokenizer",
-  "total_tokens": 16,
-  "bytes_estimate": 72,
-  "limits": {
-    "tokens": { "value": 16, "limit": "below 512", "pass": true },
-    "bytes_estimate": { "value": 72, "limit": 512, "pass": true }
-  },
+  "bytes": 49,
+  "max_bytes": 2000,
   "within_budget": true,
-  "binding_limit": null,
-  "over_by_tokens": 0,
   "over_by_bytes": 0,
-  "parts": [{ "part": "content", "tokens": 4 }]
+  "remaining_bytes": 1951,
+  "parts": { "content": 6, "tags": 15, "context": 28 }
 }
 ```
 
+`parts` is the bytes each field contributes, with its label and line break.
+When a memory is over the limit, `over_by_bytes` is the number of bytes to
+remove and `remaining_bytes` is negative.
+
+Every successful `add` and `update` reports `size` with `bytes` and
+`remaining_bytes`, so no flag is needed to see how much room a record has left.
+
 ## Exit code
 
-The command exits `1` when either limit fails, so scripts can preflight writes:
+The command exits `1` when the memory is over the limit, so scripts can
+preflight writes:
 
 ```sh
-machine-memory size "$(cat long-note.txt)" || echo "would be rejected"
+machine-memory size "$(cat long-note.txt)" || echo "would be refused"
 ```
-
-When over budget, the report includes `largest_part` and a mechanically derived
-`trimmed_suggestion` — an exact UTF-8-safe truncation when the byte+2 estimate
-binds, or an approximation labeled as such when tokens bind.
 
 ## Options
 
-`--tags`, `--context`, `--type`, and `--certainty` are honored so the composed
-text matches the real write. `--from-file` reads content from a file. The
-backend flag is accepted for invocation symmetry but no database is accessed.
+Pass `--tags` and `--context` with the values the real write will use, because
+they count toward the limit. `--from-file` reads the content from a file.
+`--local` and `--remote` are accepted so the command can be called like the
+others; no database is accessed.

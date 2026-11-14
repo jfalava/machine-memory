@@ -3,6 +3,8 @@ import {
   compareMemoryFact,
   droppedDetails,
   embeddingSizeReport,
+  indexStatusFromRows,
+  indexStatusQueries,
   jsonNumber,
   jsonString,
   normalizeListRepositoriesArgs,
@@ -28,7 +30,6 @@ import {
   repositoryStatsSelect,
 } from "./product-api";
 import {
-  embeddingTextForMemory,
   summarizeMemoryStats,
   toHistoryRow,
   toProductRow,
@@ -159,7 +160,19 @@ export const productReadHandlers = (
         "SELECT * FROM memories WHERE repository = ?",
         [input.repository],
       );
-      return summarizeMemoryStats(input.repository, rows);
+      const queries = indexStatusQueries(input.repository);
+      const [counts] = yield* ctx.sql.unsafe<JsonObject>(
+        queries.counts.sql,
+        queries.counts.params,
+      );
+      const failures = yield* ctx.sql.unsafe<JsonObject>(
+        queries.failures.sql,
+        queries.failures.params,
+      );
+      return {
+        ...summarizeMemoryStats(input.repository, rows),
+        index: indexStatusFromRows(counts ?? null, failures),
+      };
     }),
 
   gc: (input) =>
@@ -186,16 +199,11 @@ export const productReadHandlers = (
   size: (input) =>
     Effect.sync(() => {
       const args = normalizeMemorySizeArgs(input);
-      const size = embeddingSizeReport(
-        embeddingTextForMemory({
-          content: args.content,
-          tags: args.tags ?? "",
-          context: args.context ?? "",
-          memory_type: args.memory_type,
-          status: args.status,
-          certainty: args.certainty,
-        }),
-      );
+      const size = embeddingSizeReport({
+        content: args.content,
+        tags: args.tags ?? "",
+        context: args.context ?? "",
+      });
       return { size };
     }),
 
