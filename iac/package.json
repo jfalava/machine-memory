@@ -18,6 +18,7 @@
     "typecheck": "effect-tsgo tsrs --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@alchemy.run/cloudflare": "catalog:iac",
     "@cloudflare/workers-types": "catalog:types",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
@@ -26,6 +27,7 @@
     "effect": "catalog:effect"
   },
   "devDependencies": {
+    "@alchemy.run/test": "catalog:iac",
     "bun-types": "catalog:types",
     "oxfmt": "catalog:maintenance",
     "oxlint": "catalog:maintenance",

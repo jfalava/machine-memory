@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import { run, withProviders } from "@alchemy.run/test/Core";
 import { findProviderByType } from "alchemy/Provider";
 import * as State from "alchemy/State";
-import { run, withProviders } from "alchemy/Test/Core";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
@@ -74,8 +74,6 @@ test("existing Worker precreate does not wait for newly declared DO classes", as
           ],
           session: {
             note: () => Effect.void,
-            emit: () => Effect.void,
-            done: () => Effect.void,
           },
         })
         .pipe(Effect.timeout("1 second"));

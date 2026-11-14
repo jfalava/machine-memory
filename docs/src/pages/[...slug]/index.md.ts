@@ -47,7 +47,8 @@ export async function getStaticPaths() {
 
 export async function GET({ props }: { props: SlugProps }) {
   const { item } = props;
-  const { entry, title, description, markdownUrl, sourceUrl, version } = item;
+  const { entry, title, description, url, markdownUrl, sourceUrl, version } =
+    item;
   // SAFETY: the docs collection schema defines entry.data; only optional socialImage is read.
   const data = entry.data as PageData;
   const rawImage = data.socialImage;
@@ -78,7 +79,7 @@ export async function GET({ props }: { props: SlugProps }) {
     "",
     // Point at the authored source (`.mdx` twin) when it exists — the
     // `.md` alternate referencing itself was a placeholder.
-    `Source: ${new URL(sourceUrl ?? markdownUrl, config.site).href}`,
+    `Source: ${new URL(sourceUrl ?? markdownUrl ?? url, config.site).href}`,
     "",
   ].join("\n");
 

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import {
   EMBEDDING_DIMENSIONS,
   ErrorBodySchema,
@@ -12,7 +13,6 @@ import {
   type ProductRoute,
 } from "@machine-memory/contract";
 import { RuntimeContext } from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
 import { Effect, Redacted, Schema } from "effect";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
