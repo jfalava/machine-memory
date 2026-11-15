@@ -94,7 +94,6 @@ describe("remote setup with a locked keychain", () => {
         outputMode: {
           brief: false,
           jsonMin: false,
-          noConflicts: false,
           pretty: false,
           quiet: false,
         },

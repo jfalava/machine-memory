@@ -9,12 +9,57 @@ sidebar:
 
 ```sh
 machine-memory import memories.json (--local|--remote)
+machine-memory import findings.json --review (--local|--remote)
 ```
 
-The input must be a JSON array of memory objects. Each entry is normalized and
-validated before insertion. Exact duplicates are skipped, potential conflicts
-are reported without insertion, and successful entries return their new IDs.
+The input is the output of [`export`](/machine/export), or a JSON array of
+memory objects. Each entry is normalized and validated before insertion, and
+one invalid entry stops the import before anything is written. An entry that
+strongly matches an active memory is reported as `conflict`, with those
+memories in `related`, and is not inserted. Successful entries return their
+new IDs.
 
 Import preserves supported content metadata such as tags, context, type,
 certainty, status, references, expiry, and valid timestamps. The imported
 memories belong to the repository from which the command is run.
+
+## Reviewing candidates
+
+`--review` is for a candidate file that child agents filled with
+[`add --emit-candidate`](/machine/add#candidates-for-a-parent-agent), not for
+a backup. Each candidate passes or fails on its own, against the checks a
+plain `add` applies:
+
+```json
+{
+  "repository": "owner/name",
+  "count": 3,
+  "written": 1,
+  "declined": 2,
+  "results": [
+    { "index": 0, "status": "written", "id": 412 },
+    {
+      "index": 1,
+      "status": "declined",
+      "reason": "near_duplicate",
+      "duplicate_of": 87,
+      "text_overlap": 0.91,
+      "note": "Memory 87 already states nearly the same thing. …"
+    },
+    { "index": 2, "status": "declined", "reason": "over_size_limit" }
+  ]
+}
+```
+
+| Reason                      | The candidate                                          |
+| --------------------------- | ------------------------------------------------------ |
+| `near_duplicate`            | Repeats the active memory in `duplicate_of`.           |
+| `over_size_limit`           | Is over the 2,000-byte limit; `size` says by how much. |
+| `verified_without_evidence` | Claims `verified` and names no evidence kind.          |
+| `not_active`                | Is not a new active memory.                            |
+| `invalid_metadata`, others  | Could not be read as a memory.                         |
+
+A written memory keeps the candidate's `source_agent`, the agent that found
+it, and records the reviewing agent as `last_updated_by`. Running the review
+again on the same file writes nothing twice: the candidates written the first
+time are declined as near-duplicates.

@@ -1,4 +1,4 @@
-import { relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 
 import { Effect } from "effect";
 import pc from "picocolors";
@@ -12,6 +12,11 @@ import {
   type DatabaseBackendFlags,
 } from "../../database-config";
 import { CommandError } from "../../effect/errors";
+import {
+  repositoryForCurrentDirectory,
+  repositoryPinContent,
+  repositoryPinPath,
+} from "../../repository";
 import type { CommandContext } from "../runtime/context";
 import {
   writeMemoryBlock,
@@ -32,6 +37,7 @@ export function handleInitCommand(commandCtx: CommandContext) {
       yield* offerFirstRunSetup(commandCtx, agentsExists, backendFlags);
     }
     yield* writeMemoryBlock(commandCtx.fileSystem, agentsMdPath, backend);
+    const pinned = yield* writeRepositoryPin(commandCtx.fileSystem);
     yield* Effect.sync(() => {
       const action = agentsExists ? "Updated" : "Created";
       const displayPath = relative(process.cwd(), agentsMdPath) || "AGENTS.md";
@@ -43,6 +49,11 @@ export function handleInitCommand(commandCtx: CommandContext) {
             ? pc.dim(" (MCP tools; no CLI backend flag)")
             : pc.dim(` (--${backend} required on memory commands)`)
         }`,
+      );
+      console.info(
+        pinned === undefined
+          ? `${pc.dim("Repo")}     ${pc.yellow("not pinned")}${pc.dim(": no origin remote. Run init again with --repo <slug>.")}`
+          : `${pc.dim("Repo")}     ${pc.cyan(pinned.slug)}${pc.dim(` (pinned in ${pinned.path}; commit it)`)}`,
       );
       if (backend === "mcp") {
         console.info(
@@ -61,6 +72,28 @@ export function handleInitCommand(commandCtx: CommandContext) {
       }
       console.info();
     });
+  });
+}
+
+/**
+ * Pin this checkout's slug, so a changed, mirrored or missing origin remote
+ * cannot move its memories to another repository. --repo re-pins.
+ */
+function writeRepositoryPin(fileSystem: CommandContext["fileSystem"]) {
+  return Effect.gen(function* () {
+    const slug = yield* Effect.try(() => repositoryForCurrentDirectory()).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (slug === undefined) {
+      return undefined;
+    }
+    const path = repositoryPinPath();
+    yield* fileSystem.makeDirectory(dirname(path), { recursive: true });
+    yield* fileSystem.writeFile(
+      path,
+      new TextEncoder().encode(repositoryPinContent(slug)),
+    );
+    return { slug, path: relative(process.cwd(), path) };
   });
 }
 

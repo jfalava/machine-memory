@@ -5,6 +5,7 @@ import { Schema } from "effect";
 
 import {
   CertaintySchema,
+  MemoryContentSchema,
   MemoryStatusSchema,
   MemoryTypeSchema,
   OptionalTagsFilterSchema,
@@ -32,7 +33,7 @@ import {
 } from "../literals";
 
 const RepositorySchema = RepositoryInputSchema.annotateKey({
-  description: `GitHub repository owner/name, at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes. Required for repository operations; call list_repositories first if unsure.`,
+  description: `Repository slug such as owner/name, @namespace/name or group/subgroup/name, at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes. Required for repository operations; call list_repositories first if unsure.`,
 });
 
 const searchLimit = SearchLimitInputSchema.annotateKey({
@@ -60,6 +61,18 @@ const validationGapsField = Schema.optionalKey(
 ).annotateKey({
   description:
     "Known limits of the validation, e.g. unconfirmed user intent or untested platforms. Not embedded.",
+});
+
+const allowDropField = optionalBoolean.annotateKey({
+  description:
+    "Set true to replace content even though the update drops a path, flag or symbol that no other active record mentions, or shares almost nothing with the stored content. Without it such an update is refused and the error names what would be lost.",
+});
+
+const sourceAgentField = Schema.optionalKey(
+  Schema.String.check(Schema.isMaxLength(200)),
+).annotateKey({
+  description:
+    "Who is making this write: the agent and its thread or session, such as amp:T-1234 or claude-code:<session id>. Stored as source_agent on a new memory and as last_updated_by on every write, so a later reader can tell which thread wrote a record. Defaults to the authenticated user.",
 });
 
 const filterFields = {
@@ -129,7 +142,7 @@ export function normalizeMemoryQueryArgs(
 
 export const MemoryGetArgsSchema = Schema.Struct({
   repository: RepositorySchema,
-  id: memoryId,
+  ids: memoryIds,
 });
 
 export const MemoryHistoryArgsSchema = Schema.Struct({
@@ -232,7 +245,7 @@ export const MemoryVerifyArgsSchema = Schema.Struct({
 export const MemoryDiffArgsSchema = Schema.Struct({
   repository: RepositorySchema,
   id: memoryId,
-  content: Schema.NonEmptyString.annotateKey({
+  content: MemoryContentSchema.annotateKey({
     description:
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),
@@ -240,7 +253,7 @@ export const MemoryDiffArgsSchema = Schema.Struct({
 
 export const MemoryAddArgsInputSchema = Schema.Struct({
   repository: RepositorySchema,
-  content: Schema.NonEmptyString.annotateKey({
+  content: MemoryContentSchema.annotateKey({
     description:
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),
@@ -260,15 +273,22 @@ export const MemoryAddArgsInputSchema = Schema.Struct({
   }),
   upsert_match: optionalString.annotateKey({
     description:
-      "Resolve an existing memory by topic. A strong match is updated; a weak match refuses creation unless force is true.",
+      "Topic query that resolves an existing memory. A strong match is updated with this content; a weak match refuses the write and lists the candidates. Omit it with update_id or create_new.",
   }),
-  force: optionalBoolean.annotateKey({
-    description: "Create despite a weak upsert_match result.",
+  update_id: Schema.optionalKey(memoryId).annotateKey({
+    description:
+      "Id of the active memory this content replaces: the same topic, restated. Fields you omit keep their stored values. Cannot be combined with upsert_match or create_new.",
   }),
+  create_new: optionalBoolean.annotateKey({
+    description:
+      "Set true after reading the existing records when this is a different fact. Creates a new memory despite an upsert match or a near-duplicate.",
+  }),
+  allow_drop: allowDropField,
+  source_agent: sourceAgentField,
   upsert_threshold: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   ).annotateKey({
-    description: `Minimum upsert match score, default ${UPSERT_DEFAULT_MIN_SCORE}; similarity must also reach ${UPSERT_MIN_SIMILARITY}.`,
+    description: `Minimum rank_score of a strong upsert match, default ${UPSERT_DEFAULT_MIN_SCORE}; text_overlap must also reach ${UPSERT_MIN_SIMILARITY}.`,
   }),
 });
 export type MemoryAddArgsInput = typeof MemoryAddArgsInputSchema.Type;
@@ -284,7 +304,10 @@ export type MemoryAddArgs = {
   readonly status: MemoryStatus;
   readonly expires_after_days?: number;
   readonly upsert_match?: string;
-  readonly force?: boolean;
+  readonly update_id?: number;
+  readonly create_new?: boolean;
+  readonly allow_drop?: boolean;
+  readonly source_agent?: string;
   readonly upsert_threshold: number;
 };
 export function normalizeMemoryAddArgs(
@@ -302,7 +325,10 @@ export function normalizeMemoryAddArgs(
     status: input.status ?? DEFAULT_MEMORY_STATUS,
     expires_after_days: input.expires_after_days,
     upsert_match: input.upsert_match,
-    force: input.force,
+    update_id: input.update_id,
+    create_new: input.create_new,
+    allow_drop: input.allow_drop,
+    source_agent: input.source_agent,
     upsert_threshold: input.upsert_threshold ?? UPSERT_DEFAULT_MIN_SCORE,
   };
 }
@@ -314,17 +340,39 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
     description:
       "Topic query identifying the update target. Exactly one of id or match is required.",
   }),
-  content: Schema.optionalKey(Schema.NonEmptyString),
+  content: Schema.optionalKey(MemoryContentSchema).annotateKey({
+    description:
+      "The whole new content. Omit it to change only the other fields; the stored content is then kept.",
+  }),
+  allow_drop: allowDropField,
   tags: optionalString.annotateKey({
-    description: "Comma-separated tags, e.g. area:cli,topic:backend.",
+    description:
+      "Comma-separated tags that replace the stored tags, e.g. area:cli,topic:backend. To change some tags, use add_tags and remove_tags instead.",
+  }),
+  add_tags: optionalString.annotateKey({
+    description:
+      "Comma-separated tags to add to the stored tags. Cannot be combined with tags.",
+  }),
+  remove_tags: optionalString.annotateKey({
+    description:
+      "Comma-separated tags to remove from the stored tags. Cannot be combined with tags.",
   }),
   context: optionalString.annotateKey({
-    description: "Supporting context for the memory.",
+    description:
+      'Supporting context that replaces the stored context; "" clears it.',
   }),
   memory_type: Schema.optionalKey(MemoryTypeSchema),
   certainty: Schema.optionalKey(CertaintySchema),
   evidence: evidenceField,
   validation_gaps: validationGapsField,
+  add_validation_gaps: Schema.optionalKey(ValidationGapsSchema).annotateKey({
+    description:
+      "Validation gaps to append to the stored ones. Cannot be combined with validation_gaps.",
+  }),
+  remove_validation_gaps: Schema.optionalKey(ValidationGapsSchema).annotateKey({
+    description:
+      "Stored validation gaps to remove, by their exact text. Cannot be combined with validation_gaps.",
+  }),
   status: Schema.optionalKey(MemoryStatusSchema),
   expires_after_days: Schema.optionalKey(positiveInt).annotateKey({
     description: "Expire after N days. Only valid for status memories.",
@@ -332,6 +380,13 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
   superseded_by: Schema.optionalKey(positiveInt).annotateKey({
     description: "Id of the memory that supersedes this one.",
   }),
+  expected_update_count: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  ).annotateKey({
+    description:
+      "update_count from the read this update is based on. A different stored count refuses the update, so a concurrent change is not overwritten.",
+  }),
+  source_agent: sourceAgentField,
 });
 
 export const MemoryRestoreArgsSchema = Schema.Struct({
@@ -350,7 +405,7 @@ export const MemoryRestoreArgsSchema = Schema.Struct({
 });
 
 export const MemorySizeArgsInputSchema = Schema.Struct({
-  content: Schema.NonEmptyString.annotateKey({
+  content: MemoryContentSchema.annotateKey({
     description:
       "Canonical memory content. Put commands, paths, keys, and exact identifiers first.",
   }),
@@ -403,6 +458,7 @@ export const MemoryDeprecateArgsSchema = Schema.Struct({
     description:
       "Id of the canonical memory replacing every target. Omit to mark targets deprecated without a replacement.",
   }),
+  source_agent: sourceAgentField,
 });
 
 export const MemoryDoctorArgsSchema = Schema.Struct({

@@ -1,6 +1,6 @@
 ---
 title: update
-description: Replace memory content and selectively update metadata.
+description: Replace memory content or change metadata on its own.
 sidebar:
   order: 8
 ---
@@ -9,13 +9,26 @@ sidebar:
 
 ```sh
 machine-memory update <id> <content> (--local|--remote)
-machine-memory update <id,id,...> --from-file <path> (--local|--remote)
+machine-memory update <id> --from-file <path> (--local|--remote)
 machine-memory update --match "unique topic" <content> (--local|--remote)
+machine-memory update <id|id,id,...> --type decision --add-tags kind:decision (--local|--remote)
 ```
 
-Provide either one or more IDs or `--match <query>`, then provide inline
-content or `--from-file <path>`. Updating multiple IDs returns the updated
-rows, missing IDs, and a count.
+Provide IDs or `--match <query>`, then the new content, one or more metadata
+flags, or both. Only what you give changes.
+
+Content (inline or `--from-file <path>`) replaces the whole stored content of
+exactly one memory: several IDs are refused, because one text written to
+several records erases them. Content that is empty, `null` or `undefined` is
+refused too.
+
+Without content, the update changes only metadata and may name several IDs.
+The stored content is not rewritten; the update still increments
+`update_count` and saves the previous row to [history](/machine/history).
+
+`--expected-update-count <n>` pins the update to the read it is based on. Pass
+the `update_count` from your `get`; when the stored count differs, another
+write happened in between and the update is refused with nothing written.
 
 ## Metadata
 
@@ -23,7 +36,21 @@ rows, missing IDs, and a count.
 `--evidence`, and `--validation-gaps` replace the corresponding metadata;
 omitted flags keep the stored values. `--evidence none` and
 `--validation-gaps none` clear them. `--expires-after-days <n|null>` sets or
-clears expiry.
+clears expiry. `last_updated_by` is set to the current
+[writer](/machine/add#who-wrote-it) unless `--updated-by` names another.
+
+To change part of a list without restating it:
+
+| Flag                              | Effect                                                  |
+| --------------------------------- | ------------------------------------------------------- |
+| `--add-tags <tags>`               | Adds tags to the stored ones.                           |
+| `--remove-tags <tags>`            | Removes tags; a tag that is not stored is ignored.      |
+| `--add-gap <text\|json_array>`    | Adds validation gaps to the stored ones.                |
+| `--remove-gap <text\|json_array>` | Removes gaps by their exact text; an unknown gap fails. |
+| `--clear-context`                 | Empties the context.                                    |
+
+Each of these is refused together with the flag that replaces the same field
+(`--tags`, `--validation-gaps`, `--context`).
 
 Setting `--certainty verified`, or clearing the evidence of a verified memory,
 requires at least one evidence kind (see [`add`](/machine/add#evidence)).
@@ -34,6 +61,34 @@ lists them for review. The content update increments `update_count` and refreshe
 
 `--match` must resolve to an active memory and cannot be combined with more
 than one positional content argument.
+
+## Replacement guard
+
+New content replaces everything the memory said, so `update` refuses a
+replacement that would lose information nobody else holds:
+
+- it drops a path, flag or symbol that no other active memory mentions, or
+- it shares less than `0.15` of its terms with the stored content, which
+  means it is a different fact and not a rewrite.
+
+```sh
+machine-memory update 42 "Deploys run through scripts/deploy.sh." --remote
+# error: Update of memory 42 refused: it drops `scripts/rollback.sh`, which no
+#        other active record mentions. Nothing was written. If the stored
+#        details still hold, carry them over. If this is a different fact, add
+#        it as a new record and deprecate 42 when it is obsolete. If the
+#        dropped details are obsolete, repeat the write with --allow-drop.
+```
+
+The guard compares names, not values: changing a version, a date or the value
+in `KEY=value` never triggers it. A name that another active memory still
+carries does not trigger it either; the refusal and the dry run list those
+under "held elsewhere". Dropped sentences alone are reported, not refused.
+Status memories are snapshots and are always replaced.
+
+`--dry-run` reports the decision per target as `replacement`
+(`action`, `text_overlap`, `orphaned_identifiers`, `held_elsewhere`), with the
+refusal text in `note`, and exits `1` when the real update would be refused.
 
 ## Reconciliation
 
@@ -49,30 +104,31 @@ When the content changes, the response reports:
 
 `--json-min` and `--quiet` keep `dropped` and list `review_candidate_ids`
 instead of summaries; batch updates group both per ID under `reconciliation`.
-`add --upsert-match` reports the same fields when it updates a strong match.
+`add --upsert-match` and `add --update-id` report the same fields when they
+replace a memory's content.
 
 Updates save the previous row automatically. Use [history and restore](/machine/history)
 to review or recover an accidental overwrite without a prior read.
 
-## Embedding budget
+## Size limit
 
-Like `add`, `update` validates the composed embedding text **before** writing.
-If the updated memory (new content plus retained or replaced metadata) would
-exceed the 512-token limit — or the conservative byte+2 estimate — the update
-fails with the exact byte or token deficit and no memory is changed. Preflight
-with `--dry-run` to print a per-target size report without writing; it exits
-`1` when any target would be over budget:
+Like `add`, `update` measures the embedded text **before** writing. If the
+updated memory (new content plus retained or replaced tags and context) would
+be over 2,000 UTF-8 bytes, the update fails with the number of bytes to remove
+and no memory is changed. Preflight with `--dry-run` to print a per-target size
+report without writing; it exits `1` when any target would be over the limit
+or refused by the replacement guard:
 
 ```sh
 machine-memory update 42 "replacement content" --dry-run --remote
 # {"command":"update","dry_run":true,"count":1,
-#  "targets":[{"id":42,"size":{...}}]}
+#  "targets":[{"id":42,"size":{...},"replacement":{"action":"update",...}}]}
 ```
 
-Output flags: `--brief` prints `{id, status}` (plus `tokens` with
-`--token-report`); `--json-min`/`--quiet` print `{id}` for single targets and
-compact `{updated_ids, not_found, count}` payloads for batches.
+Output flags: `--brief` prints `{id, status, size}`; `--json-min`/`--quiet`
+print `{id, size}` for single targets and compact
+`{updated_ids, not_found, count}` payloads for batches.
 
-Pass `--token-report` to include the breakdown on a successful update as
-`tokens` (for a single target) or as a `tokens` array of
-`{id, ...breakdown}` entries when updating multiple IDs.
+A successful update reports `size` with `bytes` and `remaining_bytes` for a
+single target, or a `sizes` array of `{id, bytes, remaining_bytes}` entries when
+updating multiple IDs.

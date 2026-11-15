@@ -1,6 +1,6 @@
 import {
   decodeRequest,
-  embeddingSizeReport,
+  embeddingTextError,
   encodeResponse,
   normalizeVectorizeSearchRequest,
   VectorizeSearchRequestInputSchema,
@@ -13,7 +13,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Schema from "effect/Schema";
 
 import type { ApiContext } from "./api-context";
-import { badRequest, embeddingBudgetError } from "./http-failure";
+import { badRequest } from "./http-failure";
 import { vectorFilter, type ProductFilters } from "./product-api";
 
 /** Embeds the query and searches the repository namespace in Vectorize. */
@@ -50,8 +50,9 @@ export const handleVectorizeSearch = (ctx: ApiContext, body: JsonValue) =>
       return yield* badRequest(input.error);
     }
     const request = normalizeVectorizeSearchRequest(input.value);
-    if (!embeddingSizeReport(request.query).within_budget) {
-      return yield* badRequest(embeddingBudgetError("Query"));
+    const queryError = embeddingTextError(request.query, "Query");
+    if (queryError !== undefined) {
+      return yield* badRequest(queryError);
     }
     const result = yield* searchVectors(
       ctx,

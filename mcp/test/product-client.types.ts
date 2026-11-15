@@ -10,7 +10,7 @@ import { postProduct, type ApiFetcher } from "../src/mcp/product-client";
 export function checkProductClientTypes(api: ApiFetcher): void {
   const get: Promise<MemoryGetSuccess> = postProduct(api, "token", "get", {
     repository: "o/r",
-    id: 1,
+    ids: [1],
   });
   void get;
   const stats: Promise<MemoryStatsSuccess> = postProduct(
@@ -33,7 +33,7 @@ export function checkProductClientTypes(api: ApiFetcher): void {
     query: "deploy",
   });
   // @ts-expect-error get requires a repository
-  void postProduct(api, "token", "get", { id: 1 });
+  void postProduct(api, "token", "get", { ids: [1] });
   // @ts-expect-error delete does not return a memory row
   const wrong: Promise<MemoryGetSuccess> = postProduct(api, "token", "delete", {
     repository: "o/r",

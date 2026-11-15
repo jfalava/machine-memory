@@ -8,11 +8,12 @@ import integritySql from "../../iac/migrations/0003_memory_integrity.sql" with {
 import historySql from "../../iac/migrations/0004_memory_history.sql" with { type: "text" };
 // 0005 only adds columns; ensureEvidenceColumns applies it idempotently here.
 import evidenceTriggersSql from "../../iac/migrations/0006_memory_evidence_triggers.sql" with { type: "text" };
+import embeddingBudgetSql from "../../iac/migrations/0007_embedding_budget.sql" with { type: "text" };
 import { DB_PATH } from "./constants";
 import { jsonObject, jsonString } from "./json";
 import { repositoryForCurrentDirectory } from "./repository";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const BUSY_TIMEOUT_MS = Number(
   process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
 );
@@ -226,7 +227,7 @@ function applyMigrationSql(database: Database) {
   database.exec(`${integritySql}\n${historySql}`);
   ensureEvidenceColumns(database, "memory_history");
   database.exec(
-    `${evidenceTriggersSql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
+    `${evidenceTriggersSql}\n${embeddingBudgetSql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
   );
 }
 

@@ -2,120 +2,106 @@ import { describe, expect, it } from "vitest";
 
 import {
   agentsMdContent,
+  MEMORY_BLOCK_VERSION,
   replaceMemoryBlock,
+  staleMemoryBlockWarning,
 } from "@/cli/commands/agents-md-content";
+
+const BACKENDS = ["local", "remote", "mcp"] as const;
 
 describe("init templates", () => {
   it("generates local instructions for local memory", () => {
     const content = agentsMdContent("local");
 
-    expect(content).toContain(
-      "with a local SQLite database at `machine-memory.db`",
-    );
-    expect(content).toContain(
-      'machine-memory query "topic" --local --json-min',
-    );
-    expect(content).toContain("Ensure `machine-memory.db` is writable");
-    expect(content).toContain("below 512 BGE tokens");
-    expect(content).toContain('machine-memory size "<text>"');
-    expect(content).toContain("--force` if a new record is intended");
-    expect(content).not.toContain("shared remote Worker-backed database");
+    expect(content).toContain("the local SQLite database `machine-memory.db`");
+    expect(content).toContain('machine-memory query "<topic>" --local');
+    expect(content).toContain("machine-memory checkpoint --local --json-min");
+    expect(content).not.toContain("--remote");
   });
 
   it("generates remote instructions for remote memory", () => {
     const content = agentsMdContent("remote");
 
-    expect(content).toContain("with a shared remote Worker-backed database");
+    expect(content).toContain("a remote database shared by every checkout");
     expect(content).toContain(
-      'machine-memory query "topic" --remote --json-min',
+      'machine-memory query "<topic>" --hybrid --remote',
     );
-    expect(content).toContain("below 512 BGE tokens");
-    expect(content).toContain('machine-memory size "<text>"');
-    expect(content).toContain("--force` if a new record is intended");
-    expect(content).not.toContain("machine-memory remote setup");
-    expect(content).not.toContain("Ensure `machine-memory.db` is writable");
+    expect(content).toContain("machine-memory help workflow");
+    expect(content).not.toContain("--local");
   });
 
-  it("generates MCP instructions matching the MCP tool surface", () => {
+  it("generates MCP instructions that name tools, not commands", () => {
     const content = agentsMdContent("mcp");
 
-    expect(content).toContain("<!-- machine-memory:start -->");
-    expect(content).toContain("<!-- machine-memory:end -->");
     for (const tool of [
       "list_repositories",
       "memory_suggest",
       "memory_query",
       "memory_get",
-      "memory_history",
-      "memory_list",
-      "memory_doctor",
-      "memory_stats",
-      "memory_gc",
-      "memory_verify",
-      "memory_diff",
       "memory_size",
-      "memory_add",
       "memory_update",
-      "memory_restore",
-      "memory_deprecate",
-      "memory_delete",
-      "memory_delete_many",
+      "memory_add",
+      "memory_list",
     ]) {
       expect(content).toContain(tool);
     }
-    // Parity workflows the MCP server supports.
     expect(content).toContain("upsert_match");
-    expect(content).toContain("force: true");
-    expect(content).toContain("potential_conflicts");
-    expect(content).toContain("superseded_by");
-    expect(content).toContain("memory_size");
-    expect(content).toContain("over_by_bytes");
     expect(content).toContain("expires_after_days");
-    expect(content).toContain(
-      "No local CLI or `machine-memory.db` is required",
-    );
     expect(content).not.toContain("--local");
     expect(content).not.toContain("--remote");
+    expect(content).not.toContain("machine-memory help");
   });
 
-  it.each(["local", "remote", "mcp"] as const)(
-    "generates %s memory hygiene guidance",
-    (backend) => {
-      const content = agentsMdContent(backend);
+  it.each(BACKENDS)("keeps the %s block short and complete", (backend) => {
+    const content = agentsMdContent(backend);
 
-      expect(content).toContain("not an exhaustive or authoritative list");
-      expect(content).toContain("no_strong_match");
-      expect(content).toContain("### Delegated work (parent and child agents)");
-      expect(content).toContain("The parent agent owns memory.");
-      expect(content).toContain("return persistence candidates");
-      expect(content).toContain(
-        "### End-of-task checkpoint (before the final response)",
-      );
-      for (const classification of [
-        "1. Already covered",
-        "2. New durable knowledge",
-        "3. Superseded or conflicting",
-        "4. Transient delivery or verification status",
-        "5. Intentionally omitted",
-      ]) {
-        expect(content).toContain(classification);
-      }
-      expect(content).toContain(
-        "A rejected remedy does not make the verified mechanism behind its failure disposable.",
-      );
-      expect(content).toContain("Set certainty from evidence");
-      expect(content).toContain("end-user behavior exercised in tests");
-      expect(content).toContain(
-        "`verified` is rejected without at least one evidence kind",
-      );
-      expect(content).toContain("verified_without_evidence");
-      expect(content).toContain("review_candidates");
-      expect(content).toContain("dropped");
-      expect(content).toContain("never describe local work as deployed");
-      expect(content).toContain("Reconcile dependents.");
-      expect(content).toContain("carry over unrelated valid details");
-    },
-  );
+    // The block is read on every turn of every thread in the repository.
+    expect(new TextEncoder().encode(content).byteLength).toBeLessThan(2600);
+    expect(content.split("\n").slice(0, 2)).toEqual([
+      "<!-- machine-memory:start -->",
+      `<!-- machine-memory:version ${MEMORY_BLOCK_VERSION} ${backend} -->`,
+    ]);
+    expect(content.endsWith("<!-- machine-memory:end -->")).toBe(true);
+    for (const rule of [
+      "Before changing code, scan once",
+      "a task that touches no files",
+      "follow the user and update the record",
+      "Write one fact per record",
+      "pixel values, UI state and deploy outcomes",
+      "that machine's guidance file",
+      "Check size before writing",
+      "read the record first and keep the details that still hold",
+      "`dropped` or `review_candidates`",
+      "Reading the code proves only `observed_implementation`",
+      "the parent writes them",
+      "Before the final response",
+    ]) {
+      expect(content).toContain(rule);
+    }
+  });
+
+  it("reports a block older than the one this CLI writes", () => {
+    const unversioned =
+      "# Notes\n\n<!-- machine-memory:start -->\nold\n<!-- machine-memory:end -->\n";
+    expect(staleMemoryBlockWarning(unversioned)).toContain(
+      "version 1; this CLI writes version",
+    );
+    expect(
+      staleMemoryBlockWarning(
+        "<!-- machine-memory:start -->\n<!-- machine-memory:version 1 mcp -->\nold\n<!-- machine-memory:end -->",
+      ),
+    ).toContain("machine-memory init --mcp");
+    expect(staleMemoryBlockWarning("# Notes without a block\n")).toBe(
+      undefined,
+    );
+    for (const backend of BACKENDS) {
+      expect(staleMemoryBlockWarning(agentsMdContent(backend))).toBe(undefined);
+      // init replaces a stale block, after which it is current.
+      expect(
+        staleMemoryBlockWarning(replaceMemoryBlock(unversioned, backend)),
+      ).toBe(undefined);
+    }
+  });
 
   it("replaces an existing managed block without removing user content", () => {
     const content = replaceMemoryBlock(
@@ -124,7 +110,8 @@ describe("init templates", () => {
     );
 
     expect(content).toContain("# Local notes");
-    expect(content).toContain("shared remote Worker-backed database");
+    expect(content).toContain("a remote database shared by every checkout");
     expect(content).not.toContain("\nold\n");
+    expect(content.match(/machine-memory:start/g)).toHaveLength(1);
   });
 });

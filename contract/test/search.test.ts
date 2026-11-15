@@ -5,10 +5,33 @@ import {
   extractQueryIdentifiers,
   fileIdentifiers,
   hasStrongMatch,
+  isoTimestamp,
   matchText,
   mergeSuggestCandidates,
   orderByMatchStrength,
+  sqliteTimestamp,
 } from "../src/index";
+
+describe("timestamps", () => {
+  it("adds the zone SQLite leaves out and keeps values that already have one", () => {
+    expect(isoTimestamp("2026-09-05 12:30:00")).toBe("2026-09-05T12:30:00Z");
+    expect(isoTimestamp("2026-09-05T12:30:00Z")).toBe("2026-09-05T12:30:00Z");
+    expect(isoTimestamp("2026-09-05T14:30:00+02:00")).toBe(
+      "2026-09-05T14:30:00+02:00",
+    );
+    expect(isoTimestamp("")).toBe("");
+  });
+
+  it("stores any ISO time as UTC in SQLite's form", () => {
+    expect(sqliteTimestamp("2026-09-05T12:30:00Z")).toBe("2026-09-05 12:30:00");
+    expect(sqliteTimestamp("2026-09-05T14:30:00+02:00")).toBe(
+      "2026-09-05 12:30:00",
+    );
+    expect(sqliteTimestamp("2026-09-05T12:30:00.789Z")).toBe(
+      "2026-09-05 12:30:00",
+    );
+  });
+});
 
 describe("search match assessment", () => {
   it("extracts literal identifiers and ignores plain words", () => {
@@ -86,15 +109,19 @@ describe("search match assessment", () => {
     ).toBe("none");
   });
 
-  it("uses calibrated bge-base cosine bars for semantic-only matches", () => {
+  it("uses calibrated bge-m3 cosine bars for semantic-only matches", () => {
     const base = { queryTerms: ["unrelated"], identifiers: [], text: "x" };
-    expect(assessMatch({ ...base, semanticScore: 0.875 }).match_strength).toBe(
+    expect(assessMatch({ ...base, semanticScore: 0.63 }).match_strength).toBe(
       "strong",
     );
-    expect(assessMatch({ ...base, semanticScore: 0.726 }).match_strength).toBe(
+    expect(assessMatch({ ...base, semanticScore: 0.629 }).match_strength).toBe(
       "weak",
     );
-    expect(assessMatch({ ...base, semanticScore: 0.643 }).match_strength).toBe(
+    expect(assessMatch({ ...base, semanticScore: 0.55 }).match_strength).toBe(
+      "weak",
+    );
+    // Unrelated questions peak near 0.50 on bge-m3.
+    expect(assessMatch({ ...base, semanticScore: 0.549 }).match_strength).toBe(
       "none",
     );
   });

@@ -1,6 +1,6 @@
 import { Flag, GlobalFlag } from "effect/cli";
 
-import { type CommandFlags, printJson } from "../../cli-utils";
+import { asciiSafe, type CommandFlags, printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import type { JsonObject, JsonValue } from "../../json";
 import {
@@ -20,7 +20,6 @@ export const prettyOutput = GlobalFlag.Setting("pretty")({
 export type OutputMode = {
   brief: boolean;
   jsonMin: boolean;
-  noConflicts: boolean;
   pretty: boolean;
   quiet: boolean;
 };
@@ -32,7 +31,6 @@ export function parseOutputMode(
   return {
     brief: flags.has("--brief"),
     jsonMin: flags.has("--json-min"),
-    noConflicts: flags.has("--no-conflicts"),
     pretty,
     quiet: flags.has("--quiet"),
   };
@@ -51,7 +49,7 @@ export function printCommandOutput(
   data: JsonValue,
 ) {
   if (prettyOutputEnabled(context.outputMode)) {
-    console.info(renderPretty(context.command, data));
+    console.info(asciiSafe(renderPretty(context.command, data)));
     return;
   }
   printJson(data);
@@ -95,7 +93,7 @@ export function contentSnippet(
 }
 
 export function printBriefLines(rows: JsonObject[]) {
-  console.info(rows.map(formatBriefMemoryLine).join("\n"));
+  console.info(asciiSafe(rows.map(formatBriefMemoryLine).join("\n")));
 }
 
 /** Compact evidence fields: kinds when known, and how many gaps are recorded. */
@@ -112,15 +110,22 @@ export function evidenceSummary(row: JsonObject): JsonObject {
   return summary;
 }
 
+/**
+ * One result of a read in --json-min: what it is and a snippet for triage.
+ * Scored reads also carry the score and how well the result matched.
+ */
 export function minimalResultSummary(row: JsonObject): JsonObject {
-  const summary: JsonObject = {
-    id: Number(row.id ?? 0),
-    score: Number(row.score ?? 0),
+  const summary: JsonObject = { id: Number(row.id ?? 0) };
+  if (row.score !== undefined) {
+    summary.score = Number(row.score);
+  }
+  Object.assign(summary, {
     memory_type: stringValue(row.memory_type, "convention"),
     certainty: normalizeCertaintyValue(row.certainty),
+    status: stringValue(row.status, "active"),
     tags: parseTags(stringValue(row.tags)),
-  };
-  Object.assign(summary, evidenceSummary(row));
+    ...evidenceSummary(row),
+  });
   const strength = stringValue(row.match_strength);
   if (strength) {
     summary.match_strength = strength;
@@ -132,14 +137,50 @@ export function minimalResultSummary(row: JsonObject): JsonObject {
   return summary;
 }
 
+/**
+ * The one shape every read prints as JSON: `repository` (and `warning`),
+ * `count`, command-specific fields, then `results`. The output mode only
+ * changes how much each result carries: the whole memory, a summary in
+ * --json-min, or the id alone in --quiet.
+ */
+export function readEnvelope(
+  mode: OutputMode,
+  scope: JsonObject,
+  rows: JsonObject[],
+  options: {
+    extras?: JsonObject;
+    summarize?: (row: JsonObject) => JsonObject;
+  } = {},
+): JsonObject {
+  const summarize = options.summarize ?? minimalResultSummary;
+  let results: JsonObject[] = rows;
+  if (mode.quiet) {
+    results = rows.map((row) => ({ id: Number(row.id ?? 0) }));
+  } else if (mode.jsonMin) {
+    results = rows.map(summarize);
+  }
+  return { ...scope, count: rows.length, ...options.extras, results };
+}
+
+/** Prints a read: one line per memory in --brief, the envelope otherwise. */
+export function printRead(
+  context: { command: string; outputMode: OutputMode },
+  rows: JsonObject[],
+  envelope: JsonObject,
+) {
+  if (context.outputMode.brief) {
+    printBriefLines(rows);
+    return;
+  }
+  printCommandOutput(context, envelope);
+}
+
 export function queryEmptyResultPayload(
   term: string,
   filters: CommonFilters,
   queryTokens: string[],
 ) {
   return {
-    results: [],
-    no_strong_match: true,
     search_term: term,
     derived_terms: queryTokens,
     filters: {

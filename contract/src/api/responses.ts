@@ -112,6 +112,17 @@ export const MigrationLinksSuccessSchema = okResponseSchema(
   MigrationLinksResultSchema,
 );
 
+/** POST /status: what a client needs to tell a version or schema mismatch apart from a bug. */
+export const StatusResultSchema = Schema.Struct({
+  /** Worker package version, the same number as the CLI release it shipped with. */
+  version: Schema.String,
+  /** How many of the numbered D1 migrations the database has applied. */
+  schema_level: Schema.Int,
+  /** How many migrations this Worker's code expects. */
+  schema_expected: Schema.Int,
+});
+export const StatusSuccessSchema = okResponseSchema(StatusResultSchema);
+
 /** Vectorize matches requested without vector values. Metadata may be absent. */
 export const VectorizeMatchSchema = Schema.Struct({
   id: Schema.NonEmptyString,

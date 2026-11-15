@@ -216,7 +216,13 @@ export type InsertInput = {
   readonly evidence?: readonly EvidenceKind[];
   readonly validation_gaps?: readonly string[];
   readonly expires_after_days: number | null;
+  readonly source_agent?: string;
 };
+
+/** The writer recorded when a request names none. */
+export function writerOf(sourceAgent: string | undefined): string {
+  return sourceAgent?.trim() || "api";
+}
 
 export function insertParams(input: InsertInput): (string | number | null)[] {
   return [
@@ -226,8 +232,8 @@ export function insertParams(input: InsertInput): (string | number | null)[] {
     input.context,
     input.memory_type,
     input.status,
-    "api",
-    "api",
+    writerOf(input.source_agent),
+    writerOf(input.source_agent),
     input.certainty,
     "[]",
     input.expires_after_days,
@@ -249,6 +255,8 @@ export type UpdateFields = {
   readonly status?: string;
   readonly expires_after_days?: number | null;
   readonly superseded_by?: number;
+  /** Who is writing; stored as last_updated_by. */
+  readonly source_agent?: string;
 };
 
 export function updateSets(fields: UpdateFields): ProductQuery | undefined {
@@ -313,6 +321,8 @@ function finishUpdateSets(
   if (sets.length === 0) {
     return undefined;
   }
+  sets.push("last_updated_by = ?");
+  params.push(writerOf(fields.source_agent));
   sets.push("updated_at = datetime('now')");
   sets.push("update_count = COALESCE(update_count, 0) + 1");
   return { sql: sets.join(", "), params };

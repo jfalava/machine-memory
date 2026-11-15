@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
-import type { EvidenceKind } from "@machine-memory/contract";
+import { sqliteTimestamp, type EvidenceKind } from "@machine-memory/contract";
 import { Schema } from "effect";
 
 import {
@@ -14,7 +14,6 @@ import {
   isMemoryStatus,
   isMemoryType,
   normalizeSqliteRow,
-  sqliteDateForComparison,
   stringValue,
 } from "./cli/shared";
 import { DB_PATH } from "./constants";
@@ -81,7 +80,7 @@ function sourceDate(value: JsonValue | undefined): string | null {
   if (raw === undefined || Number.isNaN(Date.parse(raw))) {
     return null;
   }
-  return sqliteDateForComparison(raw);
+  return sqliteTimestamp(raw);
 }
 
 function sourceInteger(

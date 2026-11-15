@@ -24,6 +24,13 @@ command accepts:
 | `--json-min` | Compact JSON with stable identifiers and minimal summaries.       |
 | `--quiet`    | The smallest machine-oriented response available for the command. |
 
+The read commands (`get`, `query`, `list`, `suggest`, `sweep` and `export`)
+all print one object: `repository`, `count`, the fields of that command, then
+`results`, which is an array even for one memory or none. The output flags
+change only what each result carries: the whole memory by default, a summary
+with `--json-min`, and the id alone with `--quiet`. `--brief` prints one text
+line per memory instead of JSON.
+
 All machine commands also accept the global `--pretty` flag. It renders a
 human-readable result instead of JSON. Existing explicit output flags take
 precedence, so `--json-min`, `--brief`, and `--quiet` remain safe for scripts.
@@ -35,20 +42,56 @@ machine-memory --pretty query "backend" --remote
 machine-memory query "backend" --remote --pretty
 ```
 
+## ASCII-only output
+
+Memory content, the `…` that ends a snippet, and the symbols in `--pretty`
+output are not ASCII, and some shells and tools treat such output as binary.
+Pass `--ascii` on any command to print every non-ASCII character as a
+`\uXXXX` escape. JSON parsers read the escapes back as the original text, so
+the output carries the same data.
+
+```sh
+machine-memory query "backend" --remote --json-min --ascii
+```
+
 ## Other repositories
 
-Commands act on the repository named by the current checkout's `origin`
-remote. To read or write another repository's memories without changing
-directory, pass `--repo owner/name` anywhere on the command line, or set
-`MACHINE_MEMORY_REPO`. The flag wins over the variable.
+Commands act on one repository, named by the first of these that is set:
+
+1. `--repo <slug>`, anywhere on the command line.
+2. The `MACHINE_MEMORY_REPO` environment variable.
+3. The pin in `.agents/machine-memory.json`, which
+   [`init`](/human/init) writes at the top of the checkout.
+4. The path of the checkout's `origin` remote.
+
+A slug is the remote's path: `owner/name`, `@namespace/name`, or
+`group/subgroup/name` for a GitLab subgroup, which keeps every segment.
+Commit the pin, so every clone and mirror of the project uses the same slug
+whatever its remote is called. [`repo list`](/machine/repo) shows which slug
+the checkout resolves to and why.
 
 ```sh
 machine-memory query "node overlay" --repo jfalava/outfit --remote
 ```
 
-A mistyped slug would silently start a new namespace, so `add` and `import`
-refuse a `--repo` that has no memories yet unless `--allow-new-repo` is
-given.
+A mistyped slug, or a checkout whose remote maps to an unexpected slug, would
+silently start a new namespace. `add` and `import` therefore refuse a
+repository that has no memories yet, whether the slug came from `--repo` or
+from the Git remote, and list the repositories that do have memories. Pass
+`--allow-new-repo` to start the repository on purpose. An empty database has
+nothing to confuse the slug with, so its first write needs no flag.
+
+Object-shaped read output names the `repository` it ran against. A read that
+finds nothing in a repository without memories adds a `warning` that lists the
+repositories that do have memories.
+
+## Warnings on stderr
+
+Lines on stderr that start with `machine-memory:` report content an update
+dropped, records that may rely on changed content, a repository without
+memories, an ID that belongs to another repository, and an `AGENTS.md` block
+written by an older CLI. They are printed in every output mode, so piping
+stdout through `jq`, `head` or `cut` cannot hide them.
 
 ## Commands
 
@@ -59,7 +102,7 @@ given.
 | [`help`](/machine/help)           | Print the command catalog and enum values as JSON.    |
 | [`version`](/machine/version)     | Print the installed CLI version.                      |
 | [`add`](/machine/add)             | Create a memory, optionally upserting a strong match. |
-| [`size`](/machine/size)           | Preflight the embedding budget without writing.       |
+| [`size`](/machine/size)           | Measure a memory against the 2,000-byte limit.        |
 | [`get`](/machine/get)             | Fetch one or more memories by ID.                     |
 | [`update`](/machine/update)       | Change memory content or metadata.                    |
 | [`deprecate`](/machine/deprecate) | Mark memories deprecated or superseded.               |
@@ -82,11 +125,12 @@ given.
 
 ### Maintenance and interchange
 
-| Command                       | Purpose                                                         |
-| ----------------------------- | --------------------------------------------------------------- |
-| [`export`](/machine/export)   | Export active memories as JSON.                                 |
-| [`import`](/machine/import)   | Import a JSON memory export with duplicate and conflict checks. |
-| [`migrate`](/machine/migrate) | Apply pending database schema migrations.                       |
-| [`gc`](/machine/gc)           | Preview memories whose expiry window has elapsed.               |
-| [`tag-map`](/machine/tag-map) | Manage path-to-tag mappings used during memory writes.          |
-| [`reindex`](/human/reindex)   | Backfill existing remote memories into Vectorize embeddings.    |
+| Command                                       | Purpose                                                         |
+| --------------------------------------------- | --------------------------------------------------------------- |
+| [`export`](/machine/export)                   | Export active memories as JSON.                                 |
+| [`import`](/machine/import)                   | Import a JSON memory export with duplicate and conflict checks. |
+| [`migrate`](/machine/migrate)                 | Apply pending database schema migrations.                       |
+| [`gc`](/machine/gc)                           | Preview memories whose expiry window has elapsed.               |
+| [`tag-map`](/machine/tag-map)                 | Manage path-to-tag mappings used during memory writes.          |
+| [`reindex`](/human/reindex)                   | Backfill existing remote memories into Vectorize embeddings.    |
+| [`index status`](/human/reindex#index-status) | Report pending, retrying and parked index writes.               |

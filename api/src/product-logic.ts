@@ -4,7 +4,6 @@ import {
   normalizeSuggestPath,
   normalizeTags,
   sqliteDateToMs,
-  composeEmbeddingText,
   exactMatchPoints,
   ftsRankPoints,
   matchStrengthRank,
@@ -26,6 +25,7 @@ import {
   jsonNumber,
   jsonString,
   type JsonObject,
+  isoTimestamp,
 } from "@machine-memory/contract";
 import { Schema } from "effect";
 
@@ -63,7 +63,7 @@ export function toHistoryRow(value: JsonObject): MemoryHistoryEntry {
     ...row,
     revision_id: Number(value.revision_id),
     operation: jsonString(value.operation) ?? "update",
-    snapshot_at: jsonString(value.snapshot_at) ?? "",
+    snapshot_at: isoTimestamp(jsonString(value.snapshot_at) ?? ""),
   };
 }
 
@@ -161,7 +161,8 @@ function ingestStatus(accumulator: StatsAccumulator, status: string): void {
 }
 
 function ingestOldest(accumulator: StatsAccumulator, row: JsonObject): void {
-  const createdAt = rawString(row, "created_at") || null;
+  const stored = rawString(row, "created_at");
+  const createdAt = stored === "" ? null : isoTimestamp(stored);
   const time =
     createdAt === null
       ? Number.POSITIVE_INFINITY
@@ -204,7 +205,7 @@ export function summarizeMemoryStats(
   repository: string,
   rows: readonly JsonObject[],
   now = Date.now(),
-): MemoryStatsResult {
+): Omit<MemoryStatsResult, "index"> {
   const accumulator = createStatsAccumulator();
   for (const row of rows) {
     ingestStatsRow(accumulator, row, now);
@@ -305,22 +306,4 @@ export function uniqueLowerPreserveOrder(values: string[]): string[] {
     }
   }
   return unique;
-}
-
-export function embeddingTextForMemory(input: {
-  content: string;
-  tags: string;
-  context: string;
-  memory_type: string;
-  status: string;
-  certainty: string;
-}): string {
-  return composeEmbeddingText({
-    content: input.content,
-    tags: input.tags,
-    context: input.context,
-    memory_type: input.memory_type,
-    status: input.status,
-    certainty: input.certainty,
-  });
 }

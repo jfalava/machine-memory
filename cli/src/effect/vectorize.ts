@@ -6,7 +6,6 @@ import {
 import type { Effect } from "effect";
 
 import type { JsonObject, JsonValue } from "../json";
-import type { EmbeddingTextPart } from "./bge-tokenizer";
 import type { MemoryDatabaseError } from "./errors";
 import { apiUrl, postJson, toContractValue } from "./remote-http";
 
@@ -39,22 +38,6 @@ export type MemoryVectorApi = {
 };
 
 export type MemoryVectorSearchRequest = VectorizeSearchRequestInput;
-
-export function memoryVectorEmbeddingParts(
-  document: MemoryVectorDocument,
-): EmbeddingTextPart[] {
-  return [
-    { part: "content", text: document.content },
-    { part: "tags", text: document.tags ? `Tags: ${document.tags}` : "" },
-    {
-      part: "context",
-      text: document.context ? `Context: ${document.context}` : "",
-    },
-    { part: "memory_type", text: `Memory type: ${document.memory_type}` },
-    { part: "status", text: `Status: ${document.status}` },
-    { part: "certainty", text: `Certainty: ${document.certainty}` },
-  ];
-}
 
 function parseSearchResult(value: JsonValue): MemoryVectorSearchResult {
   const result = decodeResponse(

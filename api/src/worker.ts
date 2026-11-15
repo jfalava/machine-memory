@@ -22,6 +22,7 @@ import {
   handleMigration,
   handleMigrationLinks,
   handleQuery,
+  handleStatus,
 } from "./admin-routes";
 import { createApiContext, type ProductHandlers } from "./api-context";
 import { badRequest, recoverHttpFailure } from "./http-failure";
@@ -97,6 +98,7 @@ export const createApiHandlers = ({
         ),
       handleVectorizeSearch: (body) =>
         handleVectorizeSearch(ctx, body).pipe(recoverHttpFailure),
+      handleStatus: () => handleStatus(ctx).pipe(recoverHttpFailure),
       handleProduct,
     } satisfies RestHandlers;
 
@@ -126,7 +128,9 @@ export default Cloudflare.Worker<{}>()(
         ),
       ),
     );
-    yield* Cloudflare.Workers.cron("*/5 * * * *", () => wake);
+    // Requests wake the coordinator themselves and it schedules its own
+    // retries, so the cron only recovers a wake or an alarm that was lost.
+    yield* Cloudflare.Workers.cron("0 * * * *", () => wake);
     const restHandlers = yield* createApiHandlers({
       d1,
       vectorize,

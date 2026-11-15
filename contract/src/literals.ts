@@ -68,9 +68,19 @@ export const MAX_MIGRATION_LINKS = 100;
 export const UPSERT_MIN_SIMILARITY = 0.62;
 export const UPSERT_DEFAULT_MIN_SCORE = 32;
 
-export const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5" as const;
-export const EMBEDDING_DIMENSIONS = 768;
-export const MAX_EMBEDDING_TOKENS = 512;
+/**
+ * bge-m3 accepts 8,192 tokens and rejects longer input instead of truncating
+ * it. Changing the model or its dimensions needs a new Vectorize index (see
+ * vectorIndexName in iac) and a full reindex.
+ */
+export const EMBEDDING_MODEL = "@cf/baai/bge-m3" as const;
+export const EMBEDDING_DIMENSIONS = 1024;
+/**
+ * Cap on a memory's embedded text (content, tags and context) and on a search
+ * query, in UTF-8 bytes. Far below what the model accepts on purpose: one
+ * vector for a long, multi-topic record matches everything weakly.
+ */
+export const MAX_EMBEDDING_BYTES = 2000;
 
 export const DEFAULT_MEMORY_TYPE = "convention" as const;
 export const DEFAULT_MEMORY_STATUS = "active" as const;

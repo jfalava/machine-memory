@@ -1,0 +1,45 @@
+---
+title: remote status
+description: Compare the CLI with the Worker it talks to.
+audience: human
+sidebar:
+  order: 6
+---
+
+## Usage
+
+```sh
+machine-memory remote status
+```
+
+`remote status` asks the configured Worker what it runs and prints that next
+to the CLI's own version. Run it first when a `--remote` command fails in a
+way the command does not explain: a CLI and a Worker from different releases
+can disagree about a request, and the error then names neither.
+
+```json
+{
+  "cli_version": "0.25.0",
+  "worker_url": "https://memory.example.com/query",
+  "ok": true,
+  "reachable": true,
+  "authenticated": true,
+  "worker_version": "0.24.0",
+  "versions_match": false,
+  "schema_level": 8,
+  "schema_expected": 8,
+  "note": "The Worker runs 0.24.0 and this CLI is 0.25.0. Deploy the Worker or install the matching CLI; commands can fail on requests one side does not know."
+}
+```
+
+| Field                              | Meaning                                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `reachable`                        | The Worker answered at `worker_url`.                                                                       |
+| `authenticated`                    | The Worker accepted the stored token. `null` when the Worker is too old to say.                            |
+| `worker_version`, `versions_match` | The release the Worker was deployed from, and whether it equals `cli_version`.                             |
+| `schema_level`, `schema_expected`  | How many database migrations are applied, and how many the Worker's code expects.                          |
+| `note`                             | The fix, when something differs: deploy the Worker, run `remote setup` again, or deploy to run migrations. |
+
+The command exits `1` when the Worker is unreachable, refuses the token, or
+has no `/status` route because it predates this command. A version or schema
+difference is reported in `note` and exits `0`.

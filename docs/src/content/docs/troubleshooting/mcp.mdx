@@ -76,11 +76,11 @@ If you still see this on an old deploy, redeploy the Worker from current `master
 
 ## Embedding size rejected on add/update
 
-**Symptom:** `Document text must be at most 512 tokens for embedding.` or `memory_size` with `within_budget: false`.
+**Symptom:** `Memory is over by N bytes of 2,000: …` or `memory_size` with `within_budget: false`.
 
-**Cause:** Composed embedding text must satisfy UTF-8 **bytes + 2 ≤ 512** (Worker conservative bound; no BGE tokenizer in the Worker). Same budget as CLI `size` / `--dry-run` when the tokenizer is unavailable.
+**Cause:** A memory's embedded text (content, plus `Tags:` and `Context:` lines when set) is at most 2,000 UTF-8 bytes. The CLI enforces the same limit.
 
-**Fix:** Call `memory_size` before long writes; trim `content` / `context` / `tags`. See [Tools → Embedding size budget](/docs/mcp/tools#embedding-size-budget).
+**Fix:** Remove the number of bytes the error names from `content`, `context` or `tags`, or split the memory into one record per fact. Call `memory_size` before long writes. See [Tools → Size limit](/docs/mcp/tools#size-limit).
 
 ## MCP client still shows old tools
 

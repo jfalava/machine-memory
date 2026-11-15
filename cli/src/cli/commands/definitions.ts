@@ -49,8 +49,9 @@ import {
   handleUpdateCommand,
 } from "./memory-write";
 import { handleMigrateCommand } from "./migrate";
-import { handleReindexCommand } from "./reindex";
+import { handleIndexCommand, handleReindexCommand } from "./reindex";
 import { remoteCommand } from "./remote";
+import { repoCommand } from "./repo";
 import { handleSizeCommand } from "./size";
 import { handleTagMapCommand } from "./tag-map";
 import { handleVerifyCommand } from "./verify";
@@ -61,9 +62,12 @@ const addCommand = effectCommand(
     args: positionalArgs(),
     "from-file": stringFlag("from-file"),
     "upsert-match": stringFlag("upsert-match"),
-    force: booleanFlag("force"),
+    "update-id": stringFlag("update-id"),
+    "create-new": booleanFlag("create-new"),
+    "allow-drop": booleanFlag("allow-drop"),
     "upsert-threshold": stringFlag("upsert-threshold"),
     "dry-run": booleanFlag("dry-run"),
+    "emit-candidate": stringFlag("emit-candidate"),
     path: stringFlag("path"),
     tags: stringFlag("tags"),
     context: stringFlag("context"),
@@ -74,16 +78,17 @@ const addCommand = effectCommand(
     "source-agent": stringFlag("source-agent"),
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
-    "no-conflicts": booleanFlag("no-conflicts"),
-    "token-report": booleanFlag("token-report"),
     ...outputConfig(),
   },
   [
     stringSpec("from-file"),
     stringSpec("upsert-match"),
-    booleanSpec("force"),
+    stringSpec("update-id"),
+    booleanSpec("create-new"),
+    booleanSpec("allow-drop"),
     stringSpec("upsert-threshold"),
     booleanSpec("dry-run"),
+    stringSpec("emit-candidate"),
     stringSpec("path"),
     stringSpec("tags"),
     stringSpec("context"),
@@ -94,8 +99,6 @@ const addCommand = effectCommand(
     stringSpec("source-agent"),
     stringSpec("refs"),
     stringSpec("expires-after-days"),
-    booleanSpec("no-conflicts"),
-    booleanSpec("token-report"),
     ...outputSpecs,
   ],
   "write",
@@ -141,6 +144,9 @@ const listCommand = effectCommand(
     status: stringFlag("status"),
     "include-deprecated": booleanFlag("include-deprecated"),
     limit: stringFlag("limit"),
+    offset: stringFlag("offset"),
+    by: stringFlag("by"),
+    mine: booleanFlag("mine"),
     ...outputConfig(),
   },
   [
@@ -150,6 +156,9 @@ const listCommand = effectCommand(
     stringSpec("status"),
     booleanSpec("include-deprecated"),
     stringSpec("limit"),
+    stringSpec("offset"),
+    stringSpec("by"),
+    booleanSpec("mine"),
     ...outputSpecs,
   ],
   "read",
@@ -191,7 +200,13 @@ const updateCommand = effectCommand(
     "updated-by": stringFlag("updated-by"),
     refs: stringFlag("refs"),
     "expires-after-days": stringFlag("expires-after-days"),
-    "token-report": booleanFlag("token-report"),
+    "expected-update-count": stringFlag("expected-update-count"),
+    "allow-drop": booleanFlag("allow-drop"),
+    "add-tags": stringFlag("add-tags"),
+    "remove-tags": stringFlag("remove-tags"),
+    "clear-context": booleanFlag("clear-context"),
+    "add-gap": stringFlag("add-gap"),
+    "remove-gap": stringFlag("remove-gap"),
     ...outputConfig(),
   },
   [
@@ -207,7 +222,13 @@ const updateCommand = effectCommand(
     stringSpec("updated-by"),
     stringSpec("refs"),
     stringSpec("expires-after-days"),
-    booleanSpec("token-report"),
+    stringSpec("expected-update-count"),
+    booleanSpec("allow-drop"),
+    stringSpec("add-tags"),
+    stringSpec("remove-tags"),
+    booleanSpec("clear-context"),
+    stringSpec("add-gap"),
+    stringSpec("remove-gap"),
     ...outputSpecs,
   ],
   "write",
@@ -311,6 +332,9 @@ const checkpointCommand = effectCommand(
     query: stringFlag("query"),
     since: stringFlag("since"),
     limit: stringFlag("limit"),
+    by: stringFlag("by"),
+    mine: booleanFlag("mine"),
+    "last-commit": booleanFlag("last-commit"),
     ...outputConfig(),
   },
   [
@@ -319,6 +343,9 @@ const checkpointCommand = effectCommand(
     stringSpec("query"),
     stringSpec("since"),
     stringSpec("limit"),
+    stringSpec("by"),
+    booleanSpec("mine"),
+    booleanSpec("last-commit"),
     ...outputSpecs,
   ],
   "read",
@@ -327,8 +354,8 @@ const checkpointCommand = effectCommand(
 
 const doctorCommand = effectCommand(
   "doctor",
-  outputConfig(),
-  outputSpecs,
+  { only: stringFlag("only"), since: stringFlag("since"), ...outputConfig() },
+  [stringSpec("only"), stringSpec("since"), ...outputSpecs],
   "read",
   handleDoctorCommand,
 );
@@ -378,8 +405,6 @@ const sizeCommand = effectCommand(
     "from-file": stringFlag("from-file"),
     tags: stringFlag("tags"),
     context: stringFlag("context"),
-    type: stringFlag("type"),
-    certainty: stringFlag("certainty"),
     local: booleanFlag("local"),
     remote: booleanFlag("remote"),
     ...outputConfig(),
@@ -388,8 +413,6 @@ const sizeCommand = effectCommand(
     stringSpec("from-file"),
     stringSpec("tags"),
     stringSpec("context"),
-    stringSpec("type"),
-    stringSpec("certainty"),
     booleanSpec("local"),
     booleanSpec("remote"),
     ...outputSpecs,
@@ -399,17 +422,38 @@ const sizeCommand = effectCommand(
 );
 const importCommand = effectCommand(
   "import",
-  { args: positionalArgs(), ...outputConfig() },
-  outputSpecs,
+  { args: positionalArgs(), review: booleanFlag("review"), ...outputConfig() },
+  [booleanSpec("review"), ...outputSpecs],
   "write",
   handleImportCommand,
 );
 const reindexCommand = effectCommand(
   "reindex",
-  outputConfig(),
-  outputSpecs,
+  {
+    "failed-only": booleanFlag("failed-only"),
+    id: stringFlag("id"),
+    "all-repos": booleanFlag("all-repos"),
+    ...outputConfig(),
+  },
+  [
+    booleanSpec("failed-only"),
+    stringSpec("id"),
+    booleanSpec("all-repos"),
+    ...outputSpecs,
+  ],
   "write",
   handleReindexCommand,
+);
+const indexCommand = effectCommand(
+  "index",
+  {
+    args: positionalArgs(),
+    "all-repos": booleanFlag("all-repos"),
+    ...outputConfig(),
+  },
+  [booleanSpec("all-repos"), ...outputSpecs],
+  "read",
+  handleIndexCommand,
 );
 const exportCommand = effectCommand(
   "export",
@@ -419,6 +463,8 @@ const exportCommand = effectCommand(
     type: stringFlag("type"),
     certainty: stringFlag("certainty"),
     since: stringFlag("since"),
+    by: stringFlag("by"),
+    mine: booleanFlag("mine"),
     ...outputConfig(),
   },
   [
@@ -426,6 +472,8 @@ const exportCommand = effectCommand(
     stringSpec("type"),
     stringSpec("certainty"),
     stringSpec("since"),
+    stringSpec("by"),
+    booleanSpec("mine"),
     ...outputSpecs,
   ],
   "read",
@@ -479,12 +527,14 @@ export const featureCommands = [
   sizeCommand,
   importCommand,
   reindexCommand,
+  indexCommand,
   exportCommand,
   migrateCommand,
   tagMapCommand,
   initCommand,
   localCommand,
   remoteCommand,
+  repoCommand,
 ] as const;
 
 function printUpgradeProgress(progress: UpgradeProgress): void {

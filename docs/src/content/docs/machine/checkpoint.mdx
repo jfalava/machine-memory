@@ -18,14 +18,27 @@ classify every validated finding (see the managed `AGENTS.md` block). It returns
 
 | Field            | Contents                                                                                                                                                |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `classification` | The five groups (already covered, new durable knowledge, superseded or conflicting, transient status, intentionally omitted) with the command for each. |
 | `recent`         | Memories written or changed since `--since` (default: 12 hours ago), including deprecations, newest first.                                              |
-| `files`          | The touched files: `--files`/`--files-json`, otherwise the Git working-tree changes plus untracked files, otherwise the files in the last commit.       |
+| `files`          | The touched files, and `files_source` for where they came from: `flag`, `working_tree`, `last_commit` or `none`.                                        |
 | `related`        | [`suggest`](/machine/suggest) results for those files, with `match_strength`. `--query` adds `query_results`.                                           |
 | `review`         | IDs to look at: `verified_without_evidence`, `status_without_expiry`, `verified_with_gaps`, `related_status`, and `strong_related`.                     |
-| `classification` | The five groups (already covered, new durable knowledge, superseded or conflicting, transient status, intentionally omitted) with the command for each. |
+
+Without `--files`, the files are the changed and untracked files of the Git
+working tree. On a clean tree `files` is empty, `files_source` is `none`, and
+`files_note` says so: the last commit may not be this task's. Pass
+`--last-commit` when the task already committed its changes.
+
+`verified_with_gaps` lists verified records that state validation gaps and
+name no evidence. Gaps next to named evidence are how a verified record should
+look, so they are not flagged.
 
 With [`--repo`](/machine/overview#other-repositories), the working tree belongs
 to a different checkout, so `checkpoint` only uses files passed with `--files`.
+
+`--mine` limits `recent` to what the current session wrote, and `--by <writer>`
+to another [writer](/machine/add#who-wrote-it), so the list is not mixed with
+other threads' writes from the same hours.
 
 `--json-min` returns minimal summaries with content snippets. `--quiet` prints
 only `{recent_ids, related_ids}`, and `--brief` prints one line per memory.

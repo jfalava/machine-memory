@@ -8,6 +8,7 @@ import {
   MemoryTypeSchema,
   MemoryStatusSchema,
 } from "../entities";
+import { IndexStatusSchema } from "../index-status";
 import { DroppedDetailsSchema } from "../reconcile";
 import { MatchStrengthSchema } from "../search";
 
@@ -30,11 +31,15 @@ export type ScoredMemoryRow = typeof ScoredMemoryRowSchema.Type;
 
 export const UpsertMatchInfoSchema = Schema.Struct({
   id: Schema.Finite,
-  score: Schema.Finite,
-  similarity: Schema.Finite,
+  /** Search rank of the record for the upsert query, 0 to 100. */
+  rank_score: Schema.Finite,
+  /** Share of terms the record and the new content have in common, 0 to 1. */
+  text_overlap: Schema.Finite,
   memory_type: MemoryTypeSchema,
   status: MemoryStatusSchema,
   content_head: Schema.String,
+  /** Paths, flags and symbols both the record and the new content mention. */
+  shared_identifiers: Schema.Array(Schema.String),
 });
 export type UpsertMatchInfo = typeof UpsertMatchInfoSchema.Type;
 
@@ -54,7 +59,8 @@ export const MemoryWriteResultSchema = Schema.Struct({
   size: Schema.optionalKey(EmbeddingSizeReportSchema),
   upsert_match: Schema.optionalKey(UpsertMatchInfoSchema),
   matched: Schema.optionalKey(MatchedUpdateTargetSchema),
-  potential_conflicts: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
+  /** Active records that strongly match the new content; neighbours, not contradictions. */
+  related: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
   /** Paths, identifiers, and sentences the new content no longer carries. */
   dropped: Schema.optionalKey(DroppedDetailsSchema),
   /** Other active records that may rely on the changed premise. */
@@ -82,7 +88,25 @@ export const ListRepositoriesSuccessSchema = okResponseSchema(
   ListRepositoriesResultSchema,
 );
 
-export const MemoryGetSuccessSchema = okResponseSchema(MemoryRowSchema);
+/**
+ * Every read of memories answers in this order: `repository`, `count`, the
+ * fields of that read, then `results`.
+ */
+export const MemoryGetResultSchema = Schema.Struct({
+  repository: Schema.String,
+  count: Schema.Finite,
+  /** Requested ids the repository does not hold. */
+  missing_ids: Schema.optionalKey(Schema.Array(Schema.Finite)),
+  /** Missing ids that another repository holds; ids are unique across repositories. */
+  found_elsewhere: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ id: Schema.Finite, repository: Schema.String }),
+    ),
+  ),
+  results: Schema.Array(MemoryRowSchema),
+});
+export type MemoryGetResult = typeof MemoryGetResultSchema.Type;
+export const MemoryGetSuccessSchema = okResponseSchema(MemoryGetResultSchema);
 export type MemoryGetSuccess = typeof MemoryGetSuccessSchema.Type;
 
 export const MemoryHistoryEntrySchema = Schema.Struct({
@@ -109,6 +133,7 @@ export const MemoryHistorySuccessSchema = okResponseSchema(
 );
 
 export const MemoryListResultSchema = Schema.Struct({
+  repository: Schema.String,
   count: Schema.Finite,
   total_count: Schema.Finite,
   offset: Schema.Finite,
@@ -119,6 +144,7 @@ export const MemoryListResultSchema = Schema.Struct({
 export const MemoryListSuccessSchema = okResponseSchema(MemoryListResultSchema);
 
 export const MemoryQueryResultSchema = Schema.Struct({
+  repository: Schema.String,
   count: Schema.Finite,
   no_strong_match: Schema.Boolean,
   results: Schema.Array(ScoredMemoryRowSchema),
@@ -128,6 +154,8 @@ export const MemoryQuerySuccessSchema = okResponseSchema(
 );
 
 export const MemorySuggestResultSchema = Schema.Struct({
+  repository: Schema.String,
+  count: Schema.Finite,
   files: Schema.Array(Schema.String),
   normalized_path_terms: Schema.Array(Schema.String),
   derived_terms: Schema.Array(Schema.String),
@@ -135,7 +163,6 @@ export const MemorySuggestResultSchema = Schema.Struct({
     tags: Schema.Array(Schema.String),
     paths: Schema.Array(Schema.String),
   }),
-  count: Schema.Finite,
   no_strong_match: Schema.Boolean,
   results: Schema.Array(ScoredMemoryRowSchema),
 });
@@ -233,6 +260,8 @@ export const MemoryStatsResultSchema = Schema.Struct({
   ),
   memories_not_updated_over_90_days: Schema.Finite,
   memories_with_no_tags: Schema.Finite,
+  /** Where this repository's records stand in the semantic index. */
+  index: IndexStatusSchema,
 });
 export type MemoryStatsResult = typeof MemoryStatsResultSchema.Type;
 export const MemoryStatsSuccessSchema = okResponseSchema(

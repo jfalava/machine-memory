@@ -128,6 +128,12 @@ describe("router", () => {
     expect(calls.API.map((c) => c.pathname)).toEqual(["/vectorize/search"]);
   });
 
+  it("/status goes to API", async () => {
+    const { response, calls } = request("https://mm.example/status");
+    await response;
+    expect(calls.API.map((c) => c.pathname)).toEqual(["/status"]);
+  });
+
   it("/product/query goes to API", async () => {
     const { response, calls } = request("https://mm.example/product/query");
     await response;

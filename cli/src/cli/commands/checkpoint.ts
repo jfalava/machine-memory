@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 
+import { sqliteTimestamp } from "@machine-memory/contract";
 import { Effect } from "effect";
 
+import { appendWriterFilter, requestedWriter } from "../../attribution";
 import {
   type CommandFlags,
   getFlagValue,
@@ -10,8 +12,8 @@ import {
 } from "../../cli-utils";
 import type { JsonObject } from "../../json";
 import {
-  activeRepositoryOverride,
   repositoryForCurrentDirectory,
+  repositoryIsExplicit,
 } from "../../repository";
 import {
   parseStoredEvidence,
@@ -27,7 +29,6 @@ import {
   normalizeSqliteRow,
   parseResultLimit,
   parseSinceDate,
-  sqliteDateForComparison,
   stringValue,
   uniqueLowerPreserveOrder,
 } from "../shared";
@@ -57,39 +58,51 @@ function gitLines(args: string[]): string[] {
   }
 }
 
-/** Working-tree changes, else the last commit: the files this task touched. */
-function touchedFiles(): string[] {
-  const working = uniqueLowerPreserveOrder([
-    ...gitLines(["diff", "--name-only", "HEAD"]),
-    ...gitLines(["ls-files", "--others", "--exclude-standard"]),
-  ]);
-  return (
-    working.length > 0
-      ? working
-      : gitLines(["show", "--name-only", "--format=", "HEAD"])
-  ).slice(0, MAX_TOUCHED_FILES);
-}
+/** Where the checkpoint's file list came from. */
+type FilesSource = "flag" | "working_tree" | "last_commit" | "none";
+type CheckpointFiles = {
+  readonly flags: CommandFlags;
+  readonly source: FilesSource;
+};
 
 /**
- * Explicit --files win. Without them, a --repo target is another checkout, so
- * this directory's Git changes say nothing about it.
+ * The files this task touched. Explicit --files win. --last-commit asks for
+ * the files of the last commit, for a task that already committed its work;
+ * a clean tree is otherwise reported as no changed files, because the last
+ * commit may be someone else's. A --repo target is another checkout, so this
+ * directory's Git changes say nothing about it.
  */
-function checkpointFlags(flags: CommandFlags): CommandFlags {
+function checkpointFiles(flags: CommandFlags): CheckpointFiles {
   if (hasFlag(flags, "--files") || hasFlag(flags, "--files-json")) {
-    return flags;
+    return { flags, source: "flag" };
   }
-  if (activeRepositoryOverride() !== undefined) {
-    return flags;
+  if (repositoryIsExplicit()) {
+    return { flags, source: "none" };
   }
-  const files = touchedFiles();
-  return files.length > 0
-    ? new Map([...flags, ["--files", files.join(",")]])
-    : flags;
+  const lastCommit = hasFlag(flags, "--last-commit");
+  const files = (
+    lastCommit
+      ? gitLines(["show", "--name-only", "--format=", "HEAD"])
+      : uniqueLowerPreserveOrder([
+          ...gitLines(["diff", "--name-only", "HEAD"]),
+          ...gitLines(["ls-files", "--others", "--exclude-standard"]),
+        ])
+  ).slice(0, MAX_TOUCHED_FILES);
+  if (files.length === 0) {
+    return { flags, source: "none" };
+  }
+  return {
+    flags: new Map([...flags, ["--files", files.join(",")]]),
+    source: lastCommit ? "last_commit" : "working_tree",
+  };
 }
+
+const NO_FILES_NOTE =
+  "No changed files in the working tree, so no related memories were looked up. Pass --files <paths>, or --last-commit when this task's changes are already committed.";
 
 function sinceTimestamp(flags: CommandFlags): string {
   const explicit = parseSinceDate(flags);
-  return sqliteDateForComparison(
+  return sqliteTimestamp(
     explicit ??
       new Date(Date.now() - DEFAULT_SINCE_HOURS * 3_600_000).toISOString(),
   );
@@ -144,10 +157,13 @@ function reviewFlags(recent: JsonObject[], related: JsonObject[]): JsonObject {
             row.expires_after_days === undefined),
       ),
     ),
+    // Gaps next to named evidence are the intended record; gaps with no
+    // evidence mean the claim was never established.
     verified_with_gaps: ids(
       active.filter(
         (row) =>
           row.certainty === "verified" &&
+          parseStoredEvidence(row.evidence).length === 0 &&
           parseStoredValidationGaps(row.validation_gaps).length > 0,
       ),
     ),
@@ -161,21 +177,26 @@ function reviewFlags(recent: JsonObject[], related: JsonObject[]): JsonObject {
 function recentSummary(row: JsonObject): JsonObject {
   return {
     ...minimalResultSummary(row),
-    status: stringValue(row.status, "active"),
     updated_at: stringValue(row.updated_at),
   };
 }
 
 export function handleCheckpointCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const flags = checkpointFlags(commandCtx.flags);
+    const { flags, source: filesSource } = checkpointFiles(commandCtx.flags);
     const database = requireDatabase(commandCtx);
     const since = sinceTimestamp(flags);
     const limit = parseResultLimit(flags);
+    const clauses = ["repository = ?", "updated_at >= ?"];
+    const params: (string | number)[] = [
+      repositoryForCurrentDirectory(),
+      since,
+    ];
+    appendWriterFilter(clauses, params, requestedWriter(flags));
     const recent = (yield* database.all(
-      `SELECT * FROM memories WHERE repository = ? AND updated_at >= ?
+      `SELECT * FROM memories WHERE ${clauses.join(" AND ")}
        ORDER BY updated_at DESC, id DESC LIMIT ${RECENT_LIMIT}`,
-      [repositoryForCurrentDirectory(), since],
+      params,
     )).map((row) => normalizeSqliteRow(row));
     const hasFiles =
       hasFlag(flags, "--files") || hasFlag(flags, "--files-json");
@@ -209,13 +230,18 @@ export function handleCheckpointCommand(commandCtx: CommandContext) {
       }
       const payload: JsonObject = {
         repository: repositoryForCurrentDirectory(),
+        // First, because it is what to do with everything listed after it.
+        classification: classification(backendFlag(flags)),
         since,
+        files_source: filesSource,
         files: snapshot?.files ?? [],
         recent: outputMode.jsonMin ? recent.map(recentSummary) : recent,
         related: related.map(minimalResultSummary),
         review: reviewFlags(recent, relatedRows),
-        classification: classification(backendFlag(flags)),
       };
+      if (filesSource === "none" && !repositoryIsExplicit()) {
+        payload.files_note = NO_FILES_NOTE;
+      }
       if (query) {
         payload.query = query;
         payload.query_results = queried.map(minimalResultSummary);

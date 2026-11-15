@@ -1,22 +1,34 @@
 import {
+  assessReplacement,
   buildFtsQuery,
   canonicalTags,
   compareMemoryFact,
+  decideUpsert,
   decodeRequest,
   droppedDetails,
+  droppedNames,
+  duplicateRefusal,
+  editTags,
+  editValidationGaps,
+  embeddingBudgetMessage,
   embeddingSizeReport,
   evidenceWriteError,
   extractQueryIdentifiers,
   extractTerms,
   hasDroppedDetails,
+  nameHoldersFromRows,
+  nameHoldersQuery,
+  nearDuplicate,
   normalizeMemoryAddArgs,
   normalizeStoredMemoryRow,
   orderByMatchStrength,
   premiseQuery,
   REVIEW_CANDIDATES_LIMIT,
   reviewsDependents,
+  sharedIdentifiers,
   StoredMemoryRowSchema,
-  UPSERT_MIN_SIMILARITY,
+  upsertRefusal,
+  type AddIntentHints,
   type JsonObject,
   type MatchedUpdateTarget,
   type MemoryAddArgs,
@@ -27,31 +39,27 @@ import {
   type MemoryWriteResult,
   type ProductRequest,
   type UpsertMatchInfo,
+  sqliteTimestamp,
 } from "@machine-memory/contract";
 import * as Effect from "effect/Effect";
 
 import {
   fetchProductRow,
   fetchRankedProductRows,
+  memoryNotFound,
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
-import {
-  badRequest,
-  conflict,
-  embeddingBudgetError,
-  memoryNotFound,
-  notFound,
-} from "./http-failure";
+import { badRequest, conflict, notFound } from "./http-failure";
 import {
   INSERT_SQL,
   insertParams,
+  writerOf,
   updateSets,
   type InsertInput,
 } from "./product-api";
 import {
   contentHead,
-  embeddingTextForMemory,
   scoredResultRow,
   scoreMemoryRows,
   toProductRow,
@@ -65,7 +73,16 @@ const withCanonicalTags = <T extends { readonly tags?: string | undefined }>(
     ? input
     : { ...input, tags: canonicalTags(input.tags) };
 
-const findBestProductMatch = (
+/** How an API caller states intent after a refused add. */
+const ADD_INTENT_HINTS: AddIntentHints = {
+  updateId: (id) => `update_id ${id}`,
+  createNew: "create_new true",
+};
+
+const UPSERT_CANDIDATES_SHOWN = 3;
+
+/** The best active matches for a topic query, strongest first, at most three. */
+const findProductMatches = (
   ctx: ApiContext,
   repository: string,
   query: string,
@@ -74,7 +91,7 @@ const findBestProductMatch = (
     const terms = extractTerms(query);
     const ftsQuery = buildFtsQuery(terms);
     if (ftsQuery === undefined) {
-      return null;
+      return [];
     }
     const rows = yield* fetchRankedProductRows(
       ctx,
@@ -83,15 +100,47 @@ const findBestProductMatch = (
       { status: "active" },
       5,
     );
-    const scored = scoreMemoryRows(rows, {
+    return scoreMemoryRows(rows, {
       terms,
       identifiers: extractQueryIdentifiers(query),
+    })
+      .slice(0, UPSERT_CANDIDATES_SHOWN)
+      .map((scored) => ({ row: scoredResultRow(scored), score: scored.score }));
+  });
+
+/**
+ * Refuses new content that would lose details of the stored record: a path,
+ * flag or symbol no other active record mentions, or nearly all of its terms.
+ */
+const guardReplacement = (
+  ctx: ApiContext,
+  existing: MemoryRow,
+  next: string,
+  allowDrop: boolean,
+) =>
+  Effect.gen(function* () {
+    const names = droppedNames(existing.content, next);
+    const query = nameHoldersQuery({
+      repository: existing.repository,
+      excludeId: existing.id,
+      names,
     });
-    const best = scored[0];
-    if (!best) {
-      return null;
+    const assessment = assessReplacement({
+      id: existing.id,
+      previous: existing.content,
+      next,
+      memoryType: existing.memory_type,
+      holders: nameHoldersFromRows(
+        names.length === 0
+          ? []
+          : yield* ctx.sql.unsafe<JsonObject>(query.sql, query.params),
+      ),
+      allowDrop,
+      allowDropHint: "allow_drop true",
+    });
+    if (assessment.refusal !== undefined) {
+      return yield* badRequest(assessment.refusal);
     }
-    return { row: scoredResultRow(best), score: best.score };
   });
 
 /**
@@ -196,11 +245,8 @@ const insertProductRow = (ctx: ApiContext, input: InsertInput) =>
     return toProductRow(result);
   });
 
-const fetchProductConflicts = (
-  ctx: ApiContext,
-  insert: InsertInput,
-  excludeId: number,
-) =>
+/** Active records nearest to a prospective memory, strongest match first. */
+const fetchNeighbours = (ctx: ApiContext, insert: InsertInput) =>
   Effect.gen(function* () {
     const terms = extractTerms(
       [insert.content, insert.tags, insert.context].join(" "),
@@ -219,15 +265,20 @@ const fetchProductConflicts = (
     return scoreMemoryRows(rows, {
       terms,
       identifiers: extractQueryIdentifiers(insert.content),
-    })
-      .filter((candidate) => candidate.id !== excludeId)
-      .slice(0, 5)
-      .map(scoredResultRow);
+    }).map(scoredResultRow);
   });
 
+const comparableText = (memory: {
+  readonly content: string;
+  readonly tags: string;
+  readonly context: string;
+}) => [memory.content, memory.tags, memory.context].join(" ");
+
 /**
- * Inserts a new memory. Without `upsertMatch` the result lists potential
- * conflicts; a forced create after a weak upsert match echoes that match.
+ * Inserts a new memory unless an active record already states nearly the same
+ * thing and the caller did not ask for a new record. Without `upsertMatch` the
+ * result lists strongly related records; a create over a weak upsert match
+ * echoes that match instead.
  */
 const createProduct = (
   ctx: ApiContext,
@@ -235,7 +286,7 @@ const createProduct = (
   upsertMatch: UpsertMatchInfo | undefined,
 ) =>
   Effect.gen(function* () {
-    // Every create path checks this: plain adds, unmatched upserts and forced weak matches.
+    // Every create path checks this: plain adds, unmatched upserts and create_new.
     if (
       args.expires_after_days !== undefined &&
       args.memory_type !== "status"
@@ -259,10 +310,25 @@ const createProduct = (
       evidence: args.evidence,
       validation_gaps: args.validation_gaps,
       expires_after_days: args.expires_after_days ?? null,
+      source_agent: args.source_agent,
     };
-    const size = embeddingSizeReport(embeddingTextForMemory(insert));
+    const size = embeddingSizeReport(insert);
     if (!size.within_budget) {
-      return yield* badRequest(embeddingBudgetError("Document text"));
+      return yield* badRequest(embeddingBudgetMessage("Memory", size));
+    }
+    const neighbours = yield* fetchNeighbours(ctx, insert);
+    const duplicate =
+      args.create_new === true
+        ? undefined
+        : nearDuplicate(
+            comparableText(insert),
+            neighbours.map((row) => ({
+              id: row.id,
+              text: comparableText(row),
+            })),
+          );
+    if (duplicate !== undefined) {
+      return yield* badRequest(duplicateRefusal(duplicate, ADD_INTENT_HINTS));
     }
     const memory = yield* insertProductRow(ctx, insert);
     const result: MemoryWriteResult = {
@@ -274,8 +340,8 @@ const createProduct = (
     if (upsertMatch !== undefined) {
       return { ...result, upsert_match: upsertMatch };
     }
-    const conflicts = yield* fetchProductConflicts(ctx, insert, memory.id);
-    return { ...result, potential_conflicts: conflicts };
+    const related = neighbours.filter((row) => row.match_strength === "strong");
+    return related.length > 0 ? { ...result, related } : result;
   });
 
 const strongUpsertError = (
@@ -287,36 +353,76 @@ const strongUpsertError = (
     ? "expires_after_days is only valid for status memories."
     : evidenceWriteError(input, existing);
 
+/** The active memory an add replaces: a strong upsert match, or the one named by update_id. */
+const upsertTarget = (
+  ctx: ApiContext,
+  repository: string,
+  targetId: number,
+  viaMatch: boolean,
+) =>
+  Effect.gen(function* () {
+    const existing = yield* fetchProductRow(ctx, repository, targetId);
+    if (existing?.status === "active") {
+      return existing;
+    }
+    if (viaMatch) {
+      return yield* conflict("Match changed; retry.");
+    }
+    if (!existing) {
+      return yield* memoryNotFound(ctx, targetId, repository);
+    }
+    return yield* badRequest(
+      `Memory ${targetId} is ${existing.status}; update_id needs an active memory.`,
+    );
+  });
+
+/** The memory as the add would leave it: omitted fields keep their stored values. */
+const upsertProspective = (
+  existing: MemoryRow,
+  input: ProductRequest<"add">,
+) => ({
+  content: input.content,
+  tags: input.tags ?? existing.tags,
+  context: input.context ?? existing.context,
+  memory_type: input.memory_type ?? existing.memory_type,
+  status: existing.status,
+  certainty: input.certainty ?? existing.certainty,
+});
+
 /**
- * Updates the strongly matched memory. Unset optional fields keep the stored
- * values, so this reads the raw request rather than defaulted add arguments.
+ * Replaces the content of an existing memory from an add: the strong upsert
+ * match (`info`), or the memory named by update_id. Unset optional fields keep
+ * the stored values, so this reads the raw request rather than defaulted add
+ * arguments.
  */
 const applyStrongUpsert = (
   ctx: ApiContext,
   input: ProductRequest<"add">,
-  info: UpsertMatchInfo,
+  targetId: number,
+  info: UpsertMatchInfo | undefined,
 ) =>
   Effect.gen(function* () {
-    const existing = yield* fetchProductRow(ctx, input.repository, info.id);
-    if (!existing || existing.status !== "active") {
-      return yield* conflict("Match changed; retry.");
-    }
-    const prospective = {
-      content: input.content,
-      tags: input.tags ?? existing.tags,
-      context: input.context ?? existing.context,
-      memory_type: input.memory_type ?? existing.memory_type,
-      status: existing.status,
-      certainty: input.certainty ?? existing.certainty,
-    };
+    const existing = yield* upsertTarget(
+      ctx,
+      input.repository,
+      targetId,
+      info !== undefined,
+    );
+    const prospective = upsertProspective(existing, input);
     const invalid = strongUpsertError(input, prospective, existing);
     if (invalid !== undefined) {
       return yield* badRequest(invalid);
     }
-    const size = embeddingSizeReport(embeddingTextForMemory(prospective));
+    const size = embeddingSizeReport(prospective);
     if (!size.within_budget) {
-      return yield* badRequest(embeddingBudgetError("Document text"));
+      return yield* badRequest(embeddingBudgetMessage("Memory", size));
     }
+    yield* guardReplacement(
+      ctx,
+      existing,
+      input.content,
+      input.allow_drop === true,
+    );
     const update = updateSets({
       content: input.content,
       tags: input.tags,
@@ -327,12 +433,13 @@ const applyStrongUpsert = (
       validation_gaps: input.validation_gaps,
       expires_after_days:
         prospective.memory_type !== "status" ? null : input.expires_after_days,
+      source_agent: input.source_agent,
     })!; // Content is required, so updateSets always has a field.
     const rowData = yield* ctx.d1
       .prepare(
         `UPDATE memories SET ${update.sql} WHERE repository = ? AND id = ? AND status = 'active' AND update_count = ? RETURNING *`,
       )
-      .bind(...update.params, input.repository, info.id, existing.update_count)
+      .bind(...update.params, input.repository, targetId, existing.update_count)
       .first<JsonObject>();
     if (rowData === null) {
       return yield* conflict("Memory changed concurrently; retry.");
@@ -340,12 +447,14 @@ const applyStrongUpsert = (
     const result: MemoryWriteResult = {
       mode: "updated",
       written_to: input.repository,
-      id: info.id,
+      id: targetId,
       memory: toProductRow(rowData),
       size,
-      upsert_match: info,
+      ...(yield* reconcileUpdate(ctx, input.repository, existing, {
+        content: input.content,
+      })),
     };
-    return result;
+    return info === undefined ? result : { ...result, upsert_match: info };
   });
 
 const upsertProductAdd = (
@@ -355,34 +464,38 @@ const upsertProductAdd = (
   upsertQuery: string,
 ) =>
   Effect.gen(function* () {
-    const best = yield* findBestProductMatch(ctx, args.repository, upsertQuery);
-    if (!best) {
-      return yield* createProduct(ctx, args, undefined);
-    }
-    const check = compareMemoryFact(
-      [best.row.content, best.row.tags, best.row.context].join(" "),
-      [args.content, args.tags ?? "", args.context ?? ""].join(" "),
+    const matches = yield* findProductMatches(
+      ctx,
+      args.repository,
+      upsertQuery,
     );
-    const strong =
-      check.similarity >= UPSERT_MIN_SIMILARITY &&
-      best.score >= args.upsert_threshold;
-    const info: UpsertMatchInfo = {
-      id: best.row.id,
-      score: best.score,
-      similarity: check.similarity,
-      memory_type: best.row.memory_type,
-      status: best.row.status,
-      content_head: contentHead(best.row.content),
-    };
-    if (!strong && !args.force) {
+    const candidates = matches.map((match): UpsertMatchInfo => ({
+      id: match.row.id,
+      rank_score: match.score,
+      text_overlap: compareMemoryFact(
+        comparableText(match.row),
+        [args.content, args.tags ?? "", args.context ?? ""].join(" "),
+      ).similarity,
+      memory_type: match.row.memory_type,
+      status: match.row.status,
+      content_head: contentHead(match.row.content),
+      shared_identifiers: sharedIdentifiers(match.row.content, args.content),
+    }));
+    const best = candidates[0];
+    const decision = decideUpsert({
+      match: best,
+      minScore: args.upsert_threshold,
+      createNew: args.create_new === true,
+    });
+    if (decision === "refuse") {
       return yield* badRequest(
-        `Best match #${info.id} is not a strong upsert match (score ${info.score}, similarity ${info.similarity}; needs score >= ${args.upsert_threshold} AND similarity >= ${UPSERT_MIN_SIMILARITY}). Inspect it with product/get, rerun with force true, or lower upsert_threshold.`,
+        upsertRefusal(candidates, args.upsert_threshold, ADD_INTENT_HINTS),
       );
     }
-    if (!strong) {
-      return yield* createProduct(ctx, args, info);
+    if (decision === "create" || best === undefined) {
+      return yield* createProduct(ctx, args, best);
     }
-    return yield* applyStrongUpsert(ctx, input, info);
+    return yield* applyStrongUpsert(ctx, input, best.id, best);
   });
 
 /** Resolves the update target from exactly one of id or match. */
@@ -394,7 +507,7 @@ const resolveUpdateTarget = (
 ) =>
   Effect.gen(function* () {
     if (match !== undefined) {
-      const best = yield* findBestProductMatch(ctx, repository, match);
+      const [best] = yield* findProductMatches(ctx, repository, match);
       if (!best) {
         return yield* notFound(
           `No active memory matched '${match}' in repository '${repository}'.`,
@@ -430,19 +543,15 @@ const validateUpdateFields = (
   return evidenceWriteError(input, existing);
 };
 
-/** Embedding text of the memory as it would be after the update. */
-const prospectiveUpdateText = (
+/** The embedded fields of the memory as they would be after the update. */
+const prospectiveUpdateDocument = (
   existing: MemoryRow,
   input: ProductRequest<"update">,
-) =>
-  embeddingTextForMemory({
-    content: input.content ?? existing.content,
-    tags: input.tags ?? existing.tags,
-    context: input.context ?? existing.context,
-    memory_type: input.memory_type ?? existing.memory_type,
-    status: input.status ?? existing.status,
-    certainty: input.certainty ?? existing.certainty,
-  });
+) => ({
+  content: input.content ?? existing.content,
+  tags: input.tags ?? existing.tags,
+  context: input.context ?? existing.context,
+});
 
 const persistProductUpdate = (
   ctx: ApiContext,
@@ -495,23 +604,71 @@ const persistProductUpdate = (
     return result;
   });
 
-const applyProductUpdate = (
-  ctx: ApiContext,
+/**
+ * The request with add and remove edits applied to the stored tags and
+ * validation gaps, so the rest of the update sees whole replacement values.
+ */
+const withStoredEdits = (
+  existing: MemoryRow,
   input: ProductRequest<"update">,
-  targetId: number,
+) =>
+  Effect.gen(function* () {
+    const editsTags =
+      input.add_tags !== undefined || input.remove_tags !== undefined;
+    const editsGaps =
+      input.add_validation_gaps !== undefined ||
+      input.remove_validation_gaps !== undefined;
+    if (editsTags && input.tags !== undefined) {
+      return yield* badRequest(
+        "tags replaces the stored tags, so it cannot be combined with add_tags or remove_tags.",
+      );
+    }
+    if (editsGaps && input.validation_gaps !== undefined) {
+      return yield* badRequest(
+        "validation_gaps replaces the stored gaps, so it cannot be combined with add_validation_gaps or remove_validation_gaps.",
+      );
+    }
+    const gaps = editValidationGaps(existing.validation_gaps, {
+      add: input.add_validation_gaps,
+      remove: input.remove_validation_gaps,
+    });
+    if (editsGaps && gaps.error !== undefined) {
+      return yield* badRequest(gaps.error);
+    }
+    return {
+      ...input,
+      tags: editsTags
+        ? editTags(existing.tags, {
+            add: input.add_tags,
+            remove: input.remove_tags,
+          })
+        : input.tags,
+      validation_gaps: editsGaps ? gaps.gaps : input.validation_gaps,
+    };
+  });
+
+/** Refusals that depend on the stored row: invalid fields, a stale read, a missing replacement. */
+const assertUpdatable = (
+  ctx: ApiContext,
+  existing: MemoryRow,
+  input: ProductRequest<"update">,
   matched: MatchedUpdateTarget | undefined,
 ) =>
   Effect.gen(function* () {
-    const existing = yield* fetchProductRow(ctx, input.repository, targetId);
-    if (!existing) {
-      return yield* memoryNotFound(targetId, input.repository);
-    }
-    const invalid = validateUpdateFields(existing, targetId, input);
+    const invalid = validateUpdateFields(existing, existing.id, input);
     if (invalid !== undefined) {
       return yield* badRequest(invalid);
     }
     if (matched !== undefined && existing.status !== "active") {
       return yield* conflict("Match is no longer active; retry.");
+    }
+    if (
+      input.expected_update_count !== undefined &&
+      input.expected_update_count !== existing.update_count
+    ) {
+      return yield* conflict(
+        `Memory ${existing.id} has update_count ${existing.update_count}, not the expected ${input.expected_update_count}; read it again before updating.`,
+      );
     }
     if (
       input.superseded_by !== undefined &&
@@ -521,9 +678,34 @@ const applyProductUpdate = (
         "Replacement must exist in the same repository.",
       );
     }
-    const size = embeddingSizeReport(prospectiveUpdateText(existing, input));
+  });
+
+const applyProductUpdate = (
+  ctx: ApiContext,
+  request: ProductRequest<"update">,
+  targetId: number,
+  matched: MatchedUpdateTarget | undefined,
+) =>
+  Effect.gen(function* () {
+    const existing = yield* fetchProductRow(ctx, request.repository, targetId);
+    if (!existing) {
+      return yield* memoryNotFound(ctx, targetId, request.repository);
+    }
+    const input = yield* withStoredEdits(existing, request);
+    yield* assertUpdatable(ctx, existing, input, matched);
+    const size = embeddingSizeReport(
+      prospectiveUpdateDocument(existing, input),
+    );
     if ((input.status ?? existing.status) === "active" && !size.within_budget) {
-      return yield* badRequest(embeddingBudgetError("Document text"));
+      return yield* badRequest(embeddingBudgetMessage("Memory", size));
+    }
+    if (input.content !== undefined) {
+      yield* guardReplacement(
+        ctx,
+        existing,
+        input.content,
+        input.allow_drop === true,
+      );
     }
     return yield* persistProductUpdate(ctx, input, targetId, existing, {
       size,
@@ -535,15 +717,24 @@ const deprecateProductRows = (
   ctx: ApiContext,
   repository: string,
   ids: readonly number[],
-  status: "deprecated" | "superseded_by",
-  supersededBy: number | null,
+  change: {
+    readonly status: "deprecated" | "superseded_by";
+    readonly supersededBy: number | null;
+    readonly writer: string;
+  },
 ) =>
   Effect.gen(function* () {
     const rows = yield* ctx.d1
       .prepare(
-        `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = 'api', updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id IN (SELECT value FROM json_each(?)) RETURNING *`,
+        `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = ?, updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id IN (SELECT value FROM json_each(?)) RETURNING *`,
       )
-      .bind(status, supersededBy, repository, JSON.stringify(ids))
+      .bind(
+        change.status,
+        change.supersededBy,
+        change.writer,
+        repository,
+        JSON.stringify(ids),
+      )
       .all<JsonObject>();
     const deprecated = rows.results.map(toProductRow);
     const changed = new Set(deprecated.map((row) => row.id));
@@ -558,15 +749,24 @@ export const productWriteHandlers = (
   ProductHandlers,
   "add" | "update" | "restore" | "delete" | "delete-many" | "deprecate"
 > => ({
-  add: (request) => {
-    const input = withCanonicalTags(request);
-    const args = normalizeMemoryAddArgs(input);
-    const upsertQuery = args.upsert_match?.trim() || undefined;
-    if (upsertQuery === undefined) {
-      return createProduct(ctx, args, undefined);
-    }
-    return upsertProductAdd(ctx, input, args, upsertQuery);
-  },
+  add: (request) =>
+    Effect.gen(function* () {
+      const input = withCanonicalTags(request);
+      const args = normalizeMemoryAddArgs(input);
+      const upsertQuery = args.upsert_match?.trim() || undefined;
+      if (args.update_id !== undefined) {
+        if (upsertQuery !== undefined || args.create_new === true) {
+          return yield* badRequest(
+            "update_id names the memory to update, so it cannot be combined with upsert_match or create_new.",
+          );
+        }
+        return yield* applyStrongUpsert(ctx, input, args.update_id, undefined);
+      }
+      if (upsertQuery === undefined) {
+        return yield* createProduct(ctx, args, undefined);
+      }
+      return yield* upsertProductAdd(ctx, input, args, upsertQuery);
+    }),
 
   update: (request) =>
     Effect.gen(function* () {
@@ -596,7 +796,7 @@ export const productWriteHandlers = (
     Effect.gen(function* () {
       const current = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!current) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       const snapshot = yield* ctx.sql.unsafe<JsonObject>(
         `SELECT * FROM memory_history WHERE repository = ? AND memory_id = ? AND revision_id = ?`,
@@ -633,10 +833,10 @@ export const productWriteHandlers = (
           "The historical replacement no longer exists in this repository.",
         );
       }
-      const size = embeddingSizeReport(embeddingTextForMemory(history));
+      const size = embeddingSizeReport(history);
       if (history.status === "active" && !size.within_budget) {
         return yield* badRequest(
-          "The historical memory exceeds the current embedding budget.",
+          embeddingBudgetMessage("The historical memory", size),
         );
       }
       const rowData = yield* ctx.d1
@@ -656,7 +856,10 @@ export const productWriteHandlers = (
           history.expires_after_days,
           JSON.stringify(history.evidence),
           JSON.stringify(history.validation_gaps),
-          history.created_at,
+          // Rows leave the database with ISO timestamps; storage keeps SQLite's form.
+          history.created_at === null
+            ? null
+            : sqliteTimestamp(history.created_at),
           input.repository,
           input.id,
           input.expected_update_count,
@@ -733,8 +936,7 @@ export const productWriteHandlers = (
         ctx,
         input.repository,
         requestedIds,
-        status,
-        supersededBy,
+        { status, supersededBy, writer: writerOf(input.source_agent) },
       );
       const reviewCandidates = yield* fetchReviewCandidates(
         ctx,

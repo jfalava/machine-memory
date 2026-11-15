@@ -1,6 +1,6 @@
 {
   "name": "@machine-memory/cli",
-  "version": "0.23.1",
+  "version": "0.25.0",
   "bin": {
     "machine-memory": "src/app.ts"
   },
@@ -25,7 +25,6 @@
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:effect",
-    "@huggingface/tokenizers": "0.2.0",
     "@machine-memory/contract": "workspace:*",
     "effect": "catalog:effect",
     "picocolors": "1.1.1",

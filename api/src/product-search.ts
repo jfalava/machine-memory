@@ -1,7 +1,7 @@
 import {
   buildFtsQuery,
   deriveFileNeighborhood,
-  embeddingSizeReport,
+  embeddingTextError,
   extractPathTerms,
   extractQueryIdentifiers,
   extractTerms,
@@ -25,7 +25,7 @@ import {
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
-import { badRequest, embeddingBudgetError } from "./http-failure";
+import { badRequest } from "./http-failure";
 import { neighborhoodSelect } from "./product-api";
 import {
   assessRowMatch,
@@ -178,8 +178,9 @@ const searchResults = (ctx: ApiContext, args: MemoryQueryArgs) =>
     if (args.mode === "keyword") {
       return yield* keywordResults(ctx, args);
     }
-    if (!embeddingSizeReport(args.query).within_budget) {
-      return yield* badRequest(embeddingBudgetError("Query"));
+    const queryError = embeddingTextError(args.query, "Query");
+    if (queryError !== undefined) {
+      return yield* badRequest(queryError);
     }
     if (args.mode === "semantic") {
       return yield* semanticResults(ctx, args);
@@ -198,6 +199,7 @@ export const productSearchHandlers = (
         normalizeMemoryQueryArgs(input),
       );
       return {
+        repository: input.repository,
         count: results.length,
         no_strong_match: !hasStrongMatch(results),
         results,
@@ -260,6 +262,8 @@ export const productSearchHandlers = (
         .slice(0, args.limit)
         .map(scoredResultRow);
       return {
+        repository: args.repository,
+        count: results.length,
         files,
         normalized_path_terms: pathTerms,
         derived_terms: scoreTerms,
@@ -267,7 +271,6 @@ export const productSearchHandlers = (
           tags: neighborhood.tagHints,
           paths: neighborhood.pathHints,
         },
-        count: results.length,
         no_strong_match: !hasStrongMatch(results),
         results,
       };

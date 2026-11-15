@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import {
@@ -8,6 +8,7 @@ import {
   PRODUCT_OPERATIONS,
   productRoutePath,
   QuerySuccessSchema,
+  StatusSuccessSchema,
   type JsonObject,
   type JsonValue,
   type ProductRoute,
@@ -19,8 +20,14 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 
+import pkg from "../package.json";
 import { handleRestRequest } from "../src/rest-handlers";
-import { drainVectorSync, parseEmbedding } from "../src/vector-sync";
+import {
+  drainVectorSync,
+  DRAIN_INTERVAL_MS,
+  parseEmbedding,
+  wakeAlarmAt,
+} from "../src/vector-sync";
 import { createApiHandlers } from "../src/worker";
 
 let mf: Miniflare;
@@ -64,7 +71,6 @@ beforeAll(async () => {
     ],
   });
   db = await mf.getD1Database("DB");
-  // D1 exec splits on lines. Keep each complete trigger as one prepared statement.
   for (const name of [
     "0001_machine_memory",
     "0002_vector_sync",
@@ -72,14 +78,20 @@ beforeAll(async () => {
     "0004_memory_history",
     "0005_memory_evidence",
     "0006_memory_evidence_triggers",
+    "0007_embedding_budget",
+    "0008_vector_sync_queue",
   ]) {
-    const sql = await readFile(
-      new URL(`../../iac/migrations/${name}.sql`, import.meta.url),
-      "utf8",
-    );
-    await db.exec(sql.replace(/--[^\n]*/g, "").replace(/\n/g, " "));
+    await applyMigration(name);
   }
 });
+// D1 exec splits on lines. Keep each complete trigger as one prepared statement.
+async function applyMigration(name: string) {
+  const sql = await readFile(
+    new URL(`../../iac/migrations/${name}.sql`, import.meta.url),
+    "utf8",
+  );
+  await db.exec(sql.replace(/--[^\n]*/g, "").replace(/\n/g, " "));
+}
 afterAll(async () => {
   await mf?.dispose();
 });
@@ -224,6 +236,14 @@ async function insert(content = "original", repository = "o/r") {
     .bind(repository, content)
     .first<{ id: number }>();
   return result!.id;
+}
+/** The one memory `get` returns for `id`; fails the test when it is missing. */
+async function getRow(id: number) {
+  const fetched = await product("get", { ids: [id] });
+  expect(fetched.status).toBe(200);
+  const [row] = fetched.result.results;
+  expect(row).toBeDefined();
+  return row!;
 }
 const drain = (now = Date.now()) => drainVectorSync({ db, index, embed }, now);
 const job = (id: number) =>
@@ -406,12 +426,76 @@ test("competing restores with the same current count allow exactly one mutation"
   expect(attempts.map((result) => result.status).sort((a, b) => a - b)).toEqual(
     [200, 409, 409, 409],
   );
-  expect((await product("get", { id })).result).toMatchObject({
+  expect(await getRow(id)).toMatchObject({
     content: "recover this",
     update_count: 2,
   });
   expect((await product("history", { id })).result.total_count).toBe(2);
   expect(await job(id)).toMatchObject({ generation: 3 });
+});
+
+test("/status reports the Worker version and one schema level per migration file", async () => {
+  // A migration added without its marker in SCHEMA_MARKERS fails here.
+  const migrations = (
+    await readdir(new URL("../../iac/migrations", import.meta.url))
+  ).filter((name) => name.endsWith(".sql"));
+  const status = await call("/status", StatusSuccessSchema, {});
+  expect(status.result).toEqual({
+    version: pkg.version,
+    schema_level: migrations.length,
+    schema_expected: migrations.length,
+  });
+});
+
+test("writes record who made them, and an update leaves the author alone", async () => {
+  const added = await product("add", {
+    content: "Deploy runs bun run deploy",
+    source_agent: "amp:T-1",
+  });
+  const id = added.result.id;
+  expect(added.result.memory).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "amp:T-1",
+  });
+  const updated = await product("update", {
+    id,
+    tags: "area:ops",
+    source_agent: "codex:9",
+  });
+  expect(updated.result.memory).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "codex:9",
+  });
+  // A write that names nobody is the API's own.
+  await product("update", { id, tags: "area:deploy" });
+  expect(await getRow(id)).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "api",
+  });
+  const replaced = await product("add", {
+    content: "Deploy runs bun run deploy --prod",
+    update_id: id,
+    source_agent: "claude-code:s1",
+  });
+  expect(replaced.result.memory).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "claude-code:s1",
+  });
+  const deprecated = await product("deprecate", {
+    ids: [id],
+    source_agent: "amp:T-2",
+  });
+  expect(deprecated.status).toBe(200);
+  expect(await getRow(id)).toMatchObject({
+    status: "deprecated",
+    source_agent: "amp:T-1",
+    last_updated_by: "amp:T-2",
+  });
+  const plain = await product("add", { content: "Lint runs oxlint" });
+  expect(plain.result.memory).toMatchObject({
+    source_agent: "api",
+    last_updated_by: "api",
+  });
 });
 
 test("restore replaces complete metadata, refreshes expiry, and can itself be undone", async () => {
@@ -422,7 +506,7 @@ test("restore replaces complete metadata, refreshes expiry, and can itself be un
     )
     .bind(id)
     .run();
-  const original = await product("get", { id });
+  const original = await getRow(id);
   await product("update", {
     id,
     content: "clobbered status",
@@ -439,15 +523,23 @@ test("restore replaces complete metadata, refreshes expiry, and can itself be un
   });
   expect(restored.status).toBe(200);
   expect(restored.result.memory).toEqual({
-    ...original.result,
+    ...original,
     update_count: 2,
     last_updated_by: "restore",
     updated_at: restored.result.memory.updated_at,
   });
-  expect(restored.result.memory.updated_at).toBeTypeOf("string");
-  expect(restored.result.memory.updated_at).not.toBe(
-    original.result.updated_at,
+  expect(original.created_at).toBe("2020-01-01T00:00:00Z");
+  expect(restored.result.memory.updated_at).toMatch(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
   );
+  expect(restored.result.memory.updated_at).not.toBe(original.updated_at);
+  // Output adds the zone; restore must write SQLite's form back.
+  expect(
+    await db
+      .prepare("SELECT created_at FROM memories WHERE id = ?")
+      .bind(id)
+      .first("created_at"),
+  ).toBe("2020-01-01 00:00:00");
   expect((await product("gc")).result.ids).not.toContain(id);
   const undoHistory = await product("history", { id });
   const undo = await product("restore", {
@@ -536,13 +628,13 @@ test("failed writes and invalid legacy restores leave both history and vector in
   ).rejects.toThrow();
   for (const [column, value, message] of [
     ["refs", "not json", "current schema"],
-    ["refs", "[]", "embedding budget"],
+    ["refs", "[]", "over by 100 bytes of 2,000"],
   ]) {
     await db
       .prepare(
         `UPDATE memory_history SET ${column} = ?, content = ? WHERE revision_id = ?`,
       )
-      .bind(value, "x".repeat(600), revision)
+      .bind(value, "x".repeat(2100), revision)
       .run();
     const invalid = await productError("restore", {
       id,
@@ -552,7 +644,7 @@ test("failed writes and invalid legacy restores leave both history and vector in
     expect(invalid.status).toBe(400);
     expect(invalid.error).toContain(message);
   }
-  expect((await product("get", { id })).result.content).toBe("current");
+  expect((await getRow(id)).content).toBe("current");
   expect((await product("history", { id })).result.total_count).toBe(1);
   expect(await job(id)).toEqual(before);
 });
@@ -671,6 +763,207 @@ test("strong upsert preserves omitted metadata and clears expiry on type convers
     memory_type: "decision",
     expires_after_days: null,
   });
+});
+
+test("writes refuse missing-value content and a stale expected update count", async () => {
+  const id = await insert("kept content");
+  for (const content of ["null", " undefined ", "  "]) {
+    expect((await productError("add", { content })).status).toBe(400);
+    expect((await productError("update", { id, content })).status).toBe(400);
+  }
+  const stale = await productError("update", {
+    id,
+    content: "based on an old read",
+    expected_update_count: 3,
+  });
+  expect(stale.status).toBe(409);
+  expect(stale.error).toContain("update_count 0");
+  expect(await getRow(id)).toMatchObject({
+    content: "kept content",
+    update_count: 0,
+  });
+  const fresh = await product("update", {
+    id,
+    content: "based on the current read",
+    expected_update_count: 0,
+  });
+  expect(fresh.result.memory.update_count).toBe(1);
+});
+
+test("a missing id names the repository that holds it", async () => {
+  const id = await insert("elsewhere", "other/repo");
+  const own = await insert("here");
+  // get answers a miss instead of failing: which ids, and who holds them.
+  const mixed = await product("get", { ids: [id, own, id + 100, own] });
+  expect(mixed.status).toBe(200);
+  expect(mixed.result).toMatchObject({
+    repository: "o/r",
+    count: 1,
+    missing_ids: [id, id + 100],
+    found_elsewhere: [{ id, repository: "other/repo" }],
+  });
+  expect(mixed.result.results.map((row) => row.content)).toEqual(["here"]);
+  expect((await product("get", { ids: [own] })).result).not.toHaveProperty(
+    "missing_ids",
+  );
+  // Routes that act on one memory still fail, and name its repository.
+  const wrongRepository = await productError("update", { id, content: "x" });
+  expect(wrongRepository.status).toBe(404);
+  expect(wrongRepository.error).toContain("in repository 'o/r'");
+  expect(wrongRepository.error).toContain("belongs to repository 'other/repo'");
+  const absent = await productError("update", { id: id + 100, content: "x" });
+  expect(absent.status).toBe(404);
+  expect(absent.error).not.toContain("belongs to");
+});
+
+test("a weak upsert match refuses with its candidates; create_new and update_id state the intent", async () => {
+  const existing = await insert("cache invalidation uses the redis keyspace");
+  const weak = {
+    content: "redis connection pool size is twenty",
+    upsert_match: "redis",
+  };
+  const refused = await productError("add", weak);
+  expect(refused.status).toBe(400);
+  expect(refused.error).toContain(
+    `the best candidate #${existing} has rank_score`,
+  );
+  expect(refused.error).toContain("text_overlap 0.111 (needs 0.62)");
+  expect(refused.error).toContain(
+    `#${existing} convention "cache invalidation uses the redis keyspace"`,
+  );
+  expect(refused.error).toContain(`update_id ${existing}`);
+  expect(refused.error).toContain("create_new true");
+
+  const created = await product("add", { ...weak, create_new: true });
+  expect(created.result.id).not.toBe(existing);
+  expect(created.result.upsert_match).toMatchObject({
+    id: existing,
+    text_overlap: 0.111,
+    shared_identifiers: [],
+  });
+  const unmatched = await product("add", {
+    content: "terraform state lives in the bucket",
+    upsert_match: "zzzunmatched",
+  });
+  expect(unmatched.result).not.toHaveProperty("upsert_match");
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
+  ).toBe(3);
+
+  // update_id replaces the named memory and keeps the fields it does not send.
+  await db
+    .prepare("UPDATE memories SET tags = 'area:cache' WHERE id = ?")
+    .bind(existing)
+    .run();
+  const updated = await product("add", {
+    content: "cache invalidation uses the redis keyspace notifications",
+    update_id: existing,
+  });
+  expect(updated.result).toMatchObject({ mode: "updated", id: existing });
+  expect(updated.result.memory).toMatchObject({
+    content: "cache invalidation uses the redis keyspace notifications",
+    tags: "area:cache",
+    update_count: 1,
+  });
+  expect(updated.result).not.toHaveProperty("upsert_match");
+  const both = await productError("add", { ...weak, update_id: existing });
+  expect(both.status).toBe(400);
+  expect(both.error).toContain("cannot be combined with upsert_match");
+  expect(
+    (await productError("add", { content: "x y", update_id: existing + 99 }))
+      .status,
+  ).toBe(404);
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
+  ).toBe(3);
+});
+
+test("a plain add refuses a near-duplicate and lists only strongly related records", async () => {
+  const first = await product("add", {
+    content: "Deploys run from the stable branch after CI passes.",
+  });
+  expect(first.result).not.toHaveProperty("related");
+  const duplicate = {
+    content: "Deploys run from the stable branch after CI passes twice.",
+  };
+  const refused = await productError("add", duplicate);
+  expect(refused.status).toBe(400);
+  expect(refused.error).toBe(
+    `Memory #${first.result.id} already states nearly the same thing (text_overlap 0.875, at or above 0.78). Nothing was written. To change that record, repeat the add with update_id ${first.result.id}. If this is a different fact, repeat it with create_new true.`,
+  );
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
+  ).toBe(1);
+  const second = await product("add", { ...duplicate, create_new: true });
+  expect(second.result.id).not.toBe(first.result.id);
+
+  const related = await product("add", {
+    content: "Hotfix deploys also run from the stable branch.",
+  });
+  expect(related.result.related?.map((row) => row.match_strength)).toEqual(
+    expect.arrayContaining(["strong"]),
+  );
+  expect(
+    related.result.related?.every((row) => row.match_strength === "strong"),
+  ).toBe(true);
+  const unrelated = await product("add", {
+    content: "Tokens rotate every ninety days.",
+  });
+  expect(unrelated.result).not.toHaveProperty("related");
+});
+
+test("a metadata-only update keeps the content and edits tags and gaps in place", async () => {
+  const added = await product("add", {
+    content: "Workers bind the D1 database as DB.",
+    tags: "area:api,topic:d1",
+    validation_gaps: ["untested on staging", "intent unconfirmed"],
+  });
+  const { id } = added.result;
+  const retyped = await product("update", { id, memory_type: "decision" });
+  expect(retyped.result.memory).toMatchObject({
+    content: "Workers bind the D1 database as DB.",
+    memory_type: "decision",
+    tags: "area:api,topic:d1",
+    update_count: 1,
+  });
+  expect(retyped.result).not.toHaveProperty("dropped");
+  expect(
+    await db
+      .prepare("SELECT COUNT(*) AS n FROM memory_history WHERE memory_id = ?")
+      .bind(id)
+      .first("n"),
+  ).toBe(1);
+  expect(
+    (await product("query", { query: "D1 database" })).result.results[0]?.id,
+  ).toBe(id);
+
+  const edited = await product("update", {
+    id,
+    add_tags: "Kind:Decision, area:api",
+    remove_tags: "topic:d1",
+    add_validation_gaps: ["one account only"],
+    remove_validation_gaps: ["untested on staging"],
+  });
+  expect(edited.result.memory).toMatchObject({
+    tags: "area:api,kind:decision",
+    validation_gaps: ["intent unconfirmed", "one account only"],
+    update_count: 2,
+  });
+
+  const missingGap = await productError("update", {
+    id,
+    remove_validation_gaps: ["untested on windows"],
+  });
+  expect(missingGap.status).toBe(400);
+  expect(missingGap.error).toContain("No stored validation gap reads");
+  const mixed = await productError("update", {
+    id,
+    tags: "area:cli",
+    add_tags: "topic:d1",
+  });
+  expect(mixed.status).toBe(400);
+  expect(mixed.error).toContain("cannot be combined with add_tags");
+  expect((await getRow(id)).update_count).toBe(2);
 });
 
 test("match mutations do not select inactive rows", async () => {
@@ -817,7 +1110,7 @@ test("migration retries retain inactive records and distinct metadata by source 
 test.each<Record<string, JsonValue>>([
   { refs: "{}" },
   { refs: "[1]" },
-  { content: "x".repeat(600) },
+  { content: "x".repeat(2001) },
   { expires_after_days: 3 },
 ])(
   "migration preflights the whole batch before a bad final row: %j",
@@ -865,7 +1158,8 @@ test("supersession rejects cross-repository/self/missing targets and repairs del
 });
 
 test("SQL guards reject complementary oversized patches and invalid refs atomically", async () => {
-  const id = await insert("x".repeat(300));
+  // 1,800 + "\nTags: " (7) + 90 = 1,897 bytes fits; "\nContext: " (10) + 94 does not.
+  const id = await insert("x".repeat(1800));
   await db
     .prepare("UPDATE memories SET tags = ? WHERE id = ?")
     .bind("t".repeat(90), id)
@@ -873,9 +1167,18 @@ test("SQL guards reject complementary oversized patches and invalid refs atomica
   await expect(
     db
       .prepare("UPDATE memories SET context = ? WHERE id = ?")
-      .bind("c".repeat(90), id)
+      .bind("c".repeat(94), id)
       .run(),
-  ).rejects.toThrow(/512/);
+  ).rejects.toThrow(/2000 byte embedding budget/);
+  // One byte less lands exactly on the cap, which the trigger accepts.
+  await db
+    .prepare("UPDATE memories SET context = ? WHERE id = ?")
+    .bind("c".repeat(93), id)
+    .run();
+  await db
+    .prepare("UPDATE memories SET context = '' WHERE id = ?")
+    .bind(id)
+    .run();
   await expect(
     db
       .prepare("UPDATE memories SET refs = ? WHERE id = ?")
@@ -891,10 +1194,22 @@ test("SQL guards reject complementary oversized patches and invalid refs atomica
 });
 
 test("deprecating an exactly-full active embedding deletes rather than re-embeds", async () => {
-  // Metadata contributes 59 bytes, plus two special tokens: 451 + 59 + 2 = 512.
-  const added = await product("add", { content: "x".repeat(451) });
+  // 1,000 two-byte characters are exactly the 2,000-byte cap.
+  const added = await product("add", { content: "é".repeat(1000) });
   expect(added.status).toBe(200);
-  expect(added.result.size?.bytes_estimate).toBe(512);
+  expect(added.result.size).toMatchObject({
+    bytes: 2000,
+    remaining_bytes: 0,
+    within_budget: true,
+  });
+  const over = await productError("add", {
+    content: "é".repeat(1000),
+    tags: "area:api",
+  });
+  expect(over.status).toBe(400);
+  expect(over.error).toContain(
+    "Memory is over by 15 bytes of 2,000: content 2,000, tags 15, context 0 bytes.",
+  );
   expect((await product("deprecate", { ids: [added.result.id] })).status).toBe(
     200,
   );
@@ -935,6 +1250,79 @@ test("failed embedding/index delivery retries without rewriting or duplicating c
       .bind(id)
       .first("update_count"),
   ).toBe(0);
+});
+
+test("a memory that cannot be embedded is parked, reported by stats, and re-queued by a write", async () => {
+  const id = await insert("fits");
+  const waiting = await insert("waits for the index");
+  const now = Date.now();
+  // Only SQL that bypasses the size trigger can store a row over the cap.
+  await db.prepare("DROP TRIGGER memories_validate_update").run();
+  await db
+    .prepare("UPDATE memories SET content = ? WHERE id = ?")
+    .bind("x".repeat(2001), id)
+    .run();
+  await applyMigration("0007_embedding_budget");
+  embed.mockRejectedValueOnce(new Error("AI unavailable"));
+  await drain(now);
+  expect(embed).toHaveBeenCalledTimes(1);
+  expect(await job(id)).toMatchObject({
+    delivered_generation: 0,
+    attempts: 1,
+    next_attempt_at: Number.MAX_SAFE_INTEGER,
+    last_error: "Memory is over by 1 bytes of 2,000.",
+  });
+  // Later drains skip the parked row and retry only the outage.
+  await drain(now + 600_000);
+  expect(embed).toHaveBeenCalledTimes(2);
+  expect((await job(id))?.attempts).toBe(1);
+  expect((await job(waiting))?.delivered_generation).toBe(1);
+
+  const queuedAt = Number((await job(id))?.queued_at);
+  expect(Math.abs(queuedAt - now)).toBeLessThan(5000);
+  const stats = await product("stats", {});
+  expect(stats.result.index).toEqual({
+    pending: 0,
+    retrying: 0,
+    parked: 1,
+    oldest_pending_seconds: null,
+    failures: [
+      {
+        error: "Memory is over by 1 bytes of 2,000.",
+        state: "parked",
+        count: 1,
+        ids: [id],
+      },
+    ],
+  });
+
+  await db
+    .prepare("UPDATE memories SET content = 'short again' WHERE id = ?")
+    .bind(id)
+    .run();
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 1,
+    parked: 0,
+    failures: [],
+  });
+  await drain(now + 700_000);
+  expect(await job(id)).toMatchObject({ delivered_generation: 3, attempts: 0 });
+});
+
+test("stats reports a failing delivery as retrying with its error", async () => {
+  const id = await insert();
+  embed.mockRejectedValueOnce(new Error("AI unavailable"));
+  await drain();
+  const { index: status } = (await product("stats", {})).result;
+  expect(status).toMatchObject({
+    pending: 0,
+    retrying: 1,
+    parked: 0,
+    failures: [
+      { error: "AI unavailable", state: "retrying", count: 1, ids: [id] },
+    ],
+  });
+  expect(status.oldest_pending_seconds).toBeLessThan(60);
 });
 
 test.each(["update", "delete"])(
@@ -1010,6 +1398,53 @@ test("an unchanged active memory is embedded once, repaired once, then left alon
   expect(embed.mock.calls[2][0]).toContain("edited");
 });
 
+test("a drain reports when the next one is due, and nothing when the queue is empty", async () => {
+  const now = Date.now();
+  const hour = 3_600_000;
+  // Nothing queued: the coordinator sleeps.
+  expect(await drain(now)).toBeUndefined();
+
+  const id = await insert();
+  // A drain that did work pauses one interval, whatever is due next.
+  expect(await drain(now)).toBe(now + DRAIN_INTERVAL_MS);
+  // Nothing is due after the pause; the one repair is an hour after delivery.
+  expect(await drain(now + DRAIN_INTERVAL_MS)).toBe(now + hour);
+  expect(await drain(now + hour)).toBe(now + hour + DRAIN_INTERVAL_MS);
+  expect(await drain(now + 2 * hour)).toBeUndefined();
+  expect(embed).toHaveBeenCalledTimes(2);
+
+  // A failed delivery is due again after a second, but the pause still applies.
+  await db
+    .prepare("UPDATE memories SET content = ? WHERE id = ?")
+    .bind("edited", id)
+    .run();
+  const later = now + 3 * hour;
+  embed.mockRejectedValueOnce(new Error("AI unavailable"));
+  expect(await drain(later)).toBe(later + DRAIN_INTERVAL_MS);
+  expect((await job(id))?.next_attempt_at).toBe(later + 1000);
+
+  // One drain embeds at most 20 memories; the rest wait for the next one.
+  for (let extra = 0; extra < 25; extra += 1) {
+    await insert(`batch ${extra}`);
+  }
+  embed.mockClear();
+  const busy = later + DRAIN_INTERVAL_MS;
+  expect(await drain(busy)).toBe(busy + DRAIN_INTERVAL_MS);
+  expect(embed).toHaveBeenCalledTimes(20);
+  await drain(busy + DRAIN_INTERVAL_MS);
+  expect(embed).toHaveBeenCalledTimes(26);
+});
+
+test("a request wakes an idle coordinator but never shortens the pause after a drain", () => {
+  const now = 1_000_000;
+  // Idle, or only a repair an hour away: index the new write in a second.
+  expect(wakeAlarmAt(null, now)).toBe(now + 1000);
+  expect(wakeAlarmAt(now + 3_600_000, now)).toBe(now + 1000);
+  // Within the pause after a drain: requests cannot bring the next drain forward.
+  expect(wakeAlarmAt(now + DRAIN_INTERVAL_MS, now)).toBeUndefined();
+  expect(wakeAlarmAt(now + 5000, now)).toBeUndefined();
+});
+
 test("embedding parser rejects invalid dimensions and nonfinite values", () => {
   expect(parseEmbedding({ data: [values] })).toEqual(values);
   expect(() => parseEmbedding({ data: [[1]] })).toThrow();
@@ -1052,7 +1487,7 @@ test.each([
       generation: 1,
       delivered_generation: 0,
     });
-    expect((await product("get", { id })).status).toBe(200);
+    expect((await getRow(id)).id).toBe(id);
   },
 );
 
@@ -1128,9 +1563,30 @@ test("updates report dropped details and review candidates; deprecate reviews de
     identifiers: ["nixpkgs-security", "flake.nix"],
     sentences: ["Keep nixpkgs-security pinned in flake.nix."],
   });
+  // flake.nix is named by no other record; nixpkgs-security still is.
+  const refused = await productError("update", {
+    id: premise.result.id,
+    content: "Home Manager reimports nixpkgs.",
+  });
+  expect(refused.status).toBe(400);
+  expect(refused.error).toContain(
+    `Update of memory ${premise.result.id} refused: it drops \`flake.nix\`, which no other active record mentions, and the new content shares 0.1 of its terms`,
+  );
+  expect(refused.error).toContain(
+    `still held elsewhere: \`nixpkgs-security\` (#${dependent.result.id})`,
+  );
+  expect(refused.error).toContain("allow_drop true");
+  expect(await getRow(premise.result.id)).toMatchObject({
+    content: "Keep nixpkgs-security pinned in flake.nix.",
+    update_count: 0,
+  });
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memory_history").first("n"),
+  ).toBe(0);
   const updated = await product("update", {
     id: premise.result.id,
     content: "Home Manager reimports nixpkgs.",
+    allow_drop: true,
   });
   expect(updated.status).toBe(200);
   expect(updated.result.dropped?.identifiers).toEqual([
@@ -1166,7 +1622,10 @@ test("doctor reports verified rows without evidence and overlapping gotchas", as
 
 test.each([
   ["an unmatched upsert", { upsert_match: "nothing stored mentions this" }],
-  ["a forced weak upsert", { upsert_match: "alpha", force: true }],
+  [
+    "a new record over a weak match",
+    { upsert_match: "alpha", create_new: true },
+  ],
 ])(
   "add rejects expires_after_days on non-status memories through %s",
   async (_path, upsert) => {

@@ -25,11 +25,14 @@ import {
   booleanFlag,
   booleanSpec,
   effectCommand,
+  outputConfig,
+  outputSpecs,
   positionalArgs,
   stringFlag,
   stringSpec,
 } from "../runtime/command";
 import type { CommandContext } from "../runtime/context";
+import { remoteStatus } from "./remote-status";
 
 function commandError(
   message: string,
@@ -568,10 +571,21 @@ const remoteProvisionCommand = effectCommand(
   remoteProvision,
 );
 
+const remoteStatusCommand = effectCommand(
+  "status",
+  { args: positionalArgs(), ...outputConfig() },
+  outputSpecs,
+  undefined,
+  remoteStatus,
+);
+
 export const remoteCommand = Command.make("remote", {}, () =>
   Effect.sync(() => {
     console.info(
-      `${pc.bold("Usage:")} machine-memory remote <setup|provision>`,
+      `${pc.bold("Usage:")} machine-memory remote <setup|provision|status>`,
+    );
+    console.info(
+      `${pc.dim("Status:")} machine-memory remote status ${pc.dim("(CLI and Worker versions, token, schema level)")}`,
     );
     console.info(
       `${pc.dim("Setup:")} machine-memory remote setup --url <worker-url> --token <worker-token>`,
@@ -583,4 +597,10 @@ export const remoteCommand = Command.make("remote", {}, () =>
       `${pc.dim("Config:")} copy iac/machine-memory.deploy.example.json → machine-memory.deploy.json`,
     );
   }),
-).pipe(Command.withSubcommands([remoteSetupCommand, remoteProvisionCommand]));
+).pipe(
+  Command.withSubcommands([
+    remoteSetupCommand,
+    remoteProvisionCommand,
+    remoteStatusCommand,
+  ]),
+);

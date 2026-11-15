@@ -12,8 +12,11 @@ machine-memory export (--local|--remote) > memories.json
 machine-memory export --type decision --since 2026-01-01 (--local|--remote)
 ```
 
-`export` writes a JSON array ordered by most recently updated. Active memories
-are selected by default. Filter with `--tags`, `--type`, `--certainty`, and
+`export` writes `{repository, count, results}`, with every matching memory in
+`results` ordered by most recently updated and no limit.
+[`import`](/machine/import) reads that output as it is. Active memories are
+selected by default. `--mine` and `--by <writer>` filter by
+[writer](/machine/add#who-wrote-it), as in [`list`](/machine/list). Filter with `--tags`, `--type`, `--certainty`, and
 `--since <date>` before handing the result to another repository or a backup
 workflow.
 

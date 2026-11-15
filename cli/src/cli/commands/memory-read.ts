@@ -13,18 +13,18 @@ import {
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
+import { appendWriterFilter, requestedWriter } from "../../attribution";
 import {
   type CommandFlags,
   getFlagValue,
   hasFlag,
-  printJson,
   usageError,
 } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
-import { jsonNumber, type JsonObject } from "../../json";
+import { jsonNumber, jsonObject, type JsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
-import { printCommandOutput } from "../runtime/output";
+import { hasMinimalOutput, printRead, readEnvelope } from "../runtime/output";
 import {
   HYBRID_FUSION,
   annotateMatches,
@@ -36,11 +36,12 @@ import {
   orderRowsByMatchStrength,
   normalizeSqliteRow,
   parseCommonFilters,
+  parseIntegerFlag,
   parseResultLimit,
   parseSuggestFiles,
-  printBriefLines,
   queryEmptyResultPayload,
   queryNeighborhoodMatches,
+  readScope,
   scoreRowsWithDetails,
   sortByScoreThenRecency,
   stringValue,
@@ -77,10 +78,6 @@ function explainScoreEnabled(flags: CommandFlags): boolean {
   return hasFlag(flags, "--explain-score");
 }
 
-function resultIds(results: JsonObject[]): JsonObject["id"][] {
-  return results.map((entry) => entry.id);
-}
-
 function minimalScoredResultSummary(row: JsonObject): JsonObject {
   const summary = minimalResultSummary(row);
   for (const component of [
@@ -97,85 +94,30 @@ function minimalScoredResultSummary(row: JsonObject): JsonObject {
   return summary;
 }
 
-function minimalScoredPayload(
+/** The envelope of a scored read: adds whether anything matched strongly. */
+function scoredEnvelope(
+  commandCtx: Pick<CommandContext, "outputMode">,
   results: JsonObject[],
   options: {
-    jsonMin: boolean;
-    scoreWeights?: JsonObject;
+    scope: JsonObject;
+    /** Fields only the full output carries, such as the derived search terms. */
+    detail?: JsonObject;
+    scoreWeights?: JsonObject | undefined;
     summarize?: (row: JsonObject) => JsonObject;
   },
 ): JsonObject {
-  const payload: JsonObject = {
-    count: results.length,
-    no_strong_match: !hasStrongMatchRow(results),
-    ids: resultIds(results),
-  };
-  if (options.jsonMin) {
-    payload.results = results.map(
-      options.summarize ?? minimalScoredResultSummary,
-    );
+  const extras: JsonObject = {};
+  if (!hasMinimalOutput(commandCtx.outputMode)) {
+    Object.assign(extras, options.detail);
   }
+  extras.no_strong_match = !hasStrongMatchRow(results);
   if (options.scoreWeights !== undefined) {
-    payload.score_weights = options.scoreWeights;
+    extras.score_weights = options.scoreWeights;
   }
-  return payload;
-}
-
-function printScoredResults(
-  commandCtx: Pick<CommandContext, "command" | "outputMode">,
-  results: JsonObject[],
-  options: {
-    explainScore: boolean;
-    semantic?: boolean;
-    scoreWeights?: JsonObject;
-    wrapResults?: boolean;
-  },
-) {
-  const { outputMode } = commandCtx;
-  const showScoreWeights =
-    options.explainScore && options.scoreWeights !== undefined;
-  if (outputMode.jsonMin || outputMode.quiet) {
-    printJson(
-      minimalScoredPayload(results, {
-        jsonMin: outputMode.jsonMin,
-        scoreWeights: showScoreWeights ? options.scoreWeights : undefined,
-      }),
-    );
-    return;
-  }
-  if (outputMode.brief) {
-    printBriefLines(results);
-    return;
-  }
-  if (options.wrapResults) {
-    const output = {
-      no_strong_match: !hasStrongMatchRow(results),
-      results,
-    } satisfies JsonObject;
-    if (showScoreWeights) {
-      Object.assign(output, { score_weights: options.scoreWeights });
-    }
-    printCommandOutput(commandCtx, output);
-    return;
-  }
-  printCommandOutput(commandCtx, results);
-}
-
-function printEmptyQueryResults(
-  commandCtx: Pick<CommandContext, "command" | "outputMode">,
-  term: string,
-  filters: ReturnType<typeof parseCommonFilters>,
-  queryTokens: string[],
-) {
-  const { outputMode } = commandCtx;
-  if (outputMode.brief) {
-    printBriefLines([]);
-    return;
-  }
-  printCommandOutput(
-    commandCtx,
-    queryEmptyResultPayload(term, filters, queryTokens),
-  );
+  return readEnvelope(commandCtx.outputMode, options.scope, results, {
+    extras,
+    summarize: options.summarize ?? minimalScoredResultSummary,
+  });
 }
 
 function termMatchQuery(term: string): SearchMatchQuery {
@@ -396,60 +338,81 @@ export function handleQueryCommand(commandCtx: CommandContext) {
     const results = orderRowsByMatchStrength(
       annotateMatches(fetched.results, termMatchQuery(term)),
     );
+    const scope = yield* readScope(requireDatabase(commandCtx), results.length);
+    const scoreWeights = hybrid
+      ? HYBRID_FUSION
+      : semantic
+        ? undefined
+        : SEARCH_SCORE_WEIGHTS;
     yield* Effect.sync(() => {
-      if (results.length === 0) {
-        printEmptyQueryResults(commandCtx, term, filters, queryTokens);
-        return;
-      }
-      printScoredResults(commandCtx, results, {
-        explainScore,
-        semantic,
-        scoreWeights: hybrid
-          ? HYBRID_FUSION
-          : semantic
-            ? undefined
-            : SEARCH_SCORE_WEIGHTS,
-        wrapResults: explainScore,
-      });
+      printRead(
+        commandCtx,
+        results,
+        scoredEnvelope(commandCtx, results, {
+          scope,
+          // An empty result says what was searched and how to widen it.
+          detail:
+            results.length === 0
+              ? queryEmptyResultPayload(term, filters, queryTokens)
+              : undefined,
+          scoreWeights: explainScore ? scoreWeights : undefined,
+        }),
+      );
     });
   });
 }
 
+const LIST_LIMIT_DEFAULT = 100;
+
+/** --offset for paging through list; 0 when absent. */
+function parseListOffset(flags: CommandFlags): number {
+  const parsed = parseIntegerFlag(flags, "--offset");
+  if (parsed === undefined) {
+    return 0;
+  }
+  if (parsed === null || parsed < 0) {
+    usageError("--offset must be a non-negative integer.");
+  }
+  return parsed;
+}
+
 export function handleListCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { flags, outputMode } = commandCtx;
+    const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
     const filters = parseCommonFilters(flags);
+    const limit = parseResultLimit(flags, LIST_LIMIT_DEFAULT);
+    const offset = parseListOffset(flags);
     const clauses: string[] = [];
     const params: (string | number)[] = [];
     applySqlFilters(clauses, params, filters, { defaultActiveOnly: true });
+    appendWriterFilter(clauses, params, requestedWriter(flags));
     const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const rows = yield* database.all(
-      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC LIMIT 100`,
+      `SELECT * FROM memories ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
+    const counted = yield* database.get(
+      `SELECT COUNT(*) AS total FROM memories ${where}`,
       params,
     );
-    const normalized = rows
-      .map((row) => normalizeSqliteRow(row))
-      .slice(0, parseResultLimit(flags, 100));
+    const totalCount = jsonNumber(jsonObject(counted)?.total) ?? 0;
+    const normalized = rows.map((row) => normalizeSqliteRow(row));
+    // An empty page past the end is not an empty repository.
+    const scope = yield* readScope(database, totalCount);
     yield* Effect.sync(() => {
-      if (outputMode.jsonMin || outputMode.quiet) {
-        const payload = {
-          count: normalized.length,
-          ids: resultIds(normalized),
-        } satisfies JsonObject;
-        if (outputMode.jsonMin) {
-          Object.assign(payload, {
-            results: normalized.map(minimalResultSummary),
-          });
-        }
-        printJson(payload);
-        return;
-      }
-      if (outputMode.brief) {
-        printBriefLines(normalized);
-        return;
-      }
-      printCommandOutput(commandCtx, normalized);
+      printRead(
+        commandCtx,
+        normalized,
+        readEnvelope(commandCtx.outputMode, scope, normalized, {
+          extras: {
+            total_count: totalCount,
+            offset,
+            limit,
+            has_more: offset + normalized.length < totalCount,
+          },
+        }),
+      );
     });
   });
 }
@@ -537,39 +500,26 @@ function printSuggestResults(
   commandCtx: CommandContext,
   snapshot: SuggestSnapshot,
   results: JsonObject[],
-  options: FetchResultsOptions,
+  options: { explainScore: boolean; scope: JsonObject },
 ) {
-  const { outputMode } = commandCtx;
-  if (outputMode.jsonMin || outputMode.quiet) {
-    printJson(
-      minimalScoredPayload(results, {
-        jsonMin: outputMode.jsonMin,
-        scoreWeights: options.explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
-      }),
-    );
-    return;
-  }
-  if (outputMode.brief) {
-    printBriefLines(results);
-    return;
-  }
-
-  const output = {
-    files: snapshot.files,
-    normalized_files: snapshot.files,
-    normalized_path_terms: snapshot.normalizedPathTerms,
-    derived_terms: snapshot.suggestTerms,
-    neighborhood: {
-      tags: snapshot.neighborhood.tagHints,
-      paths: snapshot.neighborhood.pathHints,
-    },
-    no_strong_match: !hasStrongMatchRow(results),
+  printRead(
+    commandCtx,
     results,
-  } satisfies JsonObject;
-  if (options.explainScore) {
-    Object.assign(output, { score_weights: SEARCH_SCORE_WEIGHTS });
-  }
-  printCommandOutput(commandCtx, output);
+    scoredEnvelope(commandCtx, results, {
+      scope: options.scope,
+      detail: {
+        files: snapshot.files,
+        normalized_files: snapshot.files,
+        normalized_path_terms: snapshot.normalizedPathTerms,
+        derived_terms: snapshot.suggestTerms,
+        neighborhood: {
+          tags: snapshot.neighborhood.tagHints,
+          paths: snapshot.neighborhood.pathHints,
+        },
+      },
+      scoreWeights: options.explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
+    }),
+  );
 }
 
 export function handleSuggestCommand(commandCtx: CommandContext) {
@@ -580,8 +530,12 @@ export function handleSuggestCommand(commandCtx: CommandContext) {
       explainScore,
       limit: parseResultLimit(commandCtx.flags),
     });
+    const scope = yield* readScope(requireDatabase(commandCtx), results.length);
     yield* Effect.sync(() =>
-      printSuggestResults(commandCtx, snapshot, results, { explainScore }),
+      printSuggestResults(commandCtx, snapshot, results, {
+        explainScore,
+        scope,
+      }),
     );
   });
 }
@@ -710,7 +664,7 @@ function mergeSweepResults(
 
 export function handleSweepCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { flags, outputMode } = commandCtx;
+    const { flags } = commandCtx;
     ensureSweepFileArgs(flags);
     const queryTerm = parseSweepQueryArg(flags);
     const explainScore = explainScoreEnabled(flags);
@@ -751,38 +705,28 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         sweepMatchQuery(snapshot, queryTerm),
       ),
     ).slice(0, limit);
+    const scope = yield* readScope(requireDatabase(commandCtx), results.length);
     yield* Effect.sync(() => {
-      if (outputMode.jsonMin || outputMode.quiet) {
-        printJson(
-          minimalScoredPayload(results, {
-            jsonMin: outputMode.jsonMin,
-            scoreWeights: explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
-            summarize: (row) => ({
-              ...minimalScoredResultSummary(row),
-              sources: row.sources ?? [],
-            }),
-          }),
-        );
-        return;
-      }
-      if (outputMode.brief) {
-        printBriefLines(results);
-        return;
-      }
-      const output = {
-        files: snapshot.files,
-        normalized_files: snapshot.files,
-        normalized_path_terms: snapshot.normalizedPathTerms,
-        derived_terms: snapshot.suggestTerms,
-        query: queryTerm ?? null,
-        filters: { tags: listBundle.filters.tag ?? null },
-        no_strong_match: !hasStrongMatchRow(results),
+      printRead(
+        commandCtx,
         results,
-      } satisfies JsonObject;
-      if (explainScore) {
-        Object.assign(output, { score_weights: SEARCH_SCORE_WEIGHTS });
-      }
-      printCommandOutput(commandCtx, output);
+        scoredEnvelope(commandCtx, results, {
+          scope,
+          detail: {
+            files: snapshot.files,
+            normalized_files: snapshot.files,
+            normalized_path_terms: snapshot.normalizedPathTerms,
+            derived_terms: snapshot.suggestTerms,
+            query: queryTerm ?? null,
+            filters: { tags: listBundle.filters.tag ?? null },
+          },
+          scoreWeights: explainScore ? SEARCH_SCORE_WEIGHTS : undefined,
+          summarize: (row) => ({
+            ...minimalScoredResultSummary(row),
+            sources: row.sources ?? [],
+          }),
+        }),
+      );
     });
   });
 }

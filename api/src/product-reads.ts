@@ -3,6 +3,8 @@ import {
   compareMemoryFact,
   droppedDetails,
   embeddingSizeReport,
+  indexStatusFromRows,
+  indexStatusQueries,
   jsonNumber,
   jsonString,
   normalizeListRepositoriesArgs,
@@ -10,15 +12,16 @@ import {
   normalizeMemoryListArgs,
   normalizeMemorySizeArgs,
   type JsonObject,
+  type MemoryGetResult,
 } from "@machine-memory/contract";
 import * as Effect from "effect/Effect";
 
 import {
   fetchProductRow,
+  memoryNotFound,
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
-import { memoryNotFound } from "./http-failure";
 import {
   historyCountSelect,
   historySelect,
@@ -28,7 +31,6 @@ import {
   repositoryStatsSelect,
 } from "./product-api";
 import {
-  embeddingTextForMemory,
   summarizeMemoryStats,
   toHistoryRow,
   toProductRow,
@@ -84,11 +86,40 @@ export const productReadHandlers = (
 
   get: (input) =>
     Effect.gen(function* () {
-      const row = yield* fetchProductRow(ctx, input.repository, input.id);
-      if (!row) {
-        return yield* memoryNotFound(input.id, input.repository);
+      const ids = [...new Set(input.ids)];
+      const placeholders = ids.map(() => "?").join(", ");
+      const rows = yield* ctx.sql.unsafe<JsonObject>(
+        `SELECT * FROM memories WHERE repository = ? AND id IN (${placeholders})`,
+        [input.repository, ...ids],
+      );
+      const byId = new Map(
+        rows.map(toProductRow).map((row) => [row.id, row] as const),
+      );
+      // Results come back in the order the ids were asked for.
+      const results = ids.flatMap((id) => {
+        const row = byId.get(id);
+        return row === undefined ? [] : [row];
+      });
+      const missing = ids.filter((id) => !byId.has(id));
+      const result: MemoryGetResult = {
+        repository: input.repository,
+        count: results.length,
+        results,
+      };
+      if (missing.length === 0) {
+        return result;
       }
-      return row;
+      // A miss is an answer, not an error: it says which ids, and who holds them.
+      const elsewhere = yield* ctx.sql.unsafe<{
+        id: number;
+        repository: string;
+      }>(
+        `SELECT id, repository FROM memories WHERE id IN (${missing.map(() => "?").join(", ")}) ORDER BY id`,
+        missing,
+      );
+      return elsewhere.length > 0
+        ? { ...result, missing_ids: missing, found_elsewhere: elsewhere }
+        : { ...result, missing_ids: missing };
     }),
 
   history: (input) =>
@@ -135,6 +166,7 @@ export const productReadHandlers = (
       const totalCount = jsonNumber(countRows[0]?.total_count) ?? 0;
       const results = rows.map(toProductRow);
       return {
+        repository: args.repository,
         count: results.length,
         total_count: totalCount,
         offset: args.offset,
@@ -159,7 +191,19 @@ export const productReadHandlers = (
         "SELECT * FROM memories WHERE repository = ?",
         [input.repository],
       );
-      return summarizeMemoryStats(input.repository, rows);
+      const queries = indexStatusQueries(input.repository);
+      const [counts] = yield* ctx.sql.unsafe<JsonObject>(
+        queries.counts.sql,
+        queries.counts.params,
+      );
+      const failures = yield* ctx.sql.unsafe<JsonObject>(
+        queries.failures.sql,
+        queries.failures.params,
+      );
+      return {
+        ...summarizeMemoryStats(input.repository, rows),
+        index: indexStatusFromRows(counts ?? null, failures),
+      };
     }),
 
   gc: (input) =>
@@ -186,16 +230,11 @@ export const productReadHandlers = (
   size: (input) =>
     Effect.sync(() => {
       const args = normalizeMemorySizeArgs(input);
-      const size = embeddingSizeReport(
-        embeddingTextForMemory({
-          content: args.content,
-          tags: args.tags ?? "",
-          context: args.context ?? "",
-          memory_type: args.memory_type,
-          status: args.status,
-          certainty: args.certainty,
-        }),
-      );
+      const size = embeddingSizeReport({
+        content: args.content,
+        tags: args.tags ?? "",
+        context: args.context ?? "",
+      });
       return { size };
     }),
 
@@ -203,7 +242,7 @@ export const productReadHandlers = (
     Effect.gen(function* () {
       const row = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!row) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       const result = compareMemoryFact(row.content, input.fact);
       return result.conflict
@@ -226,7 +265,7 @@ export const productReadHandlers = (
     Effect.gen(function* () {
       const row = yield* fetchProductRow(ctx, input.repository, input.id);
       if (!row) {
-        return yield* memoryNotFound(input.id, input.repository);
+        return yield* memoryNotFound(ctx, input.id, input.repository);
       }
       const result = compareMemoryFact(row.content, input.content);
       return {

@@ -1,5 +1,7 @@
 import {
   decodeRequest,
+  embeddingBudgetMessage,
+  embeddingSizeReport,
   normalizeStoredMemoryRow,
   StoredMemoryRowSchema,
 } from "@machine-memory/contract";
@@ -7,7 +9,6 @@ import { Effect } from "effect";
 
 import { usageError } from "../../cli-utils";
 import { commandError } from "../../effect/errors";
-import { memoryVectorEmbeddingParts } from "../../effect/vectorize";
 import {
   jsonNumber,
   jsonObject,
@@ -15,10 +16,6 @@ import {
   type JsonObject,
 } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
-import {
-  assertEmbeddingFit,
-  measureEmbeddingFit,
-} from "../features/memory/size-report";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import {
@@ -167,13 +164,13 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
       return;
     }
     if (snapshot.status === "active") {
-      const breakdown = yield* measureEmbeddingFit(
-        memoryVectorEmbeddingParts({ ...snapshot, id: String(id) }),
-      );
-      yield* Effect.try({
-        try: () => assertEmbeddingFit(breakdown, `Memory ${id}`),
-        catch: (cause) => commandError("restore", String(cause), cause),
-      });
+      const size = embeddingSizeReport(snapshot);
+      if (!size.within_budget) {
+        return yield* commandError(
+          "restore",
+          `${embeddingBudgetMessage(`Memory ${id}`, size)} Nothing was restored.`,
+        );
+      }
     }
     // Snapshots from a pre-migration remote schema carry no evidence columns.
     const withEvidence = jsonObject(history)?.evidence !== undefined;
@@ -200,7 +197,8 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
         snapshot.certainty,
         JSON.stringify(snapshot.refs),
         snapshot.expires_after_days,
-        snapshot.created_at,
+        // The stored form: normalized rows carry ISO timestamps for output.
+        decoded.value.created_at,
         ...evidenceParams,
         repository,
         id,

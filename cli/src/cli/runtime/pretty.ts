@@ -533,16 +533,20 @@ function renderHelp(value: JsonObject): string[] {
 }
 
 function renderGet(value: JsonValue): string[] {
-  if (isObject(value) && Array.isArray(value.results)) {
-    const lines = renderMemoryTable(memoryRows(value.results), "Memories");
-    if (Array.isArray(value.missing_ids) && value.missing_ids.length > 0) {
-      lines.push("", `  Missing IDs  ${value.missing_ids.join(", ")}`);
-    }
-    return lines;
+  if (!isObject(value)) {
+    return renderGeneric("get", value);
   }
-  return isObject(value) && Object.hasOwn(value, "content")
-    ? renderMemoryDetail(value)
-    : renderGeneric("get", value);
+  const rows = memoryRows(value.results);
+  const [only] = rows;
+  // One memory is read in full; several are compared in a table.
+  const lines =
+    rows.length === 1 && only
+      ? renderMemoryDetail(only)
+      : renderMemoryTable(rows, "Memories");
+  if (Array.isArray(value.missing_ids) && value.missing_ids.length > 0) {
+    lines.push("", `  Missing IDs  ${value.missing_ids.join(", ")}`);
+  }
+  return lines;
 }
 
 function renderVersion(value: JsonValue): string[] | undefined {
@@ -571,7 +575,11 @@ const specializedRenderers = new Map<
   ["get", renderGet],
   [
     "export",
-    (value) => renderMemoryTable(memoryRows(value), "Exported memories"),
+    (value) =>
+      renderMemoryTable(
+        memoryRows(isObject(value) ? value.results : value),
+        "Exported memories",
+      ),
   ],
   ["doctor", (value) => renderObjectWith(renderDoctor, value)],
   ["stats", (value) => renderObjectWith(renderStats, value)],

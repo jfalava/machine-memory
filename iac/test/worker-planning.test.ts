@@ -138,6 +138,6 @@ test.each([false, true])(
         }),
       ]),
     );
-    expect(apiData.map((data) => data.crons)).toContainEqual(["*/5 * * * *"]);
+    expect(apiData.map((data) => data.crons)).toContainEqual(["0 * * * *"]);
   },
 );

@@ -1,39 +1,33 @@
 import { Effect } from "effect";
 
-import { printJson, usageError } from "../../cli-utils";
+import { usageError } from "../../cli-utils";
 import type { JsonObject } from "../../json";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import {
-  evidenceSummary,
-  printBriefLines,
-  printCommandOutput,
+  minimalResultSummary,
+  printRead,
+  readEnvelope,
 } from "../runtime/output";
 import {
+  findElsewhere,
   getMemoryById,
-  normalizeCertaintyValue,
   parseIdSpec,
-  parseTags,
+  readScope,
   stringValue,
 } from "../shared";
 
+/** get is how a memory is read in full, so its summary keeps the whole content. */
 function minimalGetSummary(row: JsonObject): JsonObject {
-  return {
-    id: Number(row.id ?? 0),
-    memory_type: stringValue(row.memory_type, "convention"),
-    certainty: normalizeCertaintyValue(row.certainty),
-    status: stringValue(row.status, "active"),
-    tags: parseTags(stringValue(row.tags)),
-    ...evidenceSummary(row),
-  } satisfies JsonObject;
+  const { snippet: _snippet, ...summary } = minimalResultSummary(row);
+  return { ...summary, content: stringValue(row.content) };
 }
 
 export function handleGetCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
-    const { outputMode } = commandCtx;
     const database = requireDatabase(commandCtx);
     const idSpec = commandCtx.positionals[0];
     if (!idSpec) {
-      usageError("Usage: get <id>");
+      usageError("Usage: get <id|id,id,...>");
     }
     const ids = parseIdSpec(idSpec);
     const fetched = yield* Effect.forEach(ids, (id) =>
@@ -43,34 +37,25 @@ export function handleGetCommand(commandCtx: CommandContext) {
     const missingIds = ids.filter(
       (id) => !rows.some((row) => Number(row.id) === id),
     );
+    // A miss says where the id is when another repository holds it.
+    const scope = yield* readScope(database, rows.length);
+    const elsewhere = yield* findElsewhere(database, missingIds);
+    const extras: JsonObject = {};
+    if (missingIds.length > 0) {
+      extras.missing_ids = missingIds;
+    }
+    if (elsewhere.length > 0) {
+      extras.found_elsewhere = elsewhere;
+    }
     yield* Effect.sync(() => {
-      if (outputMode.quiet || outputMode.jsonMin) {
-        const payload: JsonObject = {
-          count: rows.length,
-          ids: rows.map((row) => Number(row.id)),
-        };
-        if (outputMode.jsonMin) {
-          Object.assign(payload, { results: rows.map(minimalGetSummary) });
-        }
-        if (missingIds.length > 0) {
-          Object.assign(payload, { missing_ids: missingIds });
-        }
-        printJson(payload);
-        return;
-      }
-      if (outputMode.brief) {
-        printBriefLines(rows);
-        return;
-      }
-      if (ids.length === 1) {
-        printCommandOutput(commandCtx, rows[0] ?? { error: "Not found" });
-        return;
-      }
-      const payload = { results: rows };
-      if (missingIds.length > 0) {
-        Object.assign(payload, { missing_ids: missingIds });
-      }
-      printCommandOutput(commandCtx, payload);
+      printRead(
+        commandCtx,
+        rows,
+        readEnvelope(commandCtx.outputMode, scope, rows, {
+          extras,
+          summarize: minimalGetSummary,
+        }),
+      );
     });
   });
 }

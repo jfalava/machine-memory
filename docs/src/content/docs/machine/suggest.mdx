@@ -23,6 +23,9 @@ matches on them alone are at most `weak`. Strong results come first, and
 `no_strong_match: true` means no memory names the files. See
 [`query`](/machine/query#match-strength) for the strength fields.
 
+The output is `{repository, count, no_strong_match, results}`.
+
 `--tags`, `--type`, and `--certainty` filter candidates. Use
-`--include-deprecated`, `--limit`, and `--explain-score` to change the search;
-`--brief`, `--json-min`, and `--quiet` reduce the response for an agent loop.
+`--include-deprecated`, `--limit` (8 by default) and `--explain-score` to
+change the search. `--json-min` reduces each result to a summary with a
+snippet, `--quiet` to its id, and `--brief` prints one text line per memory.

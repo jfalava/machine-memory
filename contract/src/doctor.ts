@@ -10,7 +10,7 @@ import type {
   MemoryDoctorFinding,
   MemoryDoctorResult,
 } from "./product/results";
-import { factTerms, jaccardSimilarity } from "./ranking";
+import { factTerms, jaccardSimilarity, sqliteDateToMs } from "./ranking";
 import { gotchaOverlaps } from "./reconcile";
 
 /**
@@ -25,6 +25,23 @@ const MAX_POSTINGS_PER_TERM = 200;
 const NEAR_DUPLICATE_TERMS_PROBED = 12;
 export const DEFAULT_STATUS_EXPIRY_DAYS = 14;
 
+/** Wording that on its own says "this is how things stand right now". */
+const STRONG_TRANSIENT_INDICATORS = new Set([
+  "currently",
+  "in progress",
+  "wip",
+  "todo",
+  "for now",
+]);
+/**
+ * Findings that describe the collection and are no fault of one record. They
+ * are counted, and listed only on request, because nothing mechanical fixes
+ * them.
+ */
+export const INFORMATIONAL_DOCTOR_KINDS: readonly string[] = [
+  "canonical_thread_overlap",
+  "similar_tags",
+];
 const TRANSIENT_INDICATORS = [
   "currently",
   "current",
@@ -73,6 +90,8 @@ type DoctorRow = {
   readonly certainty: string;
   readonly evidence: JsonValue | undefined;
   readonly expiresAfterDays: number | null;
+  /** Milliseconds since the epoch; null when the row carries no readable time. */
+  readonly updatedAt: number | null;
   readonly refs: JsonValue | undefined;
   readonly terms: Set<string>;
 };
@@ -126,6 +145,7 @@ function doctorRows(rows: readonly JsonObject[]): DoctorRow[] {
         certainty: jsonString(row.certainty) ?? "",
         evidence: row.evidence,
         expiresAfterDays: integerOrNull(row.expires_after_days),
+        updatedAt: sqliteDateToMs(jsonString(row.updated_at) ?? ""),
         refs: row.refs,
         terms: factTerms(`${content} ${tags} ${context}`),
       },
@@ -240,7 +260,11 @@ function staleStatusFindings(
   const findings: MemoryDoctorFinding[] = [];
   const latestByTag = new Map<string, number>();
   for (const row of rows.filter((entry) => entry.memoryType === "status")) {
-    const tags = normalizeTags(row.tags);
+    // Only a topic names what a status is about: every status shares
+    // kind:status, and an area holds many unrelated ones.
+    const tags = normalizeTags(row.tags).filter((tag) =>
+      tag.startsWith("topic:"),
+    );
     const newerId = tags
       .map((tag) => latestByTag.get(tag))
       .find((id) => id !== undefined);
@@ -274,6 +298,79 @@ function statusExpiryFindings(
       }),
     )
     .toArray();
+}
+
+const MS_PER_DAY = 86_400_000;
+
+/** Status records past their expiry: update them or deprecate them. */
+function expiredStatusFindings(
+  rows: readonly DoctorRow[],
+  now: number,
+): MemoryDoctorFinding[] {
+  return rows.flatMap((row) => {
+    if (
+      row.memoryType !== "status" ||
+      row.expiresAfterDays === null ||
+      row.updatedAt === null
+    ) {
+      return [];
+    }
+    const overdue = (now - row.updatedAt) / MS_PER_DAY - row.expiresAfterDays;
+    return overdue < 0
+      ? []
+      : [
+          finding("expired_status", [row.id], {
+            expires_after_days: row.expiresAfterDays,
+            days_overdue: Math.floor(overdue),
+          }),
+        ];
+  });
+}
+
+const SIMILAR_TAG_IDS_SHOWN = 20;
+
+/**
+ * Tags of one namespace where one extends the other at a hyphen or by a
+ * plural s, such as topic:og and topic:og-image: often one topic under two
+ * names.
+ */
+function similarTagFindings(rows: readonly DoctorRow[]): MemoryDoctorFinding[] {
+  const idsByTag = new Map<string, number[]>();
+  for (const row of rows) {
+    for (const tag of normalizeTags(row.tags).filter((entry) =>
+      entry.includes(":"),
+    )) {
+      idsByTag.set(tag, [...(idsByTag.get(tag) ?? []), row.id]);
+    }
+  }
+  const tags = [...idsByTag.keys()].toSorted();
+  return tags.flatMap((shorter) =>
+    tags.flatMap((longer) => {
+      if (!longer.startsWith(`${shorter}-`) && longer !== `${shorter}s`) {
+        return [];
+      }
+      const counts = [
+        idsByTag.get(shorter)?.length ?? 0,
+        idsByTag.get(longer)?.length ?? 0,
+      ];
+      const [rarer, common] =
+        (counts[0] ?? 0) <= (counts[1] ?? 0)
+          ? [shorter, longer]
+          : [longer, shorter];
+      return [
+        finding(
+          "similar_tags",
+          (idsByTag.get(rarer) ?? []).slice(0, SIMILAR_TAG_IDS_SHOWN),
+          {
+            tags: [shorter, longer],
+            counts,
+            rarer_tag: rarer,
+            common_tag: common,
+          },
+        ),
+      ];
+    }),
+  );
 }
 
 type TagScopes = {
@@ -361,7 +458,11 @@ function typeBoundaryFindings(row: DoctorRow): MemoryDoctorFinding[] {
   const text = `${row.content} ${row.context}`.toLowerCase();
   const transient = indicatorMatches(text, TRANSIENT_INDICATORS);
   const isStatus = row.memoryType.toLowerCase() === "status";
-  if (!isStatus && transient.length > 0) {
+  // One common word such as "now", "pass" or "fixed" is ordinary prose.
+  const looksTransient =
+    transient.length >= 2 ||
+    transient.some((term) => STRONG_TRANSIENT_INDICATORS.has(term));
+  if (!isStatus && looksTransient) {
     return [
       finding("transient_non_status", [row.id], {
         memory_type: row.memoryType,
@@ -520,6 +621,7 @@ function gotchaFindings(rows: readonly DoctorRow[]): MemoryDoctorFinding[] {
 export function analyzeMemoryDoctor(
   repository: string,
   storedRows: readonly JsonObject[],
+  now: number = Date.now(),
 ): MemoryDoctorResult {
   const rows = doctorRows(storedRows);
   const findings = [
@@ -528,6 +630,8 @@ export function analyzeMemoryDoctor(
     ...staleStatusFindings(rows),
     ...canonicalThreadFindings(rows),
     ...statusExpiryFindings(rows),
+    ...expiredStatusFindings(rows, now),
+    ...similarTagFindings(rows),
     ...rows.flatMap(rowFindings),
     ...gotchaFindings(rows),
   ];

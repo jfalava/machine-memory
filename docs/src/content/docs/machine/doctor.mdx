@@ -10,12 +10,29 @@ sidebar:
 ```sh
 machine-memory doctor (--local|--remote)
 machine-memory doctor (--local|--remote) --json-min
+machine-memory doctor --only expired_status,near_duplicate (--local|--remote)
+machine-memory doctor --since 2026-11-01 (--local|--remote)
 ```
 
 `doctor` scans active memories for exact and near duplicates, stale status
-overlaps, canonical-thread overlaps, missing status expiry, type-boundary
-problems, tag hygiene issues, malformed references, verified memories without
-evidence, and overlapping gotchas. It does not modify the database.
+overlaps, missing or elapsed status expiry, type-boundary problems, tag hygiene
+issues, malformed references, verified memories without evidence, and
+overlapping gotchas. It does not modify the database.
+
+| Kind                                       | Fires when                                                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `stale_status_overlap`                     | A newer status record shares a `topic:` tag. An area or `kind:status` in common is not enough.                                                         |
+| `expired_status`                           | A status record is past `expires_after_days`. Update it or deprecate it.                                                                               |
+| `transient_non_status`                     | A non-status record uses `currently`, `in progress`, `wip`, `todo` or `for now`, or two of the weaker words such as `now`, `current`, `pass`, `fixed`. |
+| `canonical_thread_overlap`, `similar_tags` | Informational: several records on one topic, and tags such as `topic:og` and `topic:og-image` that may name one topic.                                 |
+
+Informational kinds describe the collection and have no mechanical fix. They
+are counted in `informational_counts` and listed only when `--only` names them.
+
+`--only <kind,kind>` keeps the named kinds or output groups. `--since <date>`
+keeps findings that involve a memory changed since that date, so a
+review can look at new findings without the backlog. `--json-min` prints
+`counts_by_kind` and `ids_by_kind` instead of the findings.
 
 `gotcha_overlap` pairs active gotchas that name at least two of the same
 identifiers, such as a package version and a patched path. They usually repeat
@@ -29,5 +46,7 @@ of a suggested command: add the evidence kinds that were established with
 `update --evidence`, or lower the memory to `--certainty inferred`.
 
 Findings include suggested commands such as `update`, `deprecate`, or
-`delete`. Review those suggestions before applying them. `--brief`,
-`--json-min`, and `--quiet` provide progressively smaller responses.
+`delete`. A suggested `update` names only the field to change, such as
+`machine-memory update 12 --expires-after-days 14`, so applying it leaves the
+content untouched. Review the suggestions before applying them. `--brief`
+prints only the suggested commands.

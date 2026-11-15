@@ -1,16 +1,30 @@
 export { decodeRequest, decodeResponse, encodeResponse } from "./codec";
 export {
   composeEmbeddingText,
+  embeddingBudgetMessage,
+  embeddingTextError,
   embeddingSizeReport,
-  estimateEmbeddingTokens,
   validateEmbeddingText,
+  type EmbeddingDocumentParts,
+  type EmbeddingSizeReport,
 } from "./embedding";
+export {
+  IndexStatusSchema,
+  indexStatusFromRows,
+  indexStatusQueries,
+  VECTOR_SYNC_NEVER,
+  type IndexStatus,
+} from "./index-status";
 export {
   type MemoryRow,
   type Repository,
   MemorySummarySchema,
   StoredMemoryRowSchema,
+  memoryContentError,
+  isoTimestamp,
   normalizeStoredMemoryRow,
+  sqliteTimestamp,
+  repositorySlugError,
   type MemorySummary,
 } from "./entities";
 export {
@@ -27,7 +41,7 @@ export {
   EVIDENCE_KINDS,
   EMBEDDING_DIMENSIONS,
   EMBEDDING_MODEL,
-  MAX_EMBEDDING_TOKENS,
+  MAX_EMBEDDING_BYTES,
   MAX_MIGRATION_LINKS,
   MAX_MIGRATION_ROWS,
   MAX_NAMESPACE_BYTES,
@@ -62,6 +76,7 @@ export {
   evidenceWriteError,
 } from "./evidence";
 export {
+  MATCH_THRESHOLDS,
   SEARCH_SCORE_WEIGHTS,
   assessMatch,
   certaintyPoints,
@@ -88,6 +103,7 @@ export {
   semanticCandidateCount,
   buildFtsQuery,
   compareMemoryFact,
+  decideUpsert,
   deriveFileNeighborhood,
   extractPathTerms,
   extractTerms,
@@ -95,9 +111,30 @@ export {
   reciprocalRankScore,
   sqliteDateToMs,
   type FileNeighborhood,
+  type UpsertDecision,
 } from "./ranking";
 export {
+  REPLACEMENT_MIN_OVERLAP,
+  assessReplacement,
+  droppedNames,
+  duplicateRefusal,
+  editTags,
+  editValidationGaps,
+  nameHoldersFromRows,
+  nameHoldersQuery,
+  nearDuplicate,
+  sharedIdentifiers,
+  upsertRefusal,
+  type AddIntentHints,
+  type DuplicateMatch,
+  type NameHolders,
+  type ReplacementAssessment,
+  type UpsertCandidate,
+} from "./write-guards";
+export {
   DEFAULT_STATUS_EXPIRY_DAYS,
+  INFORMATIONAL_DOCTOR_KINDS,
+  NEAR_DUPLICATE_THRESHOLD,
   analyzeMemoryDoctor,
   canonicalTags,
   normalizeTags,
@@ -116,6 +153,8 @@ export {
   ErrorBodySchema,
   MigrationBatchResultSchema,
   MigrationLinksSuccessSchema,
+  StatusResultSchema,
+  StatusSuccessSchema,
   MigrationSuccessSchema,
   QuerySuccessSchema,
   SimpleErrorBodySchema,
@@ -153,6 +192,7 @@ export {
   type MemoryDeprecateResult,
   type MemoryDeprecateSuccess,
   type MemoryDoctorFinding,
+  type MemoryGetResult,
   type MemoryGetSuccess,
   type MemoryHistoryEntry,
   type MemoryStatsResult,
