@@ -1,7 +1,6 @@
 import {
   analyzeMemoryDoctor,
   DEFAULT_STATUS_EXPIRY_DAYS,
-  jsonNumber,
   jsonString,
   type MemoryDoctorFinding,
 } from "@machine-memory/contract";
@@ -77,14 +76,13 @@ function hasSuggestedCommand(kind: FindingKind): kind is CommandKind {
 function suggestedCommand(
   kind: FindingKind,
   finding: MemoryDoctorFinding,
-  content: string,
 ): string | undefined {
   if (!hasSuggestedCommand(kind)) {
     return undefined;
   }
   const build: (input: CommandInput) => string = SUGGESTED_COMMANDS[kind];
-  const update = `machine-memory update ${finding.ids[0]} ${shellQuote(content)}`;
-  return build({ finding, update });
+  // update changes only the named fields when it is given no content.
+  return build({ finding, update: `machine-memory update ${finding.ids[0]}` });
 }
 
 function outputFinding(
@@ -107,10 +105,7 @@ function outputFinding(
 
 const GROUP_ORDER = [...new Set(Object.values(FINDING_GROUPS))];
 
-function groupFindings(
-  findings: readonly MemoryDoctorFinding[],
-  contentById: ReadonlyMap<number, string>,
-) {
+function groupFindings(findings: readonly MemoryDoctorFinding[]) {
   const groups = new Map<FindingGroup, JsonObject[]>(
     GROUP_ORDER.map((group) => [group, []]),
   );
@@ -122,11 +117,7 @@ function groupFindings(
       continue;
     }
     const group = FINDING_GROUPS[finding.kind];
-    const command = suggestedCommand(
-      finding.kind,
-      finding,
-      contentById.get(finding.ids[0] ?? 0) ?? "",
-    );
+    const command = suggestedCommand(finding.kind, finding);
     groups.get(group)?.push(outputFinding(finding, command));
     if (command !== undefined) {
       commandsByGroup.get(group)?.push(command);
@@ -156,13 +147,7 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
       ),
     ).pipe(Effect.orDie);
     const result = analyzeMemoryDoctor(repository, rows);
-    const contentById = new Map(
-      rows.map(
-        (row) =>
-          [jsonNumber(row.id) ?? 0, jsonString(row.content) ?? ""] as const,
-      ),
-    );
-    const { groups, commands } = groupFindings(result.findings, contentById);
+    const { groups, commands } = groupFindings(result.findings);
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
         printJson({

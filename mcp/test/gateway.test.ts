@@ -614,7 +614,8 @@ describe("mcp gateway to api product routes", () => {
             status: 400,
             body: {
               ok: false,
-              error: "Best match #3 is not a strong upsert match",
+              error:
+                "No record matches the upsert query strongly enough to update",
             },
           },
         },
@@ -631,7 +632,7 @@ describe("mcp gateway to api product routes", () => {
       },
     });
     expect(result.isError).toBe(true);
-    expect(firstText(result)).toContain("not a strong upsert match");
+    expect(firstText(result)).toContain("strongly enough to update");
   });
 
   test("memory_size surfaces over-budget as a tool error with the report", async () => {

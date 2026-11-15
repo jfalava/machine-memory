@@ -12,7 +12,7 @@ The managed section lives between HTML markers and can be replaced safely:
 
 ```html
 <!-- machine-memory:start -->
-<!-- machine-memory:version 3 mcp -->
+<!-- machine-memory:version 4 mcp -->
 …
 <!-- machine-memory:end -->
 ```
@@ -99,7 +99,7 @@ The MCP block is about 2,500 bytes, because agents read it on every turn. It tel
 - Follow the user when an instruction contradicts a stored record, and update the record
 - Write one fact per record, keep delivery state in one expiring `status` record, and leave out pixel values, UI state, deploy outcomes and facts about one machine
 - Preflight size with `memory_size`
-- Read a record before `memory_update` and keep the details that still hold; create with `memory_add` and `upsert_match`
+- Read a record before `memory_update` and keep the details that still hold, or omit `content` to change only metadata; create with `memory_add` and `upsert_match`
 - Act on `dropped` and `review_candidates`
 - Name `evidence` kinds for `certainty: verified`
 - Keep memory writes with the parent agent when delegating

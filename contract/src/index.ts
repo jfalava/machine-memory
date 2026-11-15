@@ -112,7 +112,26 @@ export {
   type UpsertDecision,
 } from "./ranking";
 export {
+  REPLACEMENT_MIN_OVERLAP,
+  assessReplacement,
+  droppedNames,
+  duplicateRefusal,
+  editTags,
+  editValidationGaps,
+  nameHoldersFromRows,
+  nameHoldersQuery,
+  nearDuplicate,
+  sharedIdentifiers,
+  upsertRefusal,
+  type AddIntentHints,
+  type DuplicateMatch,
+  type NameHolders,
+  type ReplacementAssessment,
+  type UpsertCandidate,
+} from "./write-guards";
+export {
   DEFAULT_STATUS_EXPIRY_DAYS,
+  NEAR_DUPLICATE_THRESHOLD,
   analyzeMemoryDoctor,
   canonicalTags,
   normalizeTags,

@@ -150,22 +150,47 @@ describe("product ops schemas", () => {
     }
   });
 
-  it("decides an upsert from match strength and the override", () => {
-    const strong = { score: 32, similarity: 0.62 };
-    const lowScore = { score: 31, similarity: 0.9 };
-    const lowSimilarity = { score: 90, similarity: 0.61 };
+  it("decides an upsert from match strength and the stated intent", () => {
+    const strong = { rank_score: 32, text_overlap: 0.62 };
+    const lowScore = { rank_score: 31, text_overlap: 0.9 };
+    const lowOverlap = { rank_score: 90, text_overlap: 0.61 };
     const decide = (
-      match: { score: number; similarity: number } | undefined,
-      force: boolean,
+      match: { rank_score: number; text_overlap: number } | undefined,
+      createNew: boolean,
       minScore = 32,
-    ) => decideUpsert({ match, minScore, force });
+    ) => decideUpsert({ match, minScore, createNew });
     expect(decide(undefined, false)).toBe("create");
     expect(decide(strong, false)).toBe("update");
-    expect(decide(strong, true)).toBe("update");
+    // "This is a different fact" wins even over a strong match.
+    expect(decide(strong, true)).toBe("create");
     expect(decide(lowScore, false)).toBe("refuse");
-    expect(decide(lowSimilarity, false)).toBe("refuse");
+    expect(decide(lowOverlap, false)).toBe("refuse");
     expect(decide(lowScore, true)).toBe("create");
     expect(decide(lowScore, false, 31)).toBe("update");
+  });
+
+  it("accepts metadata-only updates and the add intent fields", () => {
+    expect(
+      decodeRequest(MemoryUpdateArgsSchema, {
+        repository: "owner/name",
+        id: 1,
+        add_tags: "area:cli",
+        remove_validation_gaps: ["untested on Windows"],
+      }).ok,
+    ).toBe(true);
+    const add = decodeRequest(MemoryAddArgsInputSchema, {
+      repository: "owner/name",
+      content: "fact",
+      update_id: 7,
+      allow_drop: true,
+    });
+    expect(add.ok).toBe(true);
+    if (add.ok) {
+      expect(normalizeMemoryAddArgs(add.value)).toMatchObject({
+        update_id: 7,
+        allow_drop: true,
+      });
+    }
   });
 
   it("bounds the expected update count on update", () => {

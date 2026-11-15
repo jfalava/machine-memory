@@ -74,32 +74,38 @@ export function parseEvidenceFlag(
   return [...new Set(values.filter(isEvidenceKind))];
 }
 
-/** One gap as plain text, several as a JSON array; `none` or `[]` clears them. */
-export function parseValidationGapsFlag(
+/** One plain-text gap or a JSON array of gaps; undefined when the flag is absent. */
+export function parseGapListFlag(
   flags: CommandFlags,
+  flag: string,
 ): string[] | undefined {
-  const raw = getFlagValue(flags, "--validation-gaps");
+  const raw = getFlagValue(flags, flag);
   if (raw === undefined) {
     return undefined;
   }
   const trimmed = raw.trim();
-  if (CLEAR_VALUES.has(trimmed)) {
-    return [];
-  }
   const gaps = (
-    trimmed.startsWith("[")
-      ? flagJsonArray(trimmed, "--validation-gaps")
-      : [trimmed]
+    trimmed.startsWith("[") ? flagJsonArray(trimmed, flag) : [trimmed]
   ).map((gap) => gap.trim());
   if (
     gaps.length > VALIDATION_GAPS_MAX ||
     gaps.some((gap) => gap === "" || gap.length > VALIDATION_GAP_MAX_CHARS)
   ) {
     usageError(
-      `Invalid --validation-gaps: give at most ${VALIDATION_GAPS_MAX} nonblank gaps of at most ${VALIDATION_GAP_MAX_CHARS} characters.`,
+      `Invalid ${flag}: give at most ${VALIDATION_GAPS_MAX} nonblank gaps of at most ${VALIDATION_GAP_MAX_CHARS} characters.`,
     );
   }
   return gaps;
+}
+
+/** `--validation-gaps <text|json_array>`; `none` or `[]` clears them on update. */
+export function parseValidationGapsFlag(
+  flags: CommandFlags,
+): string[] | undefined {
+  const raw = getFlagValue(flags, "--validation-gaps");
+  return raw !== undefined && CLEAR_VALUES.has(raw.trim())
+    ? []
+    : parseGapListFlag(flags, "--validation-gaps");
 }
 
 /** Rejects a write that asserts `verified` without naming any evidence. */

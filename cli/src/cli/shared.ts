@@ -19,6 +19,7 @@ import {
   MATCH_STRENGTHS,
   matchStrengthRank,
   matchText,
+  extractQueryIdentifiers,
   orderByMatchStrength,
   premiseQuery,
   recencyPoints,
@@ -657,14 +658,16 @@ export function getMemoryById(
     .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
 }
 
-export function findMemoryByMatch(
+/** The active memories that best match a topic query, strongest first. */
+export function findMemoryMatches(
   database: MemoryDatabaseApi,
   query: string,
-): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
+  limit = 3,
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const terms = extractTerms(query);
   const ftsQuery = buildFtsQuery(terms);
   if (!ftsQuery) {
-    return Effect.succeed(null);
+    return Effect.succeed([]);
   }
   return database
     .all(
@@ -678,7 +681,18 @@ export function findMemoryByMatch(
        LIMIT 5`,
       [ftsQuery, repositoryForCurrentDirectory()],
     )
-    .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, terms)[0] ?? null));
+    .pipe(
+      Effect.map((rows) => scoreRowsWithDetails(rows, terms).slice(0, limit)),
+    );
+}
+
+export function findMemoryByMatch(
+  database: MemoryDatabaseApi,
+  query: string,
+): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
+  return findMemoryMatches(database, query, 1).pipe(
+    Effect.map((rows) => rows[0] ?? null),
+  );
 }
 
 export function detectPotentialConflicts(
@@ -718,7 +732,14 @@ export function detectPotentialConflicts(
        LIMIT ${Number(options.limit ?? 5)}`,
       params,
     )
-    .pipe(Effect.map((rows) => scoreRowsWithDetails(rows, terms)));
+    .pipe(
+      Effect.map((rows) =>
+        // Identifiers make a record that names the same path or symbol a strong match.
+        scoreRowsWithDetails(rows, terms, {
+          identifiers: extractQueryIdentifiers(payload.content),
+        }),
+      ),
+    );
 }
 
 /**

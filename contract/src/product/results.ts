@@ -31,11 +31,15 @@ export type ScoredMemoryRow = typeof ScoredMemoryRowSchema.Type;
 
 export const UpsertMatchInfoSchema = Schema.Struct({
   id: Schema.Finite,
-  score: Schema.Finite,
-  similarity: Schema.Finite,
+  /** Search rank of the record for the upsert query, 0 to 100. */
+  rank_score: Schema.Finite,
+  /** Share of terms the record and the new content have in common, 0 to 1. */
+  text_overlap: Schema.Finite,
   memory_type: MemoryTypeSchema,
   status: MemoryStatusSchema,
   content_head: Schema.String,
+  /** Paths, flags and symbols both the record and the new content mention. */
+  shared_identifiers: Schema.Array(Schema.String),
 });
 export type UpsertMatchInfo = typeof UpsertMatchInfoSchema.Type;
 
@@ -55,7 +59,8 @@ export const MemoryWriteResultSchema = Schema.Struct({
   size: Schema.optionalKey(EmbeddingSizeReportSchema),
   upsert_match: Schema.optionalKey(UpsertMatchInfoSchema),
   matched: Schema.optionalKey(MatchedUpdateTargetSchema),
-  potential_conflicts: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
+  /** Active records that strongly match the new content; neighbours, not contradictions. */
+  related: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
   /** Paths, identifiers, and sentences the new content no longer carries. */
   dropped: Schema.optionalKey(DroppedDetailsSchema),
   /** Other active records that may rely on the changed premise. */

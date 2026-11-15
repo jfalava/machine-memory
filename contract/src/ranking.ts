@@ -124,27 +124,25 @@ export type UpsertDecision = "update" | "create" | "refuse";
 
 /**
  * What `add` with an upsert match query does with its best match: update a
- * strong match, create when nothing matched or a weak match is overridden, and
- * refuse a weak match otherwise. Dry runs and real writes share this decision.
+ * strong match, refuse a weak one, and create when nothing matched or the
+ * caller states that this is a different fact. Dry runs and real writes share
+ * this decision.
  */
 export function decideUpsert(input: {
   readonly match:
-    | { readonly score: number; readonly similarity: number }
+    | { readonly rank_score: number; readonly text_overlap: number }
     | undefined;
   readonly minScore: number;
-  readonly force: boolean;
+  readonly createNew: boolean;
 }): UpsertDecision {
   const { match } = input;
-  if (match === undefined) {
+  if (match === undefined || input.createNew) {
     return "create";
   }
-  if (
-    match.similarity >= UPSERT_MIN_SIMILARITY &&
-    match.score >= input.minScore
-  ) {
-    return "update";
-  }
-  return input.force ? "create" : "refuse";
+  return match.text_overlap >= UPSERT_MIN_SIMILARITY &&
+    match.rank_score >= input.minScore
+    ? "update"
+    : "refuse";
 }
 
 export function normalizeSuggestPath(value: string): string {

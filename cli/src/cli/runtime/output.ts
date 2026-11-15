@@ -20,7 +20,6 @@ export const prettyOutput = GlobalFlag.Setting("pretty")({
 export type OutputMode = {
   brief: boolean;
   jsonMin: boolean;
-  noConflicts: boolean;
   pretty: boolean;
   quiet: boolean;
 };
@@ -32,7 +31,6 @@ export function parseOutputMode(
   return {
     brief: flags.has("--brief"),
     jsonMin: flags.has("--json-min"),
-    noConflicts: flags.has("--no-conflicts"),
     pretty,
     quiet: flags.has("--quiet"),
   };

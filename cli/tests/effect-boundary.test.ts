@@ -145,7 +145,6 @@ describe("Effect application boundaries", () => {
       outputMode: {
         brief: false,
         jsonMin: outputMode.jsonMin,
-        noConflicts: false,
         pretty: false,
         quiet: outputMode.quiet,
       },
@@ -212,7 +211,6 @@ describe("Effect application boundaries", () => {
           outputMode: {
             brief: false,
             jsonMin: true,
-            noConflicts: false,
             pretty: false,
             quiet: false,
           },
@@ -248,7 +246,6 @@ describe("Effect application boundaries", () => {
       outputMode: {
         brief: false,
         jsonMin: false,
-        noConflicts: false,
         pretty: false,
         quiet: false,
       },

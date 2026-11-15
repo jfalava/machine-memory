@@ -14,47 +14,99 @@ machine-memory add --from-file <path> (--local|--remote)
 
 `add` creates an active memory for the current repository. It can store tags,
 context, memory type, certainty, source agent, references, and an optional
-expiry window. The command checks for potential conflicts and, for status
-memories, reports older overlapping status entries that may need deprecation.
+expiry window. For status memories it reports older overlapping status entries
+that may need deprecation.
 
-Use `--upsert-match <query>` when an existing strong match should be updated
-instead of creating a second memory:
+## Duplicates and related records
+
+A plain `add` is refused when an active memory already states nearly the same
+thing: its text overlap with the new memory is `0.78` or more, the threshold
+[`doctor`](/machine/doctor) uses for near-duplicates. The error names that
+memory and the two ways forward:
+
+```sh
+machine-memory add "Deploys run through scripts/deploy.sh" (--local|--remote)
+# error: Memory #12 already states nearly the same thing (text_overlap 0.86,
+#        at or above 0.78). Nothing was written. To change that record, repeat
+#        the add with --update-id 12. If this is a different fact, repeat it
+#        with --create-new.
+```
+
+- `--update-id <id>` replaces the content of that memory. Fields you omit
+  (tags, context, type, certainty) keep their stored values.
+- `--create-new` says you read the existing memories and this is a different
+  fact. It creates the record.
+
+When the new memory is not a duplicate, the response lists `related`: the
+active memories that strongly match it, so you can check that it does not
+repeat or contradict them. The field is absent when nothing matches strongly.
+
+## Upsert by topic
+
+Use `--upsert-match <query>` when you do not know the ID and an existing strong
+match should be updated instead of creating a second memory:
 
 ```sh
 machine-memory add "The API uses remote D1" \
   --upsert-match "remote D1 API" --type decision (--local|--remote)
 ```
 
-The match is strong only when its similarity is at least `0.62` **and** its
-score reaches the threshold (`--upsert-threshold <0-100>`, default `32`,
-override via the `MACHINE_MEMORY_UPSERT_MIN_SCORE` environment variable).
-When a record matches but fails that bar, `add` refuses to silently create a
-near-duplicate: non-interactive runs must pass `--force` to create a new
-record anyway, and interactive runs ask for confirmation. Preflight with
-`--dry-run` to see what would be matched:
+Two numbers decide whether the match is strong:
+
+- `rank_score` (0 to 100): how well the record matches the query. It must
+  reach the threshold (`--upsert-threshold <0-100>`, default `32`, override
+  via the `MACHINE_MEMORY_UPSERT_MIN_SCORE` environment variable).
+- `text_overlap` (0 to 1): the share of terms the record and the new content
+  have in common. It must be at least `0.62`.
+
+A record can rank high for the query and still share little with the new
+content. That is a weak match, and `add` refuses it instead of guessing: the
+error lists up to three candidates with their ID, type, first 120 characters,
+`rank_score`, `text_overlap` and shared identifiers. Read them, then repeat
+the add with `--update-id <id>` when one states the same fact, or with
+`--create-new` when yours is a different fact. A create over a weak match
+includes the passed-over record as `upsert_match` in the response.
+
+`--update-id`, `--create-new` and `--upsert-match` replace the earlier
+`--force` flag, which is no longer accepted.
+
+## Replacing content
+
+`--update-id` and a strong `--upsert-match` replace the stored content, so
+they are subject to the same guard as [`update`](/machine/update#replacement-guard):
+the write is refused when it drops a path, flag or symbol that no other active
+memory mentions, or shares almost nothing with the stored content. Carry the
+detail over, or pass `--allow-drop` when it is obsolete.
+
+## Dry run
+
+Preflight with `--dry-run` to see what the real write would do:
 
 ```sh
 machine-memory add "New wording" --upsert-match "topic" \
   --dry-run (--local|--remote)
 # {"command":"add","dry_run":true,"action":"update",
-#  "would_match":{"id":42,"score":88,"similarity":0.91,"content_head":"..."},
-#  "size":{...}}
+#  "would_match":{"id":42,"rank_score":88,"text_overlap":0.91,
+#    "memory_type":"decision","status":"active","content_head":"...",
+#    "shared_identifiers":["cli/src/app.ts"]},
+#  "update_id":42,"replacement":{"action":"update",...},"size":{...}}
 ```
 
-`--dry-run` never writes: without `--upsert-match` it prints the size report
-for a would-be `create`, and with it, the candidate plus the prospective
-merged-document size. `action` is what the real write does: `update` for a
-strong match, `create` when nothing matches or `--force` overrides a weak
-match, and `refuse` for a weak match without `--force`. It exits `1` when the
-text is over budget or the write would be refused.
+`--dry-run` never writes. `action` is what the real write does: `update`,
+`create` or `refuse`. A refusal carries its reason in `note`, the weak
+candidates in `candidates`, or the near-duplicate in `duplicate`. The command
+exits `1` when the text is over budget or the write would be refused.
 
 Content that is empty, `null` or `undefined` is refused: those are missing
 values turned into text by a shell or a script.
 
 ## Options
 
-`--path` enables path-driven tag suggestions. `--tags` and `--context` store
-retrieval metadata. `--type` accepts `decision`, `convention`, `gotcha`,
+`--path` adds the tags the [tag map](/machine/tag-map) assigns to one path or
+to several separated by commas. The response lists `path_tag_matches`: each
+path with the prefix that matched and the tags it added. A path that matches
+no prefix adds no tags and is reported on stderr, as is a memory written
+without any tags. `--tags` and `--context` store retrieval metadata. `--type` accepts `decision`, `convention`, `gotcha`,
 `preference`, `constraint`, `reference`, or `status`. `--certainty` accepts
 `verified`, `inferred`, or `speculative`. `--refs` accepts JSON or CSV
 references, and `--expires-after-days` is useful for transient status.
@@ -88,10 +140,9 @@ Evidence and gaps are stored metadata only: they are not embedded and do not
 count toward the size limit. `get` and `list` return them as arrays,
 and `--json-min` summaries include `evidence` plus a `validation_gap_count`.
 
-`--from-file` and inline content are mutually exclusive. `--no-conflicts`
-suppresses conflict details; `--brief`, `--json-min`, and `--quiet` select
-smaller responses. A forced create over a weak match includes an
-`upsert_match` object in the response.
+`--from-file` and inline content are mutually exclusive. `--brief`,
+`--json-min`, and `--quiet` select smaller responses; `--brief` reports
+`related_count` instead of the `related` list.
 
 ## Size limit
 

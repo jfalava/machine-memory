@@ -29,5 +29,7 @@ of a suggested command: add the evidence kinds that were established with
 `update --evidence`, or lower the memory to `--certainty inferred`.
 
 Findings include suggested commands such as `update`, `deprecate`, or
-`delete`. Review those suggestions before applying them. `--brief`,
+`delete`. A suggested `update` names only the field to change, such as
+`machine-memory update 12 --expires-after-days 14`, so applying it leaves the
+content untouched. Review the suggestions before applying them. `--brief`,
 `--json-min`, and `--quiet` provide progressively smaller responses.

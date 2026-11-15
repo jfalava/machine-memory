@@ -41,6 +41,8 @@ export const CliOutputSchema = Schema.StructWithRest(
     classification: Schema.optionalKey(Schema.Array(CliRowSchema)),
     would_match: Schema.optionalKey(CliRowSchema),
     upsert_match: Schema.optionalKey(CliRowSchema),
+    related: Schema.optionalKey(Schema.Array(CliRowSchema)),
+    candidates: Schema.optionalKey(Schema.Array(CliRowSchema)),
     findings: Schema.optionalKey(Schema.JsonObject),
     commands: Schema.optionalKey(Schema.JsonObject),
     output_fields: Schema.optionalKey(Schema.JsonObject),

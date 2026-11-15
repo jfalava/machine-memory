@@ -81,11 +81,14 @@ function suggestTagMap(
 ): TagMapEffect {
   return Effect.gen(function* () {
     if (!filePath) {
-      usageError("Usage: tag-map suggest <path>");
+      usageError("Usage: tag-map suggest <path|path,path,...>");
     }
-    const tags = yield* suggestTagsForPath(context.fileSystem, filePath);
+    const { tags, matches } = yield* suggestTagsForPath(
+      context.fileSystem,
+      filePath,
+    );
     yield* Effect.sync(() =>
-      printCommandOutput(context, { path: filePath, tags }),
+      printCommandOutput(context, { path: filePath, tags, matches }),
     );
   });
 }

@@ -148,27 +148,44 @@ function pathMatchesPrefix(path: string, prefix: string): boolean {
   return path.startsWith(prefix) || path.startsWith(`${prefix}/`);
 }
 
+/** One tag-map prefix that matched a path, with the tags it contributes. */
+export type PathTagMatch = { path: string; prefix: string; tags: string[] };
+
+export type PathTagSuggestion = {
+  /** Tags of every matching prefix, longest prefix first, deduplicated. */
+  tags: string[];
+  matches: PathTagMatch[];
+  /** Paths that no prefix of the map matched. */
+  unmatched: string[];
+};
+
+/** Tags the map assigns to one path or to several comma-separated paths. */
 export function suggestTagsForPath(
   fileSystem: FileSystem.FileSystem,
-  path: string,
+  paths: string,
   cwd = process.cwd(),
-): Effect.Effect<string[], CommandError> {
-  const normalizedPath = normalizePath(path);
-  if (!normalizedPath) {
-    return Effect.succeed([]);
+): Effect.Effect<PathTagSuggestion, CommandError> {
+  const normalizedPaths = paths.split(",").map(normalizePath).filter(Boolean);
+  if (normalizedPaths.length === 0) {
+    return Effect.succeed({ tags: [], matches: [], unmatched: [] });
   }
   return loadPathTagMap(fileSystem, cwd).pipe(
     Effect.map((map) => {
-      const tags: string[] = [];
       const entries = Object.entries(map).sort(
         (left, right) => right[0].length - left[0].length,
       );
-      for (const [prefix, mappedTags] of entries) {
-        if (pathMatchesPrefix(normalizedPath, prefix)) {
-          tags.push(...mappedTags);
-        }
-      }
-      return normalizeTags(tags);
+      const matches = normalizedPaths.flatMap((path) =>
+        entries
+          .filter(([prefix]) => pathMatchesPrefix(path, prefix))
+          .map(([prefix, tags]) => ({ path, prefix, tags })),
+      );
+      return {
+        tags: normalizeTags(matches.flatMap((match) => match.tags)),
+        matches,
+        unmatched: normalizedPaths.filter(
+          (path) => !matches.some((match) => match.path === path),
+        ),
+      };
     }),
   );
 }

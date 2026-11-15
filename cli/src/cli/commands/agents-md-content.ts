@@ -9,7 +9,7 @@ const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
  * checkouts that still carry an older block are told to run `init` again. A
  * block without a version line predates versions and counts as 1.
  */
-export const MEMORY_BLOCK_VERSION = 3;
+export const MEMORY_BLOCK_VERSION = 4;
 
 export type AgentsMemoryBackend = "local" | "remote" | "mcp";
 
@@ -22,6 +22,7 @@ type BlockTerms = {
   readonly expiry: string;
   readonly size: string;
   readonly update: string;
+  readonly metadataUpdate: string;
   readonly add: string;
   readonly lossReport: string;
   readonly evidence: string;
@@ -41,6 +42,7 @@ function cliTerms(flag: "--local" | "--remote"): BlockTerms {
     expiry: "`--expires-after-days`",
     size: '`machine-memory size "<text>"`, or `--dry-run` on `add` and `update`',
     update: `\`machine-memory update <id> "<whole new content>" ${flag}\``,
+    metadataUpdate: "Leave the content out",
     add: `\`machine-memory add "<content>" --upsert-match "<topic>" --type <type> ${flag}\``,
     lossReport:
       "`dropped` or `review_candidates` (also on stderr, in a `machine-memory:` line)",
@@ -58,6 +60,7 @@ const MCP_TERMS: BlockTerms = {
   expiry: "`expires_after_days`",
   size: "`memory_size` with the content, tags and context you intend to write",
   update: "`memory_update` (`id` and the whole new `content`)",
+  metadataUpdate: "Omit `content`",
   add: "`memory_add` and `upsert_match`",
   lossReport: "`dropped` or `review_candidates`",
   evidence: "`certainty: verified` requires `evidence`",
@@ -81,7 +84,7 @@ export function agentsMdContent(backend: AgentsMemoryBackend): string {
     "- When the user's instruction contradicts a stored record, follow the user and update the record.",
     `- Write one fact per record and start it with the command, path or identifier it is about. Store decisions, constraints, preferences, references and gotchas. Put delivery state in one \`status\` record with ${terms.expiry}. Leave out pixel values, UI state and deploy outcomes, and put facts about one machine in that machine's guidance file.`,
     `- Check size before writing: ${terms.size}. Content, tags and context share one 2,000-byte limit.`,
-    `- Change a record with ${terms.update}. It replaces the content, so read the record first and keep the details that still hold. Create one with ${terms.add}, which updates a strong match instead of adding a duplicate.`,
+    `- Change a record with ${terms.update}. It replaces the content, so read the record first and keep the details that still hold. ${terms.metadataUpdate} to change only tags, type or certainty. Create one with ${terms.add}, which updates a strong match instead of adding a duplicate.`,
     `- When a write reports ${terms.lossReport}, restore details dropped by mistake and update or deprecate the listed records.`,
     `- ${terms.evidence}: \`user_requirement\`, \`observed_implementation\`, \`verified_mechanism\` or \`tested_behavior\`. Reading the code proves only \`observed_implementation\`.`,
     "- When delegating, scan once and pass the record ids to child agents. Children return findings with their evidence; the parent writes them.",

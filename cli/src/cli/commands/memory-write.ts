@@ -1,20 +1,30 @@
-import { createInterface } from "node:readline/promises";
-
 import {
+  assessReplacement,
   canonicalTags,
+  compareMemoryFact,
   decideUpsert,
   droppedDetails,
+  droppedNames,
+  duplicateRefusal,
+  editTags,
+  editValidationGaps,
   embeddingBudgetMessage,
   embeddingSizeReport,
-  type EmbeddingDocumentParts,
-  type EmbeddingSizeReport,
   hasDroppedDetails,
   memoryContentError,
-  type EvidenceKind,
-  type UpsertDecision,
-  compareMemoryFact,
+  nameHoldersFromRows,
+  nameHoldersQuery,
+  nearDuplicate,
+  sharedIdentifiers,
+  upsertRefusal,
   UPSERT_DEFAULT_MIN_SCORE,
-  UPSERT_MIN_SIMILARITY,
+  type AddIntentHints,
+  type DuplicateMatch,
+  type EmbeddingDocumentParts,
+  type EmbeddingSizeReport,
+  type EvidenceKind,
+  type ReplacementAssessment,
+  type UpsertDecision,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
@@ -31,19 +41,25 @@ import type {
   MemoryDatabaseError,
 } from "../../effect/database";
 import { commandError, type CommandError } from "../../effect/errors";
-import type { MemoryVectorDocument } from "../../effect/vectorize";
+import { toContractValue } from "../../effect/remote-http";
 import {
   jsonNumber,
   jsonObject,
   type JsonObject,
   type JsonValue,
 } from "../../json";
-import { suggestTagsForPath } from "../../path-tags";
+import {
+  suggestTagsForPath,
+  type PathTagMatch,
+  type PathTagSuggestion,
+} from "../../path-tags";
 import { repositoryForCurrentDirectory } from "../../repository";
 import {
   assertEvidenceWrite,
   parseEvidenceFlag,
+  parseGapListFlag,
   parseStoredEvidence,
+  parseStoredValidationGaps,
   parseValidationGapsFlag,
 } from "../features/memory/evidence";
 import {
@@ -61,10 +77,12 @@ import {
   detectPotentialConflicts,
   assertWritableRepository,
   findMemoryByMatch,
+  findMemoryMatches,
   findReviewCandidates,
   findStatusCascadeCandidates,
   getMemoryById,
   hasMinimalOutput,
+  isMemoryType,
   mergeTagValues,
   normalizeCertaintyValue,
   normalizeSqliteRow,
@@ -128,6 +146,9 @@ type AddExplicitFlags = {
 
 type AddMetadata = {
   mappedTags: string[];
+  /** Which tag-map prefix matched each --path, and the paths none matched. */
+  pathMatches: PathTagMatch[];
+  unmatchedPaths: string[];
   tags: string;
   memo: string;
   memoryType: string;
@@ -152,11 +173,21 @@ type UpdateSpec = {
   value: string | number | null;
 };
 
+/** The stored fields one update replaces; undefined keeps the stored value. */
+type RowChanges = {
+  content: string | undefined;
+  tags: string | undefined;
+  context: string | undefined;
+  validationGaps: string[] | undefined;
+};
+
 type ProspectiveUpdate = {
   id: number;
   updateCount: number;
   previous: JsonObject;
-  document: MemoryVectorDocument;
+  changes: RowChanges;
+  /** The embedded fields as the update would leave them. */
+  document: EmbeddingDocumentParts;
 };
 
 /** What a write loses from the old content and which records may depend on it. */
@@ -245,7 +276,7 @@ function warnReconciliation(
   }
   if (findings.length > 0) {
     warnOnStderr(
-      `${subject} ${findings.join("; ")}. See dropped and review_candidates in the output.`,
+      `${subject}: ${findings.join("; ")}. See dropped and review_candidates in the output.`,
     );
   }
 }
@@ -279,77 +310,196 @@ function addEmbeddingDocumentParts(
   return { content, tags: metadata.tags, context: metadata.memo };
 }
 
+/** The embedded fields of a stored memory after an add replaces its content. */
 function addUpsertEmbeddingDocument(
-  matched: JsonObject,
+  target: JsonObject,
   content: string,
   metadata: AddMetadata,
-): MemoryVectorDocument {
+): EmbeddingDocumentParts {
   return {
-    id: String(jsonNumber(matched.id) ?? 0),
-    repository:
-      stringValue(matched.repository) ?? repositoryForCurrentDirectory(),
     content,
     tags:
       metadata.explicit.tags || metadata.mappedTags.length > 0
         ? metadata.tags
-        : stringValue(matched.tags),
+        : stringValue(target.tags),
     context: metadata.explicit.context
       ? metadata.memo
-      : stringValue(matched.context),
-    memory_type: metadata.explicit.memoryType
-      ? metadata.memoryType
-      : stringValue(matched.memory_type, "convention"),
-    status: stringValue(matched.status, "active"),
-    certainty: metadata.explicit.certainty
-      ? metadata.certainty
-      : stringValue(matched.certainty, "inferred"),
+      : stringValue(target.context),
   };
 }
 
-function prospectiveUpdateDocuments(
+/**
+ * Whether new content may replace the stored content of a memory: refused when
+ * it drops a name no other active record carries, or shares almost nothing
+ * with what it replaces.
+ */
+function assessContentReplacement(
+  database: MemoryDatabaseApi,
+  previous: JsonObject,
+  next: string,
+  allowDrop: boolean,
+): Effect.Effect<ReplacementAssessment, MemoryDatabaseError> {
+  const id = Number(previous.id);
+  const stored = stringValue(previous.content);
+  const names = droppedNames(stored, next);
+  const query = nameHoldersQuery({
+    repository: repositoryForCurrentDirectory(),
+    excludeId: id,
+    names,
+  });
+  const memoryType = stringValue(previous.memory_type, "convention");
+  return (
+    names.length === 0
+      ? Effect.succeed<JsonValue[]>([])
+      : database.all(query.sql, query.params)
+  ).pipe(
+    Effect.map((rows) =>
+      assessReplacement({
+        id,
+        previous: stored,
+        next,
+        memoryType: isMemoryType(memoryType) ? memoryType : "convention",
+        holders: nameHoldersFromRows(rows.map(toContractValue)),
+        allowDrop,
+        allowDropHint: "--allow-drop",
+      }),
+    ),
+  );
+}
+
+/** What a dry run reports about a replacement; the refusal text goes in `note`. */
+function replacementSummary(assessment: ReplacementAssessment): JsonObject {
+  return {
+    action: assessment.action,
+    text_overlap: assessment.text_overlap,
+    orphaned_identifiers: assessment.orphaned_identifiers,
+    held_elsewhere: assessment.held_elsewhere,
+  };
+}
+
+/** The flags that change a field; any of them lets update run without content. */
+const UPDATE_FIELD_FLAGS = [
+  "--tags",
+  "--add-tags",
+  "--remove-tags",
+  "--context",
+  "--clear-context",
+  "--type",
+  "--certainty",
+  "--evidence",
+  "--validation-gaps",
+  "--add-gap",
+  "--remove-gap",
+  "--updated-by",
+  "--refs",
+  "--expires-after-days",
+];
+
+/** Field changes as given on the command line, before they meet a stored row. */
+type UpdateEdits = {
+  tags: string | undefined;
+  addTags: string | undefined;
+  removeTags: string | undefined;
+  context: string | undefined;
+  validationGaps: string[] | undefined;
+  addGaps: string[] | undefined;
+  removeGaps: string[] | undefined;
+};
+
+function refuseTogether(
+  flags: CommandFlags,
+  whole: string,
+  partial: string[],
+): void {
+  if (hasFlag(flags, whole) && partial.some((flag) => hasFlag(flags, flag))) {
+    usageError(
+      `${whole} replaces the stored value, so it cannot be combined with ${partial.join(" or ")}.`,
+    );
+  }
+}
+
+function resolveUpdateEdits(flags: CommandFlags): UpdateEdits {
+  refuseTogether(flags, "--tags", ["--add-tags", "--remove-tags"]);
+  refuseTogether(flags, "--context", ["--clear-context"]);
+  refuseTogether(flags, "--validation-gaps", ["--add-gap", "--remove-gap"]);
+  return {
+    tags: optionalCanonicalTags(getFlagValue(flags, "--tags")),
+    addTags: getFlagValue(flags, "--add-tags"),
+    removeTags: getFlagValue(flags, "--remove-tags"),
+    context: hasFlag(flags, "--clear-context")
+      ? ""
+      : getFlagValue(flags, "--context"),
+    validationGaps: parseValidationGapsFlag(flags),
+    addGaps: parseGapListFlag(flags, "--add-gap"),
+    removeGaps: parseGapListFlag(flags, "--remove-gap"),
+  };
+}
+
+/** Applies add and remove edits to one stored row, giving whole replacement values. */
+function rowChanges(
+  row: JsonObject,
+  edits: UpdateEdits,
+  content: string | undefined,
+): Effect.Effect<RowChanges, CommandError> {
+  const editsTags =
+    edits.addTags !== undefined || edits.removeTags !== undefined;
+  const gaps =
+    edits.addGaps !== undefined || edits.removeGaps !== undefined
+      ? editValidationGaps(parseStoredValidationGaps(row.validation_gaps), {
+          add: edits.addGaps,
+          remove: edits.removeGaps,
+        })
+      : undefined;
+  if (gaps?.error !== undefined) {
+    return Effect.fail(
+      commandError(
+        "update",
+        `Memory ${Number(row.id)}: ${gaps.error} Nothing was written.`,
+      ),
+    );
+  }
+  return Effect.succeed({
+    content,
+    tags: editsTags
+      ? editTags(stringValue(row.tags), {
+          add: edits.addTags,
+          remove: edits.removeTags,
+        })
+      : edits.tags,
+    context: edits.context,
+    validationGaps: gaps?.gaps ?? edits.validationGaps,
+  });
+}
+
+function prospectiveUpdates(
   flags: CommandFlags,
   database: MemoryDatabaseApi,
   targetIds: number[],
-  content: string,
-): Effect.Effect<ProspectiveUpdate[], MemoryDatabaseError> {
-  const overrides = {
-    tags: optionalCanonicalTags(getFlagValue(flags, "--tags")),
-    context: getFlagValue(flags, "--context"),
-    memory_type: requireMemoryType(flags),
-    certainty: requireCertainty(flags),
-  };
+  content: string | undefined,
+): Effect.Effect<ProspectiveUpdate[], MemoryDatabaseError | CommandError> {
+  const edits = resolveUpdateEdits(flags);
+  const certainty = requireCertainty(flags);
   const evidence = parseEvidenceFlag(flags);
   return Effect.forEach(targetIds, (id) =>
-    getMemoryById(database, id).pipe(
-      Effect.map((row) => {
-        if (!row) {
-          return null;
-        }
-        assertEvidenceWrite(
-          { certainty: overrides.certainty, evidence },
-          existingEvidence(row),
-        );
-        return {
-          id,
-          updateCount: jsonNumber(row.update_count) ?? 0,
-          previous: row,
-          document: {
-            id: String(id),
-            repository:
-              stringValue(row.repository) ?? repositoryForCurrentDirectory(),
-            content,
-            tags: overrides.tags ?? stringValue(row.tags),
-            context: overrides.context ?? stringValue(row.context),
-            memory_type:
-              overrides.memory_type ??
-              stringValue(row.memory_type, "convention"),
-            status: stringValue(row.status, "active"),
-            certainty:
-              overrides.certainty ?? stringValue(row.certainty, "inferred"),
-          } satisfies MemoryVectorDocument,
-        };
-      }),
-    ),
+    Effect.gen(function* () {
+      const row = yield* getMemoryById(database, id);
+      if (!row) {
+        return null;
+      }
+      assertEvidenceWrite({ certainty, evidence }, existingEvidence(row));
+      const changes = yield* rowChanges(row, edits, content);
+      return {
+        id,
+        updateCount: jsonNumber(row.update_count) ?? 0,
+        previous: row,
+        changes,
+        document: {
+          content: changes.content ?? stringValue(row.content),
+          tags: changes.tags ?? stringValue(row.tags),
+          context: changes.context ?? stringValue(row.context),
+        },
+      } satisfies ProspectiveUpdate;
+    }),
   ).pipe(
     Effect.map((entries) =>
       entries.filter((entry): entry is ProspectiveUpdate => entry !== null),
@@ -429,11 +579,17 @@ function resolveAddMetadata(
   return (
     pathContext
       ? suggestTagsForPath(fileSystem, pathContext)
-      : Effect.succeed([])
+      : Effect.succeed<PathTagSuggestion>({
+          tags: [],
+          matches: [],
+          unmatched: [],
+        })
   ).pipe(
-    Effect.map((mappedTags) => ({
-      mappedTags,
-      tags: mergeTagValues(explicitTags, mappedTags),
+    Effect.map((pathTags) => ({
+      mappedTags: pathTags.tags,
+      pathMatches: pathTags.matches,
+      unmatchedPaths: pathTags.unmatched,
+      tags: mergeTagValues(explicitTags, pathTags.tags),
       memo: getFlagValue(flags, "--context") ?? "",
       memoryType: requireMemoryType(flags) ?? "convention",
       certainty: requireCertainty(flags) ?? "inferred",
@@ -460,59 +616,85 @@ function shouldSetLastUpdatedBy(metadata: AddMetadata): boolean {
   return metadata.explicit.updatedBy || metadata.explicit.sourceAgent;
 }
 
-function upsertComparableText(content: string, metadata: AddMetadata): string {
-  return [content, metadata.tags, metadata.memo].join(" ");
+function comparableText(parts: EmbeddingDocumentParts): string {
+  return [parts.content, parts.tags, parts.context].join(" ");
 }
 
-/** FTS score and unrounded similarity of the best match; decideUpsert reads both. */
-type UpsertMatchScores = { score: number; similarity: number };
+function storedComparableText(row: JsonObject): string {
+  return comparableText({
+    content: stringValue(row.content),
+    tags: stringValue(row.tags),
+    context: stringValue(row.context),
+  });
+}
 
-function upsertMatchScores(
+/** How a CLI caller states intent after a refused add. */
+const ADD_INTENT_HINTS: AddIntentHints = {
+  updateId: (id) => `--update-id ${id}`,
+  createNew: "--create-new",
+};
+
+/** One active memory an upsert query matched, as reported to the caller. */
+type UpsertMatch = {
+  id: number;
+  /** Search rank of the record for the upsert query, 0 to 100. */
+  rank_score: number;
+  /** Share of terms the record and the new content have in common, 0 to 1. */
+  text_overlap: number;
+  memory_type: string;
+  status: string;
+  content_head: string;
+  shared_identifiers: string[];
+};
+
+function upsertMatch(
   matched: JsonObject,
   content: string,
   metadata: AddMetadata,
-): UpsertMatchScores {
-  const matchedText = [
-    stringValue(matched.content),
-    stringValue(matched.tags),
-    stringValue(matched.context),
-  ].join(" ");
-  return {
-    score: Number(matched.score ?? 0),
-    similarity: compareMemoryFact(
-      matchedText,
-      upsertComparableText(content, metadata),
-    ).similarity,
-  };
-}
-
-function upsertMatchInfo(
-  matched: JsonObject,
-  scores: UpsertMatchScores,
-): JsonObject {
+): UpsertMatch {
   return {
     id: Number(matched.id ?? 0),
-    score: scores.score,
-    similarity: Math.round(scores.similarity * 1000) / 1000,
+    rank_score: Number(matched.score ?? 0),
+    text_overlap: compareMemoryFact(
+      storedComparableText(matched),
+      comparableText(addEmbeddingDocumentParts(content, metadata)),
+    ).similarity,
     memory_type: stringValue(matched.memory_type, "convention"),
     status: stringValue(matched.status, "active"),
     // 120 characters plus the ellipsis.
     content_head: contentSnippet(matched.content, 121),
+    shared_identifiers: sharedIdentifiers(
+      stringValue(matched.content),
+      content,
+    ),
   };
 }
 
-type UpsertMatchSummary = {
-  id: number;
-  score: number;
-  similarity: number;
+/** The near-duplicate of a new memory, if any, and its strongly related records. */
+type Neighbourhood = {
+  duplicate: DuplicateMatch | undefined;
+  related: JsonObject[];
 };
 
-function summarizeUpsertMatch(info: JsonObject): UpsertMatchSummary {
-  return {
-    id: Number(info.id ?? 0),
-    score: Number(info.score ?? 0),
-    similarity: Number(info.similarity ?? 0),
-  };
+function addNeighbourhood(
+  write: AddWrite,
+): Effect.Effect<Neighbourhood, MemoryDatabaseError> {
+  const document = addEmbeddingDocumentParts(write.content, write.metadata);
+  return detectPotentialConflicts(write.database, document).pipe(
+    Effect.map((neighbours) => ({
+      // --create-new says the caller read the records and this is a different fact.
+      duplicate: hasFlag(write.flags, "--create-new")
+        ? undefined
+        : nearDuplicate(
+            comparableText(document),
+            neighbours.map((row) => ({
+              id: Number(row.id),
+              text: storedComparableText(row),
+            })),
+          ),
+      related: neighbours.filter((row) => row.match_strength === "strong"),
+    })),
+  );
 }
 
 function upsertUpdateSpecs(metadata: AddMetadata): UpdateSpec[] {
@@ -605,156 +787,179 @@ function printUpsertResult(
   id: number,
   extras: {
     sizeReport?: EmbeddingSizeReport;
-    matchInfo?: JsonObject;
+    match?: UpsertMatch;
     reconciliation?: JsonObject;
   } = {},
 ) {
-  const { sizeReport, matchInfo, reconciliation = {} } = extras;
-  const payload: JsonObject = matchInfo
-    ? { mode, id, upsert_match: matchInfo, ...reconciliation }
+  const { sizeReport, match, reconciliation = {} } = extras;
+  const payload: JsonObject = match
+    ? { mode, id, upsert_match: match, ...reconciliation }
     : { mode, id, ...reconciliation };
-  if (sizeReport) {
-    Object.assign(payload, { size: sizeSummary(sizeReport) });
-  }
+  attachSizeSummary(payload, sizeReport);
   printCommandOutput({ command: "add", outputMode }, payload);
 }
 
-function weakMatchGateMessage(
-  summary: UpsertMatchSummary,
-  minScore: number,
-): string {
-  return (
-    `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, similarity ${summary.similarity}; ` +
-    `needs score >= ${minScore} AND similarity >= ${UPSERT_MIN_SIMILARITY}). ` +
-    `Refusing to silently ignore memory #${summary.id}: inspect it with 'add ... --upsert-match ... --dry-run', ` +
-    `rerun with --force to create a new record anyway, or lower the bar with --upsert-threshold <0-100>.`
-  );
-}
-
-function confirmWeakMatchCreate(summary: UpsertMatchSummary): Promise<boolean> {
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-  return rl
-    .question(
-      `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, ` +
-        `similarity ${summary.similarity}). Create a new record anyway? [y/N] `,
-    )
-    .then((answer) => /^y(es)?$/i.test(answer.trim()))
-    .finally(() => rl.close());
-}
-
-function maybeHandleAddUpsert(
-  database: MemoryDatabaseApi,
-  options: {
-    flags: CommandFlags;
-    content: string;
-    metadata: AddMetadata;
-    outputMode: CommandContext["outputMode"];
-  },
-) {
-  const { flags, content, metadata, outputMode } = options;
-  const upsertQuery = parseAddUpsertQuery(flags);
-  if (upsertQuery === undefined) {
-    return Effect.succeed(false);
-  }
-  return Effect.gen(function* () {
-    const minScore = yield* resolveUpsertMinScore(flags);
-    const matched = yield* findMemoryByMatch(database, upsertQuery);
-    const scores =
-      matched === null
-        ? undefined
-        : upsertMatchScores(matched, content, metadata);
-    const decision = decideUpsert({
-      match: scores,
-      minScore,
-      force: hasFlag(flags, "--force"),
-    });
-    const info = matched && scores ? upsertMatchInfo(matched, scores) : null;
-    const summary = info ? summarizeUpsertMatch(info) : null;
-    assertAddEvidence(
-      metadata,
-      decision === "update" && matched ? matched : undefined,
-    );
-
-    if (hasFlag(flags, "--dry-run")) {
-      return yield* runAddUpsertDryRun({
-        content,
-        metadata,
-        outputMode,
-        matched,
-        decision,
-        info,
-        summary,
-        minScore,
-      });
-    }
-
-    if (decision === "refuse" && summary) {
-      yield* enforceWeakMatchGate(summary, minScore);
-    }
-
-    if (decision === "update" && matched) {
-      return yield* runStrongUpsertUpdate({
-        database,
-        matched,
-        content,
-        metadata,
-        outputMode,
-      });
-    }
-    return yield* runUpsertCreate({
-      database,
-      content,
-      metadata,
-      outputMode,
-      info,
-    });
-  });
-}
-
-function runStrongUpsertUpdate(params: {
+/** Everything one `add` invocation writes with. */
+type AddWrite = {
   database: MemoryDatabaseApi;
-  matched: JsonObject;
+  flags: CommandFlags;
   content: string;
   metadata: AddMetadata;
   outputMode: CommandContext["outputMode"];
-}): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+};
+
+/** What an add would do, for --dry-run: the action and why it is refused, if it is. */
+type AddPlan = {
+  action: UpsertDecision;
+  refusal?: string | undefined;
+  candidates: UpsertMatch[];
+  duplicate?: DuplicateMatch | undefined;
+  /** The stored memory an update replaces. */
+  target?: JsonObject | undefined;
+};
+
+function addDryRunPayload(
+  plan: AddPlan,
+  refusal: string | undefined,
+): JsonObject {
+  const payload: JsonObject = {
+    command: "add",
+    dry_run: true,
+    action: refusal === undefined ? plan.action : "refuse",
+  };
+  const [best] = plan.candidates;
+  if (best) {
+    payload.would_match = best;
+  }
+  if (plan.action === "refuse") {
+    payload.candidates = plan.candidates;
+  }
+  if (plan.duplicate) {
+    payload.duplicate = { ...plan.duplicate };
+  }
+  if (refusal !== undefined) {
+    payload.note = refusal;
+  }
+  return payload;
+}
+
+/** Prints what the add would do and exits the way the real write would. */
+function runAddDryRun(
+  write: AddWrite,
+  plan: AddPlan,
+): Effect.Effect<boolean, MemoryDatabaseError> {
   return Effect.gen(function* () {
-    const { database, matched, content, metadata, outputMode } = params;
-    const matchedId = Number(matched.id);
-    const canonical = yield* getMemoryById(database, matchedId);
-    if (!canonical || canonical.status !== "active") {
-      return yield* commandError(
-        "add",
-        `Memory ${matchedId} is no longer active; retry the match.`,
-      );
+    const { content, metadata } = write;
+    const { target } = plan;
+    const replacement = target
+      ? yield* assessContentReplacement(
+          write.database,
+          target,
+          content,
+          hasFlag(write.flags, "--allow-drop"),
+        )
+      : undefined;
+    const size = embeddingSizeReport(
+      target
+        ? addUpsertEmbeddingDocument(target, content, metadata)
+        : addEmbeddingDocumentParts(content, metadata),
+    );
+    const refusal = plan.refusal ?? replacement?.refusal;
+    const payload = addDryRunPayload(plan, refusal);
+    if (target && replacement) {
+      payload.update_id = Number(target.id);
+      payload.replacement = replacementSummary(replacement);
+      const dropped = droppedFor(target, content);
+      if (dropped) {
+        payload.dropped = dropped;
+      }
     }
+    payload.size = size;
+    yield* Effect.sync(() => {
+      printCommandOutput(
+        { command: "add", outputMode: write.outputMode },
+        payload,
+      );
+      if (!size.within_budget || refusal !== undefined) {
+        process.exitCode = 1;
+      }
+    });
+    return true;
+  });
+}
+
+/** The active memory an add replaces: a strong upsert match, or the one --update-id names. */
+function activeUpsertTarget(
+  database: MemoryDatabaseApi,
+  id: number,
+  via: "match" | "id",
+): Effect.Effect<JsonObject, MemoryDatabaseError | CommandError> {
+  return getMemoryById(database, id).pipe(
+    Effect.flatMap((row) => {
+      if (row?.status === "active") {
+        return Effect.succeed(row);
+      }
+      if (via === "match") {
+        return Effect.fail(
+          commandError(
+            "add",
+            `Memory ${id} is no longer active; retry the match.`,
+          ),
+        );
+      }
+      return Effect.fail(
+        commandError(
+          "add",
+          row
+            ? `Memory ${id} is ${stringValue(row.status)}; --update-id needs an active memory. Nothing was written.`
+            : `Memory ${id} was not found in repository '${repositoryForCurrentDirectory()}'. Nothing was written.`,
+        ),
+      );
+    }),
+  );
+}
+
+/** Replaces the content of `target` from an add; omitted fields keep their stored values. */
+function runStrongUpsertUpdate(
+  write: AddWrite,
+  target: JsonObject,
+): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+  return Effect.gen(function* () {
+    const { database, content, metadata, outputMode } = write;
+    const targetId = Number(target.id);
     const breakdown = yield* validateEmbeddingFit(
       "add",
-      `Memory ${matchedId}`,
-      addUpsertEmbeddingDocument(canonical, content, metadata),
+      `Memory ${targetId}`,
+      addUpsertEmbeddingDocument(target, content, metadata),
     );
+    const replacement = yield* assessContentReplacement(
+      database,
+      target,
+      content,
+      hasFlag(write.flags, "--allow-drop"),
+    );
+    if (replacement.refusal !== undefined) {
+      return yield* commandError("add", replacement.refusal);
+    }
     const updated = jsonObject(
       yield* updateFromAddPayload(
         database,
-        matchedId,
+        targetId,
         content,
         metadata,
-        jsonNumber(canonical.update_count) ?? 0,
+        jsonNumber(target.update_count) ?? 0,
       ),
     );
     if (!updated) {
       return yield* commandError(
         "add",
-        `Memory ${matchedId} changed concurrently; retry the match.`,
+        `Memory ${targetId} changed concurrently; retry.`,
       );
     }
-    const reconciliation = yield* reconcileWrite(database, canonical, content);
+    const reconciliation = yield* reconcileWrite(database, target, content);
     yield* Effect.sync(() => {
-      warnReconciliation(`Upsert into memory ${matchedId}`, reconciliation);
-      printUpsertResult(outputMode, "updated", matchedId, {
+      warnReconciliation(`Update of memory ${targetId}`, reconciliation);
+      printUpsertResult(outputMode, "updated", targetId, {
         sizeReport: breakdown,
         reconciliation: reconciliationFields(
           reconciliation,
@@ -766,145 +971,144 @@ function runStrongUpsertUpdate(params: {
   });
 }
 
-function runUpsertCreate(params: {
-  database: MemoryDatabaseApi;
-  content: string;
-  metadata: AddMetadata;
-  outputMode: CommandContext["outputMode"];
-  info: JsonObject | null;
-}): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+/** `--update-id <id>`: this content restates that memory. */
+function maybeHandleUpdateId(
+  write: AddWrite,
+): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+  const { flags, metadata } = write;
+  const id = parseIntegerFlag(flags, "--update-id");
+  if (id === undefined) {
+    return Effect.succeed(false);
+  }
+  if (id === null || id <= 0) {
+    usageError("--update-id must be a memory id.");
+  }
+  if (hasFlag(flags, "--create-new")) {
+    usageError(
+      "--update-id replaces a stored memory and --create-new adds a new one; give one of them.",
+    );
+  }
   return Effect.gen(function* () {
-    const { database, content, metadata, outputMode } = params;
+    const target = yield* activeUpsertTarget(write.database, id, "id");
+    assertAddEvidence(metadata, target);
+    if (hasFlag(flags, "--dry-run")) {
+      return yield* runAddDryRun(write, {
+        action: "update",
+        candidates: [],
+        target,
+      });
+    }
+    return yield* runStrongUpsertUpdate(write, target);
+  });
+}
+
+/**
+ * Creates the memory an upsert query did not resolve; echoes a weak match it
+ * passed over. The size is checked before the duplicate, as in a plain add.
+ */
+function runUpsertCreate(
+  write: AddWrite,
+  match: UpsertMatch | undefined,
+  duplicate: DuplicateMatch | undefined,
+): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
+  return Effect.gen(function* () {
+    const { database, content, metadata, outputMode } = write;
     const breakdown = yield* validateEmbeddingFit(
       "add",
       "Memory",
       addEmbeddingDocumentParts(content, metadata),
     );
+    if (duplicate) {
+      return yield* commandError(
+        "add",
+        duplicateRefusal(duplicate, ADD_INTENT_HINTS),
+      );
+    }
     const createdResult = yield* addInsert(database, content, metadata);
     const createdId =
       jsonNumber(jsonObject(createdResult)?.lastInsertRowid) ?? 0;
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      warnEmptyTags(createdId, metadata);
       printUpsertResult(outputMode, "created", createdId, {
         sizeReport: breakdown,
-        matchInfo: params.info ?? undefined,
-      }),
-    );
+        match,
+      });
+    });
     return true;
   });
 }
 
-type AddUpsertDryRunParams = {
-  content: string;
-  metadata: AddMetadata;
-  outputMode: CommandContext["outputMode"];
-  matched: JsonObject | null;
-  decision: UpsertDecision;
-  info: JsonObject | null;
-  summary: UpsertMatchSummary | null;
-  minScore: number;
-};
-
-function addUpsertDryRunPayload(
-  params: AddUpsertDryRunParams,
-  size: EmbeddingSizeReport,
-): JsonObject {
-  const { decision, info, summary, minScore } = params;
-  const payload: JsonObject = {
-    command: "add",
-    dry_run: true,
-    action: decision,
-  };
-  if (info) {
-    Object.assign(payload, { would_match: info });
-  }
-  if (decision !== "update" && summary) {
-    Object.assign(payload, {
-      note: `Best match #${summary.id} is not a strong upsert match (score ${summary.score}, similarity ${summary.similarity}; needs score >= ${minScore} AND similarity >= ${UPSERT_MIN_SIMILARITY}); ${
-        decision === "refuse"
-          ? `this write is refused. Update #${summary.id} by id, pass --force to create a new record, or lower --upsert-threshold.`
-          : `--force creates a NEW record instead of updating #${summary.id}.`
-      }`,
-    });
-  }
-  Object.assign(payload, { size });
-  return payload;
-}
-
-function runAddUpsertDryRun(
-  params: AddUpsertDryRunParams,
+/**
+ * `--upsert-match <query>`: update a strong match, refuse a weak one with its
+ * candidates, and create when nothing matched or --create-new says this is a
+ * different fact. A create is still refused when it duplicates a record.
+ */
+function maybeHandleAddUpsert(
+  write: AddWrite,
 ): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
-  return Effect.gen(function* () {
-    const prospectiveParts =
-      params.decision === "update" && params.matched
-        ? addUpsertEmbeddingDocument(
-            params.matched,
-            params.content,
-            params.metadata,
-          )
-        : addEmbeddingDocumentParts(params.content, params.metadata);
-    const size = embeddingSizeReport(prospectiveParts);
-    yield* Effect.sync(() => {
-      printCommandOutput(
-        { command: "add", outputMode: params.outputMode },
-        addUpsertDryRunPayload(params, size),
-      );
-      // A dry run exits the way the real write would.
-      if (!size.within_budget || params.decision === "refuse") {
-        process.exitCode = 1;
-      }
-    });
-    return true;
-  });
-}
-
-/** A refused weak match fails, or asks for confirmation on a terminal. */
-function enforceWeakMatchGate(
-  summary: UpsertMatchSummary,
-  minScore: number,
-): Effect.Effect<void, CommandError> {
-  const refusal = () =>
-    commandError("add", weakMatchGateMessage(summary, minScore));
-  if (!process.stdin.isTTY) {
-    return Effect.fail(refusal());
+  const { database, flags, content, metadata } = write;
+  const upsertQuery = parseAddUpsertQuery(flags);
+  if (upsertQuery === undefined) {
+    return Effect.succeed(false);
   }
   return Effect.gen(function* () {
-    const confirmed = yield* Effect.tryPromise({
-      try: () => confirmWeakMatchCreate(summary),
-      catch: () => refusal(),
+    const minScore = yield* resolveUpsertMinScore(flags);
+    const matches = yield* findMemoryMatches(database, upsertQuery);
+    const candidates = matches.map((row) =>
+      upsertMatch(row, content, metadata),
+    );
+    const [best] = candidates;
+    const decision = decideUpsert({
+      match: best,
+      minScore,
+      createNew: hasFlag(flags, "--create-new"),
     });
-    if (!confirmed) {
-      return yield* refusal();
+    const target =
+      decision === "update" && best
+        ? yield* activeUpsertTarget(database, best.id, "match")
+        : undefined;
+    assertAddEvidence(metadata, target);
+    const duplicate =
+      decision === "create"
+        ? (yield* addNeighbourhood(write)).duplicate
+        : undefined;
+    const refusal =
+      decision === "refuse"
+        ? upsertRefusal(candidates, minScore, ADD_INTENT_HINTS)
+        : duplicate && duplicateRefusal(duplicate, ADD_INTENT_HINTS);
+    if (hasFlag(flags, "--dry-run")) {
+      return yield* runAddDryRun(write, {
+        action: decision,
+        refusal,
+        candidates,
+        duplicate,
+        target,
+      });
     }
+    if (decision === "refuse" && refusal !== undefined) {
+      return yield* commandError("add", refusal);
+    }
+    return target
+      ? yield* runStrongUpsertUpdate(write, target)
+      : yield* runUpsertCreate(write, best, duplicate);
   });
 }
 
-function detectAddConflicts(
-  database: MemoryDatabaseApi,
-  outputMode: CommandContext["outputMode"],
-  content: string,
-  metadata: AddMetadata,
-): Effect.Effect<
-  {
-    includeConflicts: boolean;
-    potentialConflicts: JsonObject[];
-  },
-  MemoryDatabaseError
-> {
-  const includeConflicts = !(
-    outputMode.noConflicts || hasMinimalOutput(outputMode)
-  );
-  return includeConflicts
-    ? detectPotentialConflicts(database, {
-        content,
-        tags: metadata.tags,
-        context: metadata.memo,
-      }).pipe(
-        Effect.map((potentialConflicts) => ({
-          includeConflicts,
-          potentialConflicts,
-        })),
-      )
-    : Effect.succeed({ includeConflicts, potentialConflicts: [] });
+/** --path that matched nothing adds no tags; say so instead of writing silently. */
+function warnUnmatchedPaths(metadata: AddMetadata): void {
+  if (metadata.unmatchedPaths.length > 0) {
+    warnOnStderr(
+      `--path ${metadata.unmatchedPaths.join(",")} matched no prefix of the tag map, so it added no tags. List the prefixes with 'machine-memory tag-map list'.`,
+    );
+  }
+}
+
+function warnEmptyTags(id: number, metadata: AddMetadata): void {
+  if (metadata.tags === "") {
+    warnOnStderr(
+      `Memory ${id} was written without tags, so tag filters cannot find it. Add some with 'machine-memory update ${id} --add-tags <tags>'.`,
+    );
+  }
 }
 
 function addInsert(
@@ -970,14 +1174,14 @@ function attachSizeSummary(
 
 function briefAddPayload(params: {
   createdId: number;
-  conflictCount: number;
+  relatedCount: number;
   statusCascadeCount: number;
   sizeReport?: EmbeddingSizeReport;
 }): JsonObject {
   const payload: JsonObject = {
     id: params.createdId,
     status: "created",
-    conflict_count: params.conflictCount,
+    related_count: params.relatedCount,
     status_cascade_count: params.statusCascadeCount,
   };
   attachSizeSummary(payload, params.sizeReport);
@@ -990,8 +1194,7 @@ function printAddResult(params: {
   created: JsonObject | null;
   content: string;
   metadata: AddMetadata;
-  includeConflicts: boolean;
-  potentialConflicts: JsonObject[];
+  related: JsonObject[];
   statusCascade: JsonObject[];
   sizeReport?: EmbeddingSizeReport;
 }) {
@@ -1001,24 +1204,21 @@ function printAddResult(params: {
     created,
     content,
     metadata,
-    includeConflicts,
-    potentialConflicts,
+    related,
     statusCascade,
     sizeReport,
   } = params;
   if (outputMode.jsonMin || outputMode.quiet) {
-    printJson(
-      sizeReport
-        ? { id: createdId, size: sizeSummary(sizeReport) }
-        : { id: createdId },
-    );
+    const minimal: JsonObject = { id: createdId };
+    attachSizeSummary(minimal, sizeReport);
+    printJson(minimal);
     return;
   }
   if (outputMode.brief) {
     printJson(
       briefAddPayload({
         createdId,
-        conflictCount: potentialConflicts.length,
+        relatedCount: related.length,
         statusCascadeCount: statusCascade.length,
         sizeReport,
       }),
@@ -1034,11 +1234,11 @@ function printAddResult(params: {
       context: metadata.memo,
     }),
   } satisfies JsonObject;
-  if (metadata.mappedTags.length > 0) {
-    Object.assign(payload, { path_tag_suggestions: metadata.mappedTags });
+  if (metadata.pathMatches.length > 0) {
+    Object.assign(payload, { path_tag_matches: metadata.pathMatches });
   }
-  if (includeConflicts) {
-    Object.assign(payload, { potential_conflicts: potentialConflicts });
+  if (related.length > 0) {
+    Object.assign(payload, { related });
   }
   if (statusCascade.length > 0) {
     const staleIds = statusCascade.map((item) => Number(item.id));
@@ -1049,52 +1249,35 @@ function printAddResult(params: {
       },
     });
   }
-  if (sizeReport) {
-    attachSizeSummary(payload, sizeReport);
-  }
+  attachSizeSummary(payload, sizeReport);
   printCommandOutput({ command: "add", outputMode }, payload);
 }
 
-function runAddDryRun(
-  commandCtx: CommandContext,
-  content: string,
-  metadata: AddMetadata,
-): Effect.Effect<void, CommandError> {
+/** An add that names no existing memory: refuse a near-duplicate, else create. */
+function runPlainAdd(
+  write: AddWrite,
+): Effect.Effect<boolean, MemoryDatabaseError | CommandError> {
   return Effect.gen(function* () {
-    const size = embeddingSizeReport(
+    const { database, content, metadata, outputMode } = write;
+    const { duplicate, related } = yield* addNeighbourhood(write);
+    const refusal = duplicate && duplicateRefusal(duplicate, ADD_INTENT_HINTS);
+    if (hasFlag(write.flags, "--dry-run")) {
+      return yield* runAddDryRun(write, {
+        action: "create",
+        refusal,
+        candidates: [],
+        duplicate,
+      });
+    }
+    // An oversized memory is invalid whatever it duplicates, so size comes first.
+    const sizeReport = yield* validateEmbeddingFit(
+      "add",
+      "Memory",
       addEmbeddingDocumentParts(content, metadata),
     );
-    yield* Effect.sync(() => {
-      printCommandOutput(
-        { command: "add", outputMode: commandCtx.outputMode },
-        {
-          command: "add",
-          dry_run: true,
-          action: "create",
-          size,
-        } satisfies JsonObject,
-      );
-      if (!size.within_budget) {
-        process.exitCode = 1;
-      }
-    });
-  });
-}
-
-function runPlainAddInsert(params: {
-  database: MemoryDatabaseApi;
-  commandCtx: CommandContext;
-  content: string;
-  metadata: AddMetadata;
-  sizeReport: EmbeddingSizeReport | undefined;
-  conflictState: {
-    includeConflicts: boolean;
-    potentialConflicts: JsonObject[];
-  };
-}): Effect.Effect<void, MemoryDatabaseError | CommandError> {
-  const { database, commandCtx, content, metadata } = params;
-  return Effect.gen(function* () {
-    const { outputMode } = commandCtx;
+    if (refusal !== undefined) {
+      return yield* commandError("add", refusal);
+    }
     const result = yield* addInsert(database, content, metadata);
     const insertId = jsonNumber(jsonObject(result)?.lastInsertRowid) ?? 0;
     const created = yield* getMemoryById(database, insertId);
@@ -1103,19 +1286,20 @@ function runPlainAddInsert(params: {
       metadata.memoryType === "status"
         ? yield* findStatusCascadeCandidates(database, metadata.tags, createdId)
         : [];
-    yield* Effect.sync(() =>
+    yield* Effect.sync(() => {
+      warnEmptyTags(createdId, metadata);
       printAddResult({
         outputMode,
         createdId,
         created,
         content,
         metadata,
-        includeConflicts: params.conflictState.includeConflicts,
-        potentialConflicts: params.conflictState.potentialConflicts,
+        related,
         statusCascade,
-        sizeReport: params.sizeReport,
-      }),
-    );
+        sizeReport,
+      });
+    });
+    return true;
   });
 }
 
@@ -1130,41 +1314,16 @@ export function handleAddCommand(commandCtx: CommandContext) {
       commandCtx.fileSystem,
     );
     const metadata = yield* resolveAddMetadata(flags, commandCtx.fileSystem);
+    warnUnmatchedPaths(metadata);
+    const write: AddWrite = { database, flags, content, metadata, outputMode };
     if (
-      yield* maybeHandleAddUpsert(database, {
-        flags,
-        content,
-        metadata,
-        outputMode,
-      })
+      (yield* maybeHandleUpdateId(write)) ||
+      (yield* maybeHandleAddUpsert(write))
     ) {
       return;
     }
     assertAddEvidence(metadata);
-    if (hasFlag(flags, "--dry-run")) {
-      yield* runAddDryRun(commandCtx, content, metadata);
-      return;
-    }
-    const embeddingBreakdown = yield* validateEmbeddingFit(
-      "add",
-      "Memory",
-      addEmbeddingDocumentParts(content, metadata),
-    );
-    const sizeReport = embeddingBreakdown;
-    const conflictState = yield* detectAddConflicts(
-      database,
-      outputMode,
-      content,
-      metadata,
-    );
-    yield* runPlainAddInsert({
-      database,
-      commandCtx,
-      content,
-      metadata,
-      sizeReport,
-      conflictState,
-    });
+    yield* runPlainAdd(write);
   });
 }
 
@@ -1199,15 +1358,24 @@ function resolveUpdateTargets(
   return Effect.succeed({ targetIds: parseIdSpec(idRaw), contentFromArg });
 }
 
+/** The new content, or undefined when the update changes only other fields. */
 function resolveUpdateContent(
   flags: CommandFlags,
   contentFromArg: string | undefined,
   fileSystem: CommandContext["fileSystem"],
-): Effect.Effect<string, unknown> {
+): Effect.Effect<string | undefined, unknown> {
   return parseContentFromFileFlag(flags, fileSystem).pipe(
     Effect.map((contentFromFile) => {
       if (contentFromArg && contentFromFile !== undefined) {
         usageError(`Usage: ${UPDATE_USAGE}`);
+      }
+      if (contentFromFile === undefined && !contentFromArg) {
+        if (!UPDATE_FIELD_FLAGS.some((flag) => hasFlag(flags, flag))) {
+          usageError(
+            `Give the new content or a field to change. Usage: ${UPDATE_USAGE}`,
+          );
+        }
+        return undefined;
       }
       return requireMemoryContent(
         contentFromFile ?? contentFromArg,
@@ -1221,78 +1389,41 @@ function optionalCanonicalTags(value: string | undefined) {
   return value === undefined ? undefined : canonicalTags(value);
 }
 
-function optionalUpdateSpecs(flags: CommandFlags): UpdateSpec[] {
-  const specs: UpdateSpec[] = [];
-  const maybeSpecs: (UpdateSpec | undefined)[] = [
-    (() => {
-      const value = optionalCanonicalTags(getFlagValue(flags, "--tags"));
-      return value === undefined ? undefined : { clause: "tags = ?", value };
-    })(),
-    (() => {
-      const value = getFlagValue(flags, "--context");
-      return value === undefined ? undefined : { clause: "context = ?", value };
-    })(),
-    (() => {
-      const value = requireMemoryType(flags);
-      return value === undefined
-        ? undefined
-        : { clause: "memory_type = ?", value };
-    })(),
-    (() => {
-      const value = requireCertainty(flags);
-      return value === undefined
-        ? undefined
-        : { clause: "certainty = ?", value };
-    })(),
-    (() => {
-      const value = getFlagValue(flags, "--updated-by");
-      return value === undefined
-        ? undefined
-        : { clause: "last_updated_by = ?", value };
-    })(),
-    (() => {
-      const value = parseRefsFlag(flags);
-      return value === undefined
-        ? undefined
-        : { clause: "refs = ?", value: JSON.stringify(value) };
-    })(),
-
-    (() => {
-      const value = parseIntegerFlag(flags, "--expires-after-days", {
-        allowNullLiteral: true,
-      });
-      return value === undefined
-        ? undefined
-        : { clause: "expires_after_days = ?", value };
-    })(),
-  ];
-
-  for (const spec of maybeSpecs) {
-    if (spec) {
-      specs.push(spec);
-    }
-  }
-  specs.push(
-    ...evidenceUpdateSpecs(
-      parseEvidenceFlag(flags),
-      parseValidationGapsFlag(flags),
-    ),
-  );
-  return specs;
+function updateSpec(
+  clause: string,
+  value: string | number | null | undefined,
+): UpdateSpec[] {
+  return value === undefined ? [] : [{ clause, value }];
 }
 
-function updateSetsAndParams(flags: CommandFlags, content: string) {
+/** The SET clauses of one row's update; only fields that were given are written. */
+function updateSetsAndParams(flags: CommandFlags, changes: RowChanges) {
+  const refs = parseRefsFlag(flags);
+  const requestedType = requireMemoryType(flags);
+  const specs = [
+    ...updateSpec("content = ?", changes.content),
+    ...updateSpec("tags = ?", changes.tags),
+    ...updateSpec("context = ?", changes.context),
+    ...updateSpec("memory_type = ?", requestedType),
+    ...updateSpec("certainty = ?", requireCertainty(flags)),
+    ...updateSpec("last_updated_by = ?", getFlagValue(flags, "--updated-by")),
+    ...updateSpec(
+      "refs = ?",
+      refs === undefined ? undefined : JSON.stringify(refs),
+    ),
+    ...updateSpec(
+      "expires_after_days = ?",
+      parseIntegerFlag(flags, "--expires-after-days", {
+        allowNullLiteral: true,
+      }),
+    ),
+    ...evidenceUpdateSpecs(parseEvidenceFlag(flags), changes.validationGaps),
+  ];
   const sets = [
-    "content = ?",
+    ...specs.map((spec) => spec.clause),
     "updated_at = datetime('now')",
     "update_count = COALESCE(update_count, 0) + 1",
   ];
-  const params: (string | number | null)[] = [content];
-  for (const spec of optionalUpdateSpecs(flags)) {
-    sets.push(spec.clause);
-    params.push(spec.value);
-  }
-  const requestedType = requireMemoryType(flags);
   if (
     requestedType !== undefined &&
     requestedType !== "status" &&
@@ -1300,14 +1431,19 @@ function updateSetsAndParams(flags: CommandFlags, content: string) {
   ) {
     sets.push("expires_after_days = NULL");
   }
-  return { sets, params };
+  return { sets, params: specs.map((spec) => spec.value) };
 }
+
+/** A row to update, the update_count it was read at, and its SET clauses. */
+type BatchTarget = {
+  updateCount: number;
+  update: { sets: string[]; params: (string | number | null)[] };
+};
 
 function runBatchMemoryUpdate(
   database: MemoryDatabaseApi,
   targetIds: number[],
-  update: { sets: string[]; params: (string | number | null)[] },
-  snapshots: Map<number, number>,
+  targets: Map<number, BatchTarget>,
   activeOnly: boolean,
 ): Effect.Effect<
   {
@@ -1324,10 +1460,12 @@ function runBatchMemoryUpdate(
     const missingIds: number[] = [];
     const conflictIds: number[] = [];
     for (const [index, targetId] of targetIds.entries()) {
-      if (!snapshots.has(targetId)) {
+      const target = targets.get(targetId);
+      if (!target) {
         missingIds.push(targetId);
         continue;
       }
+      const { update } = target;
       const outcome = yield* database
         .get(
           `UPDATE memories SET ${update.sets.join(", ")} WHERE repository = ? AND id = ? AND COALESCE(update_count, 0) = ?${activeOnly ? " AND status = 'active'" : ""} RETURNING *`,
@@ -1335,7 +1473,7 @@ function runBatchMemoryUpdate(
             ...update.params,
             repositoryForCurrentDirectory(),
             targetId,
-            snapshots.get(targetId)!,
+            target.updateCount,
           ],
         )
         .pipe(
@@ -1459,20 +1597,26 @@ function printUpdateResults(params: {
 function runUpdateDryRun(
   commandCtx: CommandContext,
   prospective: ProspectiveUpdate[],
+  replacements: Map<number, ReplacementAssessment>,
 ): Effect.Effect<void, CommandError> {
   return Effect.gen(function* () {
     const targets: JsonObject[] = [];
-    let anyOverBudget = false;
+    let refused = false;
     for (const entry of prospective) {
       const size = embeddingSizeReport(entry.document);
-      anyOverBudget = anyOverBudget || !size.within_budget;
-      const target: JsonObject = {
-        id: entry.id,
-        size,
-      };
+      const replacement = replacements.get(entry.id);
+      refused =
+        refused || !size.within_budget || replacement?.action === "refuse";
+      const target: JsonObject = { id: entry.id, size };
       const dropped = droppedFor(entry.previous, entry.document.content);
       if (dropped) {
         target.dropped = dropped;
+      }
+      if (replacement) {
+        target.replacement = replacementSummary(replacement);
+      }
+      if (replacement?.refusal !== undefined) {
+        target.note = replacement.refusal;
       }
       targets.push(target);
     }
@@ -1483,7 +1627,8 @@ function runUpdateDryRun(
         count: targets.length,
         targets,
       });
-      if (anyOverBudget) {
+      // A dry run exits the way the real write would.
+      if (refused) {
         process.exitCode = 1;
       }
     });
@@ -1491,7 +1636,7 @@ function runUpdateDryRun(
 }
 
 function validateProspectiveUpdates(
-  prospective: Array<{ id: number; document: MemoryVectorDocument }>,
+  prospective: ProspectiveUpdate[],
 ): Effect.Effect<Map<number, EmbeddingSizeReport>, CommandError> {
   return Effect.gen(function* () {
     const sizeReports = new Map<number, EmbeddingSizeReport>();
@@ -1509,12 +1654,9 @@ function validateProspectiveUpdates(
 
 /** One content belongs to one record; the same text on several ids erases them. */
 function assertSingleContentTarget(targetIds: number[]): void {
-  if (targetIds.length === 0) {
-    usageError(`Usage: ${UPDATE_USAGE}`);
-  }
   if (targetIds.length > 1) {
     usageError(
-      `update replaces the content of one memory, and ${targetIds.length} ids were given (${targetIds.join(", ")}). Update each memory with its own content. Nothing was written.`,
+      `update replaces the content of one memory, and ${targetIds.length} ids were given (${targetIds.join(", ")}). Update each memory with its own content, or leave the content out to change only fields. Nothing was written.`,
     );
   }
 }
@@ -1542,46 +1684,54 @@ function assertExpectedUpdateCount(
       );
 }
 
-export function handleUpdateCommand(commandCtx: CommandContext) {
+/** The replacement assessment of every target whose content the update replaces. */
+function assessReplacements(
+  database: MemoryDatabaseApi,
+  prospective: ProspectiveUpdate[],
+  allowDrop: boolean,
+): Effect.Effect<Map<number, ReplacementAssessment>, MemoryDatabaseError> {
+  return Effect.forEach(
+    prospective.filter((entry) => entry.changes.content !== undefined),
+    (entry) =>
+      assessContentReplacement(
+        database,
+        entry.previous,
+        entry.document.content,
+        allowDrop,
+      ).pipe(Effect.map((assessment) => [entry.id, assessment] as const)),
+  ).pipe(Effect.map((entries) => new Map(entries)));
+}
+
+/** Writes the validated updates and prints what changed and what was lost. */
+function applyUpdates(
+  commandCtx: CommandContext,
+  targetIds: number[],
+  prospective: ProspectiveUpdate[],
+  sizeReports: Map<number, EmbeddingSizeReport>,
+): Effect.Effect<void, MemoryDatabaseError> {
   return Effect.gen(function* () {
     const { flags } = commandCtx;
     const database = requireDatabase(commandCtx);
-    const { targetIds, contentFromArg } = yield* resolveUpdateTargets(
-      flags,
-      commandCtx.positionals,
-      database,
-    );
-    const content = yield* resolveUpdateContent(
-      flags,
-      contentFromArg,
-      commandCtx.fileSystem,
-    );
-    assertSingleContentTarget(targetIds);
-    const prospective = yield* prospectiveUpdateDocuments(
-      flags,
-      database,
-      targetIds,
-      content,
-    );
-    yield* assertExpectedUpdateCount(flags, prospective);
-    if (hasFlag(flags, "--dry-run")) {
-      yield* runUpdateDryRun(commandCtx, prospective);
-      return;
-    }
-    const sizeReports = yield* validateProspectiveUpdates(prospective);
-    const { sets, params } = updateSetsAndParams(flags, content);
     const result = yield* runBatchMemoryUpdate(
       database,
       targetIds,
-      { sets, params },
-      new Map(prospective.map((entry) => [entry.id, entry.updateCount])),
+      new Map(
+        prospective.map((entry) => [
+          entry.id,
+          {
+            updateCount: entry.updateCount,
+            update: updateSetsAndParams(flags, entry.changes),
+          },
+        ]),
+      ),
       hasFlag(flags, "--match"),
     );
     const { rows, missingIds } = result;
     const updatedIds = new Set(rows.map((row) => Number(row.id)));
     const reconciliations = yield* Effect.forEach(
       prospective.filter((entry) => updatedIds.has(entry.id)),
-      (entry) => reconcileWrite(database, entry.previous, content),
+      (entry) =>
+        reconcileWrite(database, entry.previous, entry.document.content),
     );
     yield* Effect.sync(() => {
       if (missingIds.length || result.conflictIds.length || result.error) {
@@ -1613,6 +1763,50 @@ export function handleUpdateCommand(commandCtx: CommandContext) {
         reconciliations,
       });
     });
+  });
+}
+
+export function handleUpdateCommand(commandCtx: CommandContext) {
+  return Effect.gen(function* () {
+    const { flags } = commandCtx;
+    const database = requireDatabase(commandCtx);
+    const { targetIds, contentFromArg } = yield* resolveUpdateTargets(
+      flags,
+      commandCtx.positionals,
+      database,
+    );
+    const content = yield* resolveUpdateContent(
+      flags,
+      contentFromArg,
+      commandCtx.fileSystem,
+    );
+    if (content !== undefined) {
+      assertSingleContentTarget(targetIds);
+    }
+    const prospective = yield* prospectiveUpdates(
+      flags,
+      database,
+      targetIds,
+      content,
+    );
+    yield* assertExpectedUpdateCount(flags, prospective);
+    const replacements = yield* assessReplacements(
+      database,
+      prospective,
+      hasFlag(flags, "--allow-drop"),
+    );
+    if (hasFlag(flags, "--dry-run")) {
+      yield* runUpdateDryRun(commandCtx, prospective, replacements);
+      return;
+    }
+    const refused = [...replacements.values()].find(
+      (assessment) => assessment.refusal !== undefined,
+    );
+    if (refused?.refusal !== undefined) {
+      return yield* commandError("update", refused.refusal);
+    }
+    const sizeReports = yield* validateProspectiveUpdates(prospective);
+    yield* applyUpdates(commandCtx, targetIds, prospective, sizeReports);
   });
 }
 
@@ -1758,18 +1952,20 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
         "--superseded-by must name an existing memory in this repository.",
       );
     }
-    const snapshots = new Map<number, number>();
+    const targets = new Map<number, BatchTarget>();
     for (const id of targetIds) {
       const row = yield* getMemoryById(database, id);
       if (row) {
-        snapshots.set(id, jsonNumber(row.update_count) ?? 0);
+        targets.set(id, {
+          updateCount: jsonNumber(row.update_count) ?? 0,
+          update: { sets, params },
+        });
       }
     }
     const result = yield* runBatchMemoryUpdate(
       database,
       targetIds,
-      { sets, params },
-      snapshots,
+      targets,
       hasFlag(flags, "--match"),
     );
     const { rows, missingIds } = result;

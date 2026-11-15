@@ -63,6 +63,11 @@ const validationGapsField = Schema.optionalKey(
     "Known limits of the validation, e.g. unconfirmed user intent or untested platforms. Not embedded.",
 });
 
+const allowDropField = optionalBoolean.annotateKey({
+  description:
+    "Set true to replace content even though the update drops a path, flag or symbol that no other active record mentions, or shares almost nothing with the stored content. Without it such an update is refused and the error names what would be lost.",
+});
+
 const filterFields = {
   status: Schema.optionalKey(MemoryStatusSchema),
   memory_type: Schema.optionalKey(MemoryTypeSchema),
@@ -261,15 +266,21 @@ export const MemoryAddArgsInputSchema = Schema.Struct({
   }),
   upsert_match: optionalString.annotateKey({
     description:
-      "Resolve an existing memory by topic. A strong match is updated; a weak match refuses creation unless force is true.",
+      "Topic query that resolves an existing memory. A strong match is updated with this content; a weak match refuses the write and lists the candidates. Omit it with update_id or create_new.",
   }),
-  force: optionalBoolean.annotateKey({
-    description: "Create despite a weak upsert_match result.",
+  update_id: Schema.optionalKey(memoryId).annotateKey({
+    description:
+      "Id of the active memory this content replaces: the same topic, restated. Fields you omit keep their stored values. Cannot be combined with upsert_match or create_new.",
   }),
+  create_new: optionalBoolean.annotateKey({
+    description:
+      "Set true after reading the existing records when this is a different fact. Creates a new memory despite an upsert match or a near-duplicate.",
+  }),
+  allow_drop: allowDropField,
   upsert_threshold: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   ).annotateKey({
-    description: `Minimum upsert match score, default ${UPSERT_DEFAULT_MIN_SCORE}; similarity must also reach ${UPSERT_MIN_SIMILARITY}.`,
+    description: `Minimum rank_score of a strong upsert match, default ${UPSERT_DEFAULT_MIN_SCORE}; text_overlap must also reach ${UPSERT_MIN_SIMILARITY}.`,
   }),
 });
 export type MemoryAddArgsInput = typeof MemoryAddArgsInputSchema.Type;
@@ -285,7 +296,9 @@ export type MemoryAddArgs = {
   readonly status: MemoryStatus;
   readonly expires_after_days?: number;
   readonly upsert_match?: string;
-  readonly force?: boolean;
+  readonly update_id?: number;
+  readonly create_new?: boolean;
+  readonly allow_drop?: boolean;
   readonly upsert_threshold: number;
 };
 export function normalizeMemoryAddArgs(
@@ -303,7 +316,9 @@ export function normalizeMemoryAddArgs(
     status: input.status ?? DEFAULT_MEMORY_STATUS,
     expires_after_days: input.expires_after_days,
     upsert_match: input.upsert_match,
-    force: input.force,
+    update_id: input.update_id,
+    create_new: input.create_new,
+    allow_drop: input.allow_drop,
     upsert_threshold: input.upsert_threshold ?? UPSERT_DEFAULT_MIN_SCORE,
   };
 }
@@ -315,17 +330,39 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
     description:
       "Topic query identifying the update target. Exactly one of id or match is required.",
   }),
-  content: Schema.optionalKey(MemoryContentSchema),
+  content: Schema.optionalKey(MemoryContentSchema).annotateKey({
+    description:
+      "The whole new content. Omit it to change only the other fields; the stored content is then kept.",
+  }),
+  allow_drop: allowDropField,
   tags: optionalString.annotateKey({
-    description: "Comma-separated tags, e.g. area:cli,topic:backend.",
+    description:
+      "Comma-separated tags that replace the stored tags, e.g. area:cli,topic:backend. To change some tags, use add_tags and remove_tags instead.",
+  }),
+  add_tags: optionalString.annotateKey({
+    description:
+      "Comma-separated tags to add to the stored tags. Cannot be combined with tags.",
+  }),
+  remove_tags: optionalString.annotateKey({
+    description:
+      "Comma-separated tags to remove from the stored tags. Cannot be combined with tags.",
   }),
   context: optionalString.annotateKey({
-    description: "Supporting context for the memory.",
+    description:
+      'Supporting context that replaces the stored context; "" clears it.',
   }),
   memory_type: Schema.optionalKey(MemoryTypeSchema),
   certainty: Schema.optionalKey(CertaintySchema),
   evidence: evidenceField,
   validation_gaps: validationGapsField,
+  add_validation_gaps: Schema.optionalKey(ValidationGapsSchema).annotateKey({
+    description:
+      "Validation gaps to append to the stored ones. Cannot be combined with validation_gaps.",
+  }),
+  remove_validation_gaps: Schema.optionalKey(ValidationGapsSchema).annotateKey({
+    description:
+      "Stored validation gaps to remove, by their exact text. Cannot be combined with validation_gaps.",
+  }),
   status: Schema.optionalKey(MemoryStatusSchema),
   expires_after_days: Schema.optionalKey(positiveInt).annotateKey({
     description: "Expire after N days. Only valid for status memories.",

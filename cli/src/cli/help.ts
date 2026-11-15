@@ -1,4 +1,11 @@
-import { EVIDENCE_KINDS, MATCH_THRESHOLDS } from "@machine-memory/contract";
+import {
+  EVIDENCE_KINDS,
+  MATCH_THRESHOLDS,
+  NEAR_DUPLICATE_THRESHOLD,
+  REPLACEMENT_MIN_OVERLAP,
+  UPSERT_DEFAULT_MIN_SCORE,
+  UPSERT_MIN_SIMILARITY,
+} from "@machine-memory/contract";
 
 import {
   CERTAINTY_LEVELS,
@@ -35,8 +42,14 @@ export function helpPayload() {
         'machine-memory size "<text>" [--tags <tags>] [--context <context>] reports bytes, remaining_bytes, over_by_bytes, and the bytes each field uses. add and update accept --dry-run for the same report without writing.',
     },
     output_fields: {
-      conflict_count:
-        "Number of active memories that may conflict with newly added content (also listed in potential_conflicts).",
+      related:
+        "add: active memories that strongly match the new one, listed so you can check it does not repeat or contradict them. Absent when none match strongly. --brief reports related_count.",
+      upsert_match:
+        "add --upsert-match: the record the query matched. rank_score (0 to 100) is how well the record matches the query; text_overlap (0 to 1) is the share of terms the record and the new content have in common. A match is strong only when both pass their bars. shared_identifiers lists the paths, flags and symbols both texts name. --dry-run reports the same record as would_match.",
+      replacement:
+        "update/add --dry-run, when content is replaced: action (update or refuse), text_overlap with the stored content, orphaned_identifiers (names the new content drops that no other active memory mentions) and held_elsewhere (dropped names another memory still carries, with its ids).",
+      path_tag_matches:
+        "add --path: for each path, the tag-map prefix that matched and the tags it added. A path that matches no prefix is reported on stderr and adds no tags.",
       status_cascade_count:
         "For a newly added status memory: how many other active status memories share its tags and are candidates to deprecate (see status_cascade.suggested_command).",
       size: "On a successful add or update: bytes the record's embedded text uses and remaining_bytes of the 2,000-byte limit. size and --dry-run return the full report with over_by_bytes and per-field parts.",
@@ -50,9 +63,9 @@ export function helpPayload() {
       evidence:
         "Kinds of evidence behind a claim (see enums.evidence); [] means unspecified. add/update reject --certainty verified without at least one kind. Legacy verified rows keep their certainty until re-asserted; doctor lists them as verified_without_evidence. Not embedded.",
       validation_gaps:
-        "Known limits of a claim's validation, e.g. unconfirmed intent or untested platforms. --validation-gaps takes one plain-text gap or a JSON array; none clears. Not embedded. --json-min reports validation_gap_count.",
+        "Known limits of a claim's validation, e.g. unconfirmed intent or untested platforms. --validation-gaps takes one plain-text gap or a JSON array and replaces the stored gaps; none clears. update --add-gap and --remove-gap change single gaps. Not embedded. --json-min reports validation_gap_count.",
       dropped:
-        "update/diff/add --upsert-match: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
+        "update/diff/add --upsert-match/add --update-id: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
       review_candidates:
         "update/deprecate/add --upsert-match: other active records that may rely on the changed or retired premise (strong = shares a literal path or identifier). Update or deprecate them too. Minimal output lists review_candidate_ids.",
       snippet:
@@ -77,8 +90,7 @@ export function helpPayload() {
       help: "help [<command>|workflow]: this catalog, one command, or the memory workflow in full (scan, what to store, writes, evidence, delegation, checkpoint).",
       add: {
         usage: ADD_USAGE,
-        notes:
-          "--dry-run prints the size report and, with --upsert-match, the action the real write takes (update, create or refuse) and the memory that would be matched, without writing; it exits 1 when the write would be refused. With --upsert-match, a best match that fails the strength bar (score below --upsert-threshold <0-100>, default 32, or similarity below 0.62) is refused unless --force (or an interactive confirm) creates a new record. Content that is empty, 'null' or 'undefined' is refused.",
+        notes: `A plain add is refused when an active memory already states nearly the same thing (text_overlap at or above ${NEAR_DUPLICATE_THRESHOLD}); the error names that memory. --update-id <id> replaces that memory's content and keeps the fields you omit. --create-new says you read the existing memories and this is a different fact. --upsert-match <query> finds the target by topic: a strong match (rank_score at or above --upsert-threshold <0-100>, default ${UPSERT_DEFAULT_MIN_SCORE}, and text_overlap at or above ${UPSERT_MIN_SIMILARITY}) is updated in place, a weak match is refused with up to three candidates, and no match creates a record. Replacing content is refused when it drops a path, flag or symbol that no other active memory mentions; carry the detail over, or pass --allow-drop when it is obsolete. --dry-run prints the action the real write takes (update, create or refuse), the reason for a refusal in note, and the size report, without writing; it exits 1 when the write would be refused. --path takes one path or several separated by commas. Content that is empty, 'null' or 'undefined' is refused.`,
       },
       query: {
         usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--semantic|--hybrid] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -101,8 +113,7 @@ export function helpPayload() {
       },
       update: {
         usage: UPDATE_USAGE,
-        notes:
-          "Replaces the content of exactly one memory; several ids are refused. --expected-update-count <n> refuses the update when the stored update_count differs from the one you read. --dry-run prints the size report and any dropped details without writing. A content change returns dropped and review_candidates, and reports them on stderr. Content that is empty, 'null' or 'undefined' is refused. Accepts --brief|--json-min|--quiet.",
+        notes: `Only the fields you give change. Leave the content out to change only metadata, on one id or several: update 5,6 --type decision. --add-tags and --remove-tags edit the stored tags, --add-gap and --remove-gap edit the stored validation gaps, and --clear-context empties the context; --tags, --context and --validation-gaps replace the stored value instead. Content replaces the whole stored content of exactly one memory. It is refused when it drops a path, flag or symbol that no other active memory mentions, or shares less than ${REPLACEMENT_MIN_OVERLAP} of its terms with the stored content: carry the detail over, add a new memory when this is a different fact, or pass --allow-drop when the detail is obsolete. --expected-update-count <n> refuses the update when the stored update_count differs from the one you read. --dry-run prints the size report, dropped details and the replacement decision without writing, and exits 1 when the write would be refused. A content change returns dropped and review_candidates, and reports them on stderr. Content that is empty, 'null' or 'undefined' is refused. Accepts --brief|--json-min|--quiet.`,
       },
       restore: {
         usage: `restore <id> --revision <revision_id> --expected-update-count <n>${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -212,7 +223,10 @@ const HELP_FOCUS = {
   add: {
     sections: ["embedding_budget"],
     fields: [
-      "conflict_count",
+      "related",
+      "upsert_match",
+      "replacement",
+      "path_tag_matches",
       "status_cascade_count",
       "size",
       "evidence",
@@ -229,6 +243,7 @@ const HELP_FOCUS = {
       "evidence",
       "validation_gaps",
       "dropped",
+      "replacement",
       "review_candidates",
     ],
     enums: ["memory_type", "certainty", "evidence"],
@@ -322,8 +337,10 @@ function workflowHelpPayload(): JsonObject {
     ],
     write: [
       'Check size first: size "<text>" or --dry-run on add and update; both exit 1 when over budget and name the deficit. See embedding_budget in machine-memory help.',
-      'Change a record with update <id> "<whole new content>" <backend>, or update --match "<topic>" when the id is unknown. An update replaces the whole content: read the record first and carry over the details that still hold, such as source paths, versions and caveats. --expected-update-count <n> refuses the update when the record changed since you read it.',
-      'Create a record with add "<content>" --upsert-match "<topic>" <backend>. A strong match is updated in place; a weak match is refused, because it may be the record you meant: inspect it with --dry-run, then update it by id or pass --force to create a new record.',
+      'Change a record with update <id> "<whole new content>" <backend>, or update --match "<topic>" when the id is unknown. Content replaces the whole stored content: read the record first and carry over the details that still hold, such as source paths, versions and caveats. --expected-update-count <n> refuses the update when the record changed since you read it.',
+      "Change only metadata by leaving the content out: update <id> --type decision, --add-tags, --remove-tags, --add-gap, --remove-gap, --clear-context, --certainty with --evidence. The stored content is untouched.",
+      "A content replacement is refused when it drops a path, flag or symbol that no other active record mentions, or shares almost nothing with the stored content. The error lists what would be lost. Carry it over, add a new record and deprecate the old one when the fact changed, or pass --allow-drop when the detail is obsolete.",
+      'Create a record with add "<content>" --upsert-match "<topic>" <backend>. A strong match is updated in place. A weak match is refused with up to three candidates, and a plain add is refused when a record already states nearly the same thing. Read the record the error names, then repeat the add with --update-id <id> when it states the same fact, or --create-new when yours is a different fact.',
       "update --dry-run and diff <id> report dropped identifiers and sentences before writing. After a write, dropped and review_candidates are also reported on stderr.",
       "Recover an overwrite with history <id>, then restore <id> --revision <revision_id> --expected-update-count <current_update_count>, using the current count from history. Delete is permanent and removes history; prefer deprecate.",
     ],

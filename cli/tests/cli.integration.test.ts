@@ -509,22 +509,188 @@ describe("CLI integration", () => {
     const kept = await runCli(cwd, dbPath, "get", id);
     expect(kept.json.update_count).toBe(0);
 
-    const updated = await runCli(
-      cwd,
-      dbPath,
+    // No other record mentions scripts/rollback.sh, so dropping it is refused.
+    const lossy = [
       "update",
       id,
       "Deploys run through scripts/deploy.sh.",
       "--expected-update-count",
       "0",
       "--json-min",
+    ];
+    const refused = await runCli(cwd, dbPath, ...lossy);
+    expect(refused.code).toBe(1);
+    expect(String(refused.json.error)).toContain(
+      "it drops `scripts/rollback.sh`, which no other active record mentions",
     );
+    expect(String(refused.json.error)).toContain("--allow-drop");
+    const untouched = await runCli(cwd, dbPath, "get", id);
+    expect(untouched.json.update_count).toBe(0);
+    expect(untouched.json.content).toContain("scripts/rollback.sh");
+    expect((await runCli(cwd, dbPath, "history", id)).json.total_count).toBe(0);
+
+    const updated = await runCli(cwd, dbPath, ...lossy, "--allow-drop");
     expect(updated.code).toBe(0);
     expect(updated.json).toHaveProperty("dropped");
     // stdout may be piped through a filter; the loss is also on stderr.
-    expect(updated.stderr).toContain(`Update of memory ${id} dropped`);
+    expect(updated.stderr).toContain(`Update of memory ${id}: dropped`);
     const current = await runCli(cwd, dbPath, "get", id);
     expect(current.json.update_count).toBe(1);
+  });
+
+  it("lets an update drop a name another record still carries", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploys run through scripts/deploy.sh. Rollbacks use scripts/rollback.sh.",
+      "--type",
+      "decision",
+      "--quiet",
+    );
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "The ops runbook documents scripts/rollback.sh and its exit codes.",
+      "--quiet",
+    );
+    const narrowed = ["update", "1", "Deploys run through scripts/deploy.sh."];
+
+    const dryRun = await runCli(cwd, dbPath, ...narrowed, "--dry-run");
+    expect(dryRun.code).toBe(0);
+    expect(dryRun.json.targets?.[0]?.replacement).toMatchObject({
+      action: "update",
+      orphaned_identifiers: [],
+      held_elsewhere: [{ identifier: "scripts/rollback.sh", ids: [2] }],
+    });
+    expect((await runCli(cwd, dbPath, ...narrowed)).code).toBe(0);
+
+    // scripts/deploy.sh is now mentioned nowhere else: the dry run and the
+    // write agree that dropping it is refused.
+    const emptied = ["update", "1", "Deploys are started by hand."];
+    const refusedDryRun = await runCli(cwd, dbPath, ...emptied, "--dry-run");
+    expect(refusedDryRun.code).toBe(1);
+    expect(refusedDryRun.json.targets?.[0]?.replacement).toMatchObject({
+      action: "refuse",
+      orphaned_identifiers: ["scripts/deploy.sh"],
+    });
+    const refused = await runCli(cwd, dbPath, ...emptied);
+    expect(refused.code).toBe(1);
+    expect(refused.json.error).toBe(refusedDryRun.json.targets?.[0]?.note);
+    const kept = await runCli(cwd, dbPath, "get", "1");
+    expect(kept.json.content).toBe("Deploys run through scripts/deploy.sh.");
+    expect(kept.json.update_count).toBe(1);
+  });
+
+  it("changes metadata without touching the content", async () => {
+    const { cwd, dbPath } = await createProject();
+    const content = "Deploys run through scripts/deploy.sh.";
+    await runCli(cwd, dbPath, "add", content, "--tags", "area:ops", "--quiet");
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "The users table stores UUID primary keys.",
+      "--context",
+      "Seen in the schema",
+      "--quiet",
+    );
+
+    const retyped = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1",
+      "--type",
+      "decision",
+      "--add-tags",
+      "kind:decision,area:ops",
+      "--add-gap",
+      "untested on Windows",
+    );
+    expect(retyped.code).toBe(0);
+    const first = await runCli(cwd, dbPath, "get", "1");
+    expect(first.json).toMatchObject({
+      content,
+      memory_type: "decision",
+      tags: "area:ops,kind:decision",
+      validation_gaps: ["untested on Windows"],
+      update_count: 1,
+    });
+    // The previous state is in history and the content is still searchable.
+    const history = await runCli(cwd, dbPath, "history", "1");
+    expect(history.json.total_count).toBe(1);
+    expect(history.json.results?.[0]?.content).toBe(content);
+    const found = await runCli(cwd, dbPath, "query", "deploy.sh", "--json-min");
+    expect(found.json.results?.[0]?.id).toBe(1);
+
+    // Removing what was added restores the stored lists.
+    const reverted = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1",
+      "--remove-tags",
+      "kind:decision",
+      "--remove-gap",
+      "untested on Windows",
+    );
+    expect(reverted.code).toBe(0);
+    expect((await runCli(cwd, dbPath, "get", "1")).json).toMatchObject({
+      content,
+      tags: "area:ops",
+      validation_gaps: [],
+      update_count: 2,
+    });
+
+    // Several ids are allowed when no content is given.
+    const both = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1,2",
+      "--clear-context",
+      "--updated-by",
+      "tester",
+    );
+    expect(both.code).toBe(0);
+    expect((await runCli(cwd, dbPath, "get", "2")).json).toMatchObject({
+      content: "The users table stores UUID primary keys.",
+      context: "",
+      last_updated_by: "tester",
+      update_count: 1,
+    });
+
+    const missingGap = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1",
+      "--remove-gap",
+      "never stored",
+    );
+    expect(missingGap.code).toBe(1);
+    expect(String(missingGap.json.error)).toContain("No stored validation gap");
+    const nothing = await runCli(cwd, dbPath, "update", "1");
+    expect(nothing.code).not.toBe(0);
+    expect(String(nothing.json.error)).toContain(
+      "Give the new content or a field to change",
+    );
+    const mixed = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1",
+      "--tags",
+      "a",
+      "--add-tags",
+      "b",
+    );
+    expect(mixed.code).not.toBe(0);
+    expect(String(mixed.json.error)).toContain("--tags replaces the stored");
+    expect((await runCli(cwd, dbPath, "get", "1")).json.update_count).toBe(3);
   });
 
   it("warns about a repository without memories and guards writes to it", async () => {
@@ -606,6 +772,44 @@ describe("CLI integration", () => {
     );
     const fetched = await runCli(cwd, dbPath, "get", String(added.json.id));
     expect(fetched.json.tags).toBe("architecture,cli");
+
+    // Several paths: the result names the prefix each one matched, and a path
+    // that matched nothing is reported instead of silently adding no tags.
+    const several = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Vitest runs the integration tests in a forked pool",
+      "--path",
+      "src/cli/help.ts,docs/readme.md",
+    );
+    expect(several.code).toBe(0);
+    expect(several.json.tags).toBe("architecture,cli");
+    expect(several.json.path_tag_matches).toEqual([
+      {
+        path: "src/cli/help.ts",
+        prefix: "src/cli",
+        tags: ["architecture", "cli"],
+      },
+    ]);
+    expect(several.stderr).toContain(
+      "--path docs/readme.md matched no prefix of the tag map",
+    );
+    expect(several.stderr).not.toContain("without tags");
+
+    const untagged = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "The users table stores UUID primary keys",
+      "--path",
+      "docs/readme.md",
+      "--quiet",
+    );
+    expect(untagged.code).toBe(0);
+    expect(untagged.stderr).toContain(
+      `Memory ${untagged.json.id} was written without tags`,
+    );
   });
 
   it("migrates a legacy database when migrate is requested", async () => {
@@ -1544,7 +1748,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(strong.json.size?.within_budget).toBe(true);
 
     // The dry run reports what the real write does: a weak match is refused,
-    // creates only with --force, and nothing matching creates.
+    // --create-new creates, and nothing matching creates.
     const weakArgs = [
       "add",
       "unrelated omega psi quantum flux capacitor notes",
@@ -1556,12 +1760,35 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     const weak = await runCli(cwd, dbPath, ...weakArgs);
     expect(weak.code).toBe(1);
     expect(weak.json.action).toBe("refuse");
-    expect(weak.json.would_match?.id).toBe(existingId);
-    expect(String(weak.json.note)).toContain("not a strong upsert match");
-    const forced = await runCli(cwd, dbPath, ...weakArgs, "--force");
-    expect(forced.code).toBe(0);
-    expect(forced.json.action).toBe("create");
-    expect(forced.json.would_match?.id).toBe(existingId);
+    expect(weak.json.would_match).toMatchObject({
+      id: existingId,
+      text_overlap: 0,
+      shared_identifiers: [],
+    });
+    expect(weak.json.candidates).toEqual([weak.json.would_match]);
+    expect(String(weak.json.note)).toContain(
+      "No record matches the upsert query strongly enough to update",
+    );
+    const createNew = await runCli(cwd, dbPath, ...weakArgs, "--create-new");
+    expect(createNew.code).toBe(0);
+    expect(createNew.json.action).toBe("create");
+    expect(createNew.json.would_match?.id).toBe(existingId);
+    // --update-id names the target; replacing it with a different fact is refused.
+    const wrongTarget = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "unrelated omega psi quantum flux capacitor notes",
+      "--update-id",
+      String(existingId),
+      "--dry-run",
+    );
+    expect(wrongTarget.code).toBe(1);
+    expect(wrongTarget.json).toMatchObject({
+      action: "refuse",
+      update_id: existingId,
+      replacement: { action: "refuse", text_overlap: 0 },
+    });
     const unmatched = await runCli(
       cwd,
       dbPath,
@@ -1585,29 +1812,34 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     expect(fetched.json.update_count).toBe(0);
   });
 
-  it("gates weak upsert matches behind --force", async () => {
+  it("refuses a weak upsert match until the caller states intent", async () => {
     const { cwd, dbPath } = await createProject();
     const added = await runCli(
       cwd,
       dbPath,
       "add",
       "alpha beta gamma delta epsilon zeta",
+      "--tags",
+      "area:greek",
       "--quiet",
       "--local",
     );
     const existingId = Number(added.json.id);
-
-    const blocked = await runCli(
-      cwd,
-      dbPath,
+    const weakArgs = [
       "add",
       "unrelated omega psi quantum flux capacitor notes",
       "--upsert-match",
       "alpha beta gamma",
       "--local",
-    );
+    ];
+
+    const blocked = await runCli(cwd, dbPath, ...weakArgs);
     expect(blocked.code).toBe(1);
-    expect(String(blocked.json.error)).toContain("not a strong upsert match");
+    const error = String(blocked.json.error);
+    expect(error).toContain(`#${existingId} convention "alpha beta gamma`);
+    expect(error).toContain(`--update-id ${existingId}`);
+    expect(error).toContain("--create-new");
+    expect(error).toContain("Nothing was written.");
 
     // Still just one record after the blocked attempt.
     const afterBlock = await runCli(
@@ -1619,34 +1851,125 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("PRAGMA use
     );
     expect(afterBlock.json.count).toBe(1);
 
-    const forced = await runCli(
-      cwd,
-      dbPath,
-      "add",
-      "unrelated omega psi quantum flux capacitor notes",
-      "--upsert-match",
-      "alpha beta gamma",
-      "--force",
-      "--local",
+    // The flag --create-new replaced is gone, not ignored: nothing is created.
+    const forced = await runCli(cwd, dbPath, ...weakArgs, "--force");
+    expect(forced.code).not.toBe(0);
+    expect((await runCli(cwd, dbPath, "list", "--json-min")).json.count).toBe(
+      1,
     );
-    expect(forced.code).toBe(0);
-    expect(forced.json.mode).toBe("created");
-    const newId = Number(forced.json.id);
-    expect(newId).not.toBe(existingId);
-    expect(forced.json.upsert_match?.id).toBe(existingId);
 
     const lowered = await runCli(
       cwd,
       dbPath,
-      "add",
-      "another distinct record about rust build caches",
-      "--upsert-match",
-      "alpha beta gamma",
+      ...weakArgs,
       "--upsert-threshold",
       "0.000001",
-      "--local",
     );
-    expect(lowered.code).toBe(1); // similarity floor still applies
+    expect(lowered.code).toBe(1); // the text_overlap bar still applies
+
+    const created = await runCli(cwd, dbPath, ...weakArgs, "--create-new");
+    expect(created.code).toBe(0);
+    expect(created.json.mode).toBe("created");
+    expect(Number(created.json.id)).not.toBe(existingId);
+    expect(created.json.upsert_match).toMatchObject({
+      id: existingId,
+      text_overlap: 0,
+    });
+
+    // --update-id restates the record it names and keeps the omitted fields.
+    const restated = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "alpha beta gamma delta epsilon zeta eta",
+      "--update-id",
+      String(existingId),
+    );
+    expect(restated.code).toBe(0);
+    expect(restated.json).toMatchObject({ mode: "updated", id: existingId });
+    const current = await runCli(cwd, dbPath, "get", String(existingId));
+    expect(current.json).toMatchObject({
+      content: "alpha beta gamma delta epsilon zeta eta",
+      tags: "area:greek",
+      update_count: 1,
+    });
+
+    const both = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "alpha beta",
+      "--update-id",
+      String(existingId),
+      "--create-new",
+    );
+    expect(both.code).not.toBe(0);
+    expect(String(both.json.error)).toContain("give one of them");
+    const missing = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "alpha beta",
+      "--update-id",
+      "999",
+    );
+    expect(missing.code).toBe(1);
+    expect(String(missing.json.error)).toContain("Memory 999 was not found");
+  });
+
+  it("refuses a plain add that repeats a record and lists related ones", async () => {
+    const { cwd, dbPath } = await createProject();
+    const content =
+      "Deploys run through scripts/deploy.sh. Rollbacks use scripts/rollback.sh.";
+    await runCli(cwd, dbPath, "add", content, "--tags", "area:ops", "--quiet");
+
+    const repeated = ["add", `${content} Always.`, "--tags", "area:ops"];
+    const refused = await runCli(cwd, dbPath, ...repeated);
+    expect(refused.code).toBe(1);
+    expect(String(refused.json.error)).toContain(
+      "Memory #1 already states nearly the same thing",
+    );
+    expect(String(refused.json.error)).toContain("--update-id 1");
+    const dryRun = await runCli(cwd, dbPath, ...repeated, "--dry-run");
+    expect(dryRun.code).toBe(1);
+    expect(dryRun.json).toMatchObject({
+      action: "refuse",
+      duplicate: { id: 1 },
+      note: refused.json.error,
+    });
+    expect((await runCli(cwd, dbPath, "list", "--json-min")).json.count).toBe(
+      1,
+    );
+    // --create-new: the caller read record 1 and this is a different fact.
+    const insisted = await runCli(cwd, dbPath, ...repeated, "--create-new");
+    expect(insisted.code).toBe(0);
+    expect(insisted.json.id).toBe(2);
+
+    // A record about the same script is not a duplicate; it is listed as related.
+    const related = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Run scripts/deploy.sh against staging before every production release.",
+      "--tags",
+      "area:ops",
+    );
+    expect(related.code).toBe(0);
+    expect(
+      (related.json.related ?? []).map((row: { id?: number }) => row.id),
+    ).toEqual(expect.arrayContaining([1]));
+
+    const unrelated = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "The users table stores UUID primary keys.",
+      "--tags",
+      "area:db",
+    );
+    expect(unrelated.code).toBe(0);
+    expect(unrelated.json).not.toHaveProperty("related");
+    expect(unrelated.json).not.toHaveProperty("potential_conflicts");
   });
 
   it("supports get --json-min, get --brief and get --quiet", async () => {

@@ -714,7 +714,7 @@ test("a missing id names the repository that holds it", async () => {
   expect(absent.error).not.toContain("belongs to");
 });
 
-test("a weak upsert match refuses unless forced, and no match creates", async () => {
+test("a weak upsert match refuses with its candidates; create_new and update_id state the intent", async () => {
   const existing = await insert("cache invalidation uses the redis keyspace");
   const weak = {
     content: "redis connection pool size is twenty",
@@ -722,10 +722,23 @@ test("a weak upsert match refuses unless forced, and no match creates", async ()
   };
   const refused = await productError("add", weak);
   expect(refused.status).toBe(400);
-  expect(refused.error).toContain(`#${existing}`);
-  const forced = await product("add", { ...weak, force: true });
-  expect(forced.result.id).not.toBe(existing);
-  expect(forced.result.upsert_match?.id).toBe(existing);
+  expect(refused.error).toContain(
+    `the best candidate #${existing} has rank_score`,
+  );
+  expect(refused.error).toContain("text_overlap 0.111 (needs 0.62)");
+  expect(refused.error).toContain(
+    `#${existing} convention "cache invalidation uses the redis keyspace"`,
+  );
+  expect(refused.error).toContain(`update_id ${existing}`);
+  expect(refused.error).toContain("create_new true");
+
+  const created = await product("add", { ...weak, create_new: true });
+  expect(created.result.id).not.toBe(existing);
+  expect(created.result.upsert_match).toMatchObject({
+    id: existing,
+    text_overlap: 0.111,
+    shared_identifiers: [],
+  });
   const unmatched = await product("add", {
     content: "terraform state lives in the bucket",
     upsert_match: "zzzunmatched",
@@ -734,6 +747,121 @@ test("a weak upsert match refuses unless forced, and no match creates", async ()
   expect(
     await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
   ).toBe(3);
+
+  // update_id replaces the named memory and keeps the fields it does not send.
+  await db
+    .prepare("UPDATE memories SET tags = 'area:cache' WHERE id = ?")
+    .bind(existing)
+    .run();
+  const updated = await product("add", {
+    content: "cache invalidation uses the redis keyspace notifications",
+    update_id: existing,
+  });
+  expect(updated.result).toMatchObject({ mode: "updated", id: existing });
+  expect(updated.result.memory).toMatchObject({
+    content: "cache invalidation uses the redis keyspace notifications",
+    tags: "area:cache",
+    update_count: 1,
+  });
+  expect(updated.result).not.toHaveProperty("upsert_match");
+  const both = await productError("add", { ...weak, update_id: existing });
+  expect(both.status).toBe(400);
+  expect(both.error).toContain("cannot be combined with upsert_match");
+  expect(
+    (await productError("add", { content: "x y", update_id: existing + 99 }))
+      .status,
+  ).toBe(404);
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
+  ).toBe(3);
+});
+
+test("a plain add refuses a near-duplicate and lists only strongly related records", async () => {
+  const first = await product("add", {
+    content: "Deploys run from the stable branch after CI passes.",
+  });
+  expect(first.result).not.toHaveProperty("related");
+  const duplicate = {
+    content: "Deploys run from the stable branch after CI passes twice.",
+  };
+  const refused = await productError("add", duplicate);
+  expect(refused.status).toBe(400);
+  expect(refused.error).toBe(
+    `Memory #${first.result.id} already states nearly the same thing (text_overlap 0.875, at or above 0.78). Nothing was written. To change that record, repeat the add with update_id ${first.result.id}. If this is a different fact, repeat it with create_new true.`,
+  );
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memories").first("n"),
+  ).toBe(1);
+  const second = await product("add", { ...duplicate, create_new: true });
+  expect(second.result.id).not.toBe(first.result.id);
+
+  const related = await product("add", {
+    content: "Hotfix deploys also run from the stable branch.",
+  });
+  expect(related.result.related?.map((row) => row.match_strength)).toEqual(
+    expect.arrayContaining(["strong"]),
+  );
+  expect(
+    related.result.related?.every((row) => row.match_strength === "strong"),
+  ).toBe(true);
+  const unrelated = await product("add", {
+    content: "Tokens rotate every ninety days.",
+  });
+  expect(unrelated.result).not.toHaveProperty("related");
+});
+
+test("a metadata-only update keeps the content and edits tags and gaps in place", async () => {
+  const added = await product("add", {
+    content: "Workers bind the D1 database as DB.",
+    tags: "area:api,topic:d1",
+    validation_gaps: ["untested on staging", "intent unconfirmed"],
+  });
+  const { id } = added.result;
+  const retyped = await product("update", { id, memory_type: "decision" });
+  expect(retyped.result.memory).toMatchObject({
+    content: "Workers bind the D1 database as DB.",
+    memory_type: "decision",
+    tags: "area:api,topic:d1",
+    update_count: 1,
+  });
+  expect(retyped.result).not.toHaveProperty("dropped");
+  expect(
+    await db
+      .prepare("SELECT COUNT(*) AS n FROM memory_history WHERE memory_id = ?")
+      .bind(id)
+      .first("n"),
+  ).toBe(1);
+  expect(
+    (await product("query", { query: "D1 database" })).result.results[0]?.id,
+  ).toBe(id);
+
+  const edited = await product("update", {
+    id,
+    add_tags: "Kind:Decision, area:api",
+    remove_tags: "topic:d1",
+    add_validation_gaps: ["one account only"],
+    remove_validation_gaps: ["untested on staging"],
+  });
+  expect(edited.result.memory).toMatchObject({
+    tags: "area:api,kind:decision",
+    validation_gaps: ["intent unconfirmed", "one account only"],
+    update_count: 2,
+  });
+
+  const missingGap = await productError("update", {
+    id,
+    remove_validation_gaps: ["untested on windows"],
+  });
+  expect(missingGap.status).toBe(400);
+  expect(missingGap.error).toContain("No stored validation gap reads");
+  const mixed = await productError("update", {
+    id,
+    tags: "area:cli",
+    add_tags: "topic:d1",
+  });
+  expect(mixed.status).toBe(400);
+  expect(mixed.error).toContain("cannot be combined with add_tags");
+  expect((await product("get", { id })).result.update_count).toBe(2);
 });
 
 test("match mutations do not select inactive rows", async () => {
@@ -1286,9 +1414,32 @@ test("updates report dropped details and review candidates; deprecate reviews de
     identifiers: ["nixpkgs-security", "flake.nix"],
     sentences: ["Keep nixpkgs-security pinned in flake.nix."],
   });
+  // flake.nix is named by no other record; nixpkgs-security still is.
+  const refused = await productError("update", {
+    id: premise.result.id,
+    content: "Home Manager reimports nixpkgs.",
+  });
+  expect(refused.status).toBe(400);
+  expect(refused.error).toContain(
+    `Update of memory ${premise.result.id} refused: it drops \`flake.nix\`, which no other active record mentions, and the new content shares 0.1 of its terms`,
+  );
+  expect(refused.error).toContain(
+    `still held elsewhere: \`nixpkgs-security\` (#${dependent.result.id})`,
+  );
+  expect(refused.error).toContain("allow_drop true");
+  expect(
+    (await product("get", { id: premise.result.id })).result,
+  ).toMatchObject({
+    content: "Keep nixpkgs-security pinned in flake.nix.",
+    update_count: 0,
+  });
+  expect(
+    await db.prepare("SELECT COUNT(*) AS n FROM memory_history").first("n"),
+  ).toBe(0);
   const updated = await product("update", {
     id: premise.result.id,
     content: "Home Manager reimports nixpkgs.",
+    allow_drop: true,
   });
   expect(updated.status).toBe(200);
   expect(updated.result.dropped?.identifiers).toEqual([
@@ -1324,7 +1475,10 @@ test("doctor reports verified rows without evidence and overlapping gotchas", as
 
 test.each([
   ["an unmatched upsert", { upsert_match: "nothing stored mentions this" }],
-  ["a forced weak upsert", { upsert_match: "alpha", force: true }],
+  [
+    "a new record over a weak match",
+    { upsert_match: "alpha", create_new: true },
+  ],
 ])(
   "add rejects expires_after_days on non-status memories through %s",
   async (_path, upsert) => {
