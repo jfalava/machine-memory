@@ -1657,6 +1657,57 @@ describe("CLI integration", () => {
     );
   });
 
+  it("reminds a thread of checkpoint --mine after its first write only", async () => {
+    const project = await createProject();
+    const reminder =
+      "review what it wrote with 'machine-memory checkpoint --mine --local'";
+    const planned = await runCliAs(
+      project,
+      "amp:T-7",
+      "add",
+      "Deploy runs bun",
+      "--dry-run",
+    );
+    expect(planned.stderr).not.toContain(reminder);
+    const first = await runCliAs(
+      project,
+      "amp:T-7",
+      "add",
+      "Deploy runs bun",
+      "--quiet",
+    );
+    expect(first.stderr).toContain(reminder);
+    const second = await runCliAs(
+      project,
+      "amp:T-7",
+      "add",
+      "Lint runs oxlint from the root",
+      "--create-new",
+      "--quiet",
+    );
+    expect(second.stderr).not.toContain(reminder);
+    // Without a thread there is nothing to scope the review to.
+    const agentOnly = await runCliAs(
+      project,
+      "amp",
+      "add",
+      "Fixtures live under tests/fixtures",
+      "--create-new",
+      "--quiet",
+    );
+    expect(agentOnly.stderr).not.toContain(reminder);
+    // Another thread's first change here is a first write too.
+    const other = await runCliAs(
+      project,
+      "codex:9",
+      "update",
+      "1",
+      "--tags",
+      "area:ops",
+    );
+    expect(other.stderr).toContain(reminder);
+  });
+
   it("reads several repositories with --repo a,b and writes to one only", async () => {
     const { cwd, dbPath } = await createProject();
     const local = await runCli(

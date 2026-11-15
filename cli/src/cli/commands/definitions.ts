@@ -47,6 +47,7 @@ import {
   handleAddCommand,
   handleDeprecateCommand,
   handleUpdateCommand,
+  withCheckpointReminder,
 } from "./memory-write";
 import { handleMigrateCommand } from "./migrate";
 import { handleIndexCommand, handleReindexCommand } from "./reindex";
@@ -102,7 +103,7 @@ const addCommand = effectCommand(
     ...outputSpecs,
   ],
   "write",
-  handleAddCommand,
+  withCheckpointReminder(handleAddCommand),
 );
 
 const queryCommand = effectCommand(
@@ -232,7 +233,7 @@ const updateCommand = effectCommand(
     ...outputSpecs,
   ],
   "write",
-  handleUpdateCommand,
+  withCheckpointReminder(handleUpdateCommand),
 );
 const restoreCommand = effectCommand(
   "restore",
@@ -262,7 +263,7 @@ const deprecateCommand = effectCommand(
     ...outputSpecs,
   ],
   "write",
-  handleDeprecateCommand,
+  withCheckpointReminder(handleDeprecateCommand),
 );
 const deleteCommand = effectCommand(
   "delete",
