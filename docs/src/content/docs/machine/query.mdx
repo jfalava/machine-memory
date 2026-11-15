@@ -45,18 +45,23 @@ matched well. Every result therefore carries an absolute `match_strength`:
 
 Results are ordered strong, then weak, then none, keeping score order inside
 each tier. `exact_matches` lists the identifiers found and `term_coverage` the
-fraction of query terms found. When nothing is strong, `--json-min`, `--quiet`,
-and `--explain-score` output report `no_strong_match: true`: treat the results
-as loosely related candidates rather than an answer.
+fraction of query terms found. The output reports `no_strong_match: true`
+when nothing is strong: treat the results as loosely related candidates rather
+than an answer.
 
 Run [`reindex`](/human/reindex) once after provisioning the remote stack to
 embed existing memories. New and updated memories synchronize automatically.
 
 ## Filters and output
 
+The output is `{repository, count, no_strong_match, results}`. An empty result
+also carries `search_term`, `derived_terms`, `filters` and `hints` for
+widening the search.
+
 Use `--tags`, `--type`, and `--certainty` to narrow matches; add
 `--include-deprecated` when historical memories are relevant. `--limit` caps
-the result count and `--explain-score` includes the score components used for
+the result count (8 by default, at most 100, or 50 with `--semantic` or
+`--hybrid`) and `--explain-score` includes the score components used for
 ranking. `--semantic` and `--hybrid` require `--remote` and are mutually
 exclusive. `--brief`, `--json-min`, and `--quiet` are useful for agent loops.
 `--json-min` summaries include `match_strength`, any `exact_matches`, and a

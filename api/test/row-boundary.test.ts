@@ -35,11 +35,17 @@ describe("database to product wire boundary", () => {
       tags: "",
       context: "",
       refs: ["docs/status.md"],
+      // Storage has no zone; output says the times are UTC.
+      created_at: "2026-09-01T10:00:00Z",
+      updated_at: "2026-09-05T10:00:00Z",
       // Rows from a schema without the evidence columns decode as unspecified.
       evidence: [],
       validation_gaps: [],
     });
-    const get = { ok: true as const, result: memory };
+    const get = {
+      ok: true as const,
+      result: { repository: memory.repository, count: 1, results: [memory] },
+    };
     expect(
       decodeResponse(
         MemoryGetSuccessSchema,
@@ -83,7 +89,7 @@ describe("database to product wire boundary", () => {
       tags: "",
       context: "",
       update_count: 2,
-      updated_at: stored.updated_at,
+      updated_at: "2026-09-05T10:00:00Z",
       fts_rank: -2,
     });
   });

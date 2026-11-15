@@ -22,6 +22,7 @@ import {
   handleMigration,
   handleMigrationLinks,
   handleQuery,
+  handleStatus,
 } from "./admin-routes";
 import { createApiContext, type ProductHandlers } from "./api-context";
 import { badRequest, recoverHttpFailure } from "./http-failure";
@@ -97,6 +98,7 @@ export const createApiHandlers = ({
         ),
       handleVectorizeSearch: (body) =>
         handleVectorizeSearch(ctx, body).pipe(recoverHttpFailure),
+      handleStatus: () => handleStatus(ctx).pipe(recoverHttpFailure),
       handleProduct,
     } satisfies RestHandlers;
 

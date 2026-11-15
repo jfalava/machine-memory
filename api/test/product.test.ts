@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 
 import * as Cloudflare from "@alchemy.run/cloudflare";
 import {
@@ -8,6 +8,7 @@ import {
   PRODUCT_OPERATIONS,
   productRoutePath,
   QuerySuccessSchema,
+  StatusSuccessSchema,
   type JsonObject,
   type JsonValue,
   type ProductRoute,
@@ -19,6 +20,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 
+import pkg from "../package.json";
 import { handleRestRequest } from "../src/rest-handlers";
 import {
   drainVectorSync,
@@ -235,6 +237,14 @@ async function insert(content = "original", repository = "o/r") {
     .first<{ id: number }>();
   return result!.id;
 }
+/** The one memory `get` returns for `id`; fails the test when it is missing. */
+async function getRow(id: number) {
+  const fetched = await product("get", { ids: [id] });
+  expect(fetched.status).toBe(200);
+  const [row] = fetched.result.results;
+  expect(row).toBeDefined();
+  return row!;
+}
 const drain = (now = Date.now()) => drainVectorSync({ db, index, embed }, now);
 const job = (id: number) =>
   db
@@ -416,12 +426,76 @@ test("competing restores with the same current count allow exactly one mutation"
   expect(attempts.map((result) => result.status).sort((a, b) => a - b)).toEqual(
     [200, 409, 409, 409],
   );
-  expect((await product("get", { id })).result).toMatchObject({
+  expect(await getRow(id)).toMatchObject({
     content: "recover this",
     update_count: 2,
   });
   expect((await product("history", { id })).result.total_count).toBe(2);
   expect(await job(id)).toMatchObject({ generation: 3 });
+});
+
+test("/status reports the Worker version and one schema level per migration file", async () => {
+  // A migration added without its marker in SCHEMA_MARKERS fails here.
+  const migrations = (
+    await readdir(new URL("../../iac/migrations", import.meta.url))
+  ).filter((name) => name.endsWith(".sql"));
+  const status = await call("/status", StatusSuccessSchema, {});
+  expect(status.result).toEqual({
+    version: pkg.version,
+    schema_level: migrations.length,
+    schema_expected: migrations.length,
+  });
+});
+
+test("writes record who made them, and an update leaves the author alone", async () => {
+  const added = await product("add", {
+    content: "Deploy runs bun run deploy",
+    source_agent: "amp:T-1",
+  });
+  const id = added.result.id;
+  expect(added.result.memory).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "amp:T-1",
+  });
+  const updated = await product("update", {
+    id,
+    tags: "area:ops",
+    source_agent: "codex:9",
+  });
+  expect(updated.result.memory).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "codex:9",
+  });
+  // A write that names nobody is the API's own.
+  await product("update", { id, tags: "area:deploy" });
+  expect(await getRow(id)).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "api",
+  });
+  const replaced = await product("add", {
+    content: "Deploy runs bun run deploy --prod",
+    update_id: id,
+    source_agent: "claude-code:s1",
+  });
+  expect(replaced.result.memory).toMatchObject({
+    source_agent: "amp:T-1",
+    last_updated_by: "claude-code:s1",
+  });
+  const deprecated = await product("deprecate", {
+    ids: [id],
+    source_agent: "amp:T-2",
+  });
+  expect(deprecated.status).toBe(200);
+  expect(await getRow(id)).toMatchObject({
+    status: "deprecated",
+    source_agent: "amp:T-1",
+    last_updated_by: "amp:T-2",
+  });
+  const plain = await product("add", { content: "Lint runs oxlint" });
+  expect(plain.result.memory).toMatchObject({
+    source_agent: "api",
+    last_updated_by: "api",
+  });
 });
 
 test("restore replaces complete metadata, refreshes expiry, and can itself be undone", async () => {
@@ -432,7 +506,7 @@ test("restore replaces complete metadata, refreshes expiry, and can itself be un
     )
     .bind(id)
     .run();
-  const original = await product("get", { id });
+  const original = await getRow(id);
   await product("update", {
     id,
     content: "clobbered status",
@@ -449,15 +523,23 @@ test("restore replaces complete metadata, refreshes expiry, and can itself be un
   });
   expect(restored.status).toBe(200);
   expect(restored.result.memory).toEqual({
-    ...original.result,
+    ...original,
     update_count: 2,
     last_updated_by: "restore",
     updated_at: restored.result.memory.updated_at,
   });
-  expect(restored.result.memory.updated_at).toBeTypeOf("string");
-  expect(restored.result.memory.updated_at).not.toBe(
-    original.result.updated_at,
+  expect(original.created_at).toBe("2020-01-01T00:00:00Z");
+  expect(restored.result.memory.updated_at).toMatch(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
   );
+  expect(restored.result.memory.updated_at).not.toBe(original.updated_at);
+  // Output adds the zone; restore must write SQLite's form back.
+  expect(
+    await db
+      .prepare("SELECT created_at FROM memories WHERE id = ?")
+      .bind(id)
+      .first("created_at"),
+  ).toBe("2020-01-01 00:00:00");
   expect((await product("gc")).result.ids).not.toContain(id);
   const undoHistory = await product("history", { id });
   const undo = await product("restore", {
@@ -562,7 +644,7 @@ test("failed writes and invalid legacy restores leave both history and vector in
     expect(invalid.status).toBe(400);
     expect(invalid.error).toContain(message);
   }
-  expect((await product("get", { id })).result.content).toBe("current");
+  expect((await getRow(id)).content).toBe("current");
   expect((await product("history", { id })).result.total_count).toBe(1);
   expect(await job(id)).toEqual(before);
 });
@@ -696,7 +778,7 @@ test("writes refuse missing-value content and a stale expected update count", as
   });
   expect(stale.status).toBe(409);
   expect(stale.error).toContain("update_count 0");
-  expect((await product("get", { id })).result).toMatchObject({
+  expect(await getRow(id)).toMatchObject({
     content: "kept content",
     update_count: 0,
   });
@@ -710,7 +792,22 @@ test("writes refuse missing-value content and a stale expected update count", as
 
 test("a missing id names the repository that holds it", async () => {
   const id = await insert("elsewhere", "other/repo");
-  const wrongRepository = await productError("get", { id });
+  const own = await insert("here");
+  // get answers a miss instead of failing: which ids, and who holds them.
+  const mixed = await product("get", { ids: [id, own, id + 100, own] });
+  expect(mixed.status).toBe(200);
+  expect(mixed.result).toMatchObject({
+    repository: "o/r",
+    count: 1,
+    missing_ids: [id, id + 100],
+    found_elsewhere: [{ id, repository: "other/repo" }],
+  });
+  expect(mixed.result.results.map((row) => row.content)).toEqual(["here"]);
+  expect((await product("get", { ids: [own] })).result).not.toHaveProperty(
+    "missing_ids",
+  );
+  // Routes that act on one memory still fail, and name its repository.
+  const wrongRepository = await productError("update", { id, content: "x" });
   expect(wrongRepository.status).toBe(404);
   expect(wrongRepository.error).toContain("in repository 'o/r'");
   expect(wrongRepository.error).toContain("belongs to repository 'other/repo'");
@@ -866,7 +963,7 @@ test("a metadata-only update keeps the content and edits tags and gaps in place"
   });
   expect(mixed.status).toBe(400);
   expect(mixed.error).toContain("cannot be combined with add_tags");
-  expect((await product("get", { id })).result.update_count).toBe(2);
+  expect((await getRow(id)).update_count).toBe(2);
 });
 
 test("match mutations do not select inactive rows", async () => {
@@ -1390,7 +1487,7 @@ test.each([
       generation: 1,
       delivered_generation: 0,
     });
-    expect((await product("get", { id })).status).toBe(200);
+    expect((await getRow(id)).id).toBe(id);
   },
 );
 
@@ -1479,9 +1576,7 @@ test("updates report dropped details and review candidates; deprecate reviews de
     `still held elsewhere: \`nixpkgs-security\` (#${dependent.result.id})`,
   );
   expect(refused.error).toContain("allow_drop true");
-  expect(
-    (await product("get", { id: premise.result.id })).result,
-  ).toMatchObject({
+  expect(await getRow(premise.result.id)).toMatchObject({
     content: "Keep nixpkgs-security pinned in flake.nix.",
     update_count: 0,
   });

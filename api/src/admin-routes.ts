@@ -8,6 +8,7 @@ import {
   normalizeMigrationRequest,
   QueryRequestSchema,
   QuerySuccessSchema,
+  StatusSuccessSchema,
   type JsonObject,
   type JsonValue,
   type MigrationItem,
@@ -15,6 +16,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
+import pkg from "../package.json";
 import { fetchProductRow, type ApiContext } from "./api-context";
 import { badRequest } from "./http-failure";
 
@@ -130,6 +132,53 @@ export const handleMigration = (ctx: ApiContext, body: JsonValue) =>
           inserted,
           duplicates: items.length - inserted,
           items,
+        },
+      }),
+    );
+  });
+
+/**
+ * One schema object per numbered file in iac/migrations, in order: the object
+ * that file creates, and for a file that changes an existing object, text its
+ * definition gains.
+ */
+export const SCHEMA_MARKERS: readonly {
+  readonly name: string;
+  readonly sql?: string;
+}[] = [
+  { name: "memories" },
+  { name: "memory_vector_sync" },
+  { name: "memories_replacement_deleted" },
+  { name: "memory_history" },
+  { name: "memories", sql: "validation_gaps" },
+  { name: "memories_validate_evidence_insert" },
+  { name: "memories_validate_insert", sql: "2000 byte embedding budget" },
+  { name: "memory_vector_sync", sql: "queued_at" },
+];
+
+/** POST /status */
+export const handleStatus = (ctx: ApiContext) =>
+  Effect.gen(function* () {
+    const objects = yield* ctx.d1
+      .prepare(
+        "SELECT name, sql FROM sqlite_master WHERE name IN (SELECT value FROM json_each(?))",
+      )
+      .bind(JSON.stringify(SCHEMA_MARKERS.map((marker) => marker.name)))
+      .all<{ name: string; sql: string | null }>();
+    const definitions = new Map(
+      objects.results.map((object) => [object.name, object.sql ?? ""]),
+    );
+    // Migrations apply in order, so the level is the first marker that is missing.
+    const missing = SCHEMA_MARKERS.findIndex(
+      (marker) => !definitions.get(marker.name)?.includes(marker.sql ?? ""),
+    );
+    return yield* HttpServerResponse.json(
+      encodeResponse(StatusSuccessSchema, {
+        ok: true,
+        result: {
+          version: pkg.version,
+          schema_level: missing === -1 ? SCHEMA_MARKERS.length : missing,
+          schema_expected: SCHEMA_MARKERS.length,
         },
       }),
     );

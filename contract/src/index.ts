@@ -21,7 +21,9 @@ export {
   MemorySummarySchema,
   StoredMemoryRowSchema,
   memoryContentError,
+  isoTimestamp,
   normalizeStoredMemoryRow,
+  sqliteTimestamp,
   repositorySlugError,
   type MemorySummary,
 } from "./entities";
@@ -131,6 +133,7 @@ export {
 } from "./write-guards";
 export {
   DEFAULT_STATUS_EXPIRY_DAYS,
+  INFORMATIONAL_DOCTOR_KINDS,
   NEAR_DUPLICATE_THRESHOLD,
   analyzeMemoryDoctor,
   canonicalTags,
@@ -150,6 +153,8 @@ export {
   ErrorBodySchema,
   MigrationBatchResultSchema,
   MigrationLinksSuccessSchema,
+  StatusResultSchema,
+  StatusSuccessSchema,
   MigrationSuccessSchema,
   QuerySuccessSchema,
   SimpleErrorBodySchema,
@@ -187,6 +192,7 @@ export {
   type MemoryDeprecateResult,
   type MemoryDeprecateSuccess,
   type MemoryDoctorFinding,
+  type MemoryGetResult,
   type MemoryGetSuccess,
   type MemoryHistoryEntry,
   type MemoryStatsResult,

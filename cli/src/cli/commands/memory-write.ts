@@ -28,6 +28,8 @@ import {
 } from "@machine-memory/contract";
 import { Effect } from "effect";
 
+import { currentWriter } from "../../attribution";
+import { appendCandidate } from "../../candidates";
 import {
   type CommandFlags,
   getFlagValue,
@@ -139,7 +141,6 @@ type AddExplicitFlags = {
   memoryType: boolean;
   certainty: boolean;
   sourceAgent: boolean;
-  updatedBy: boolean;
   refs: boolean;
   expiresAfterDays: boolean;
 };
@@ -565,14 +566,13 @@ function resolveAddMetadata(
 ): Effect.Effect<AddMetadata, unknown> {
   const explicitTags = getFlagValue(flags, "--tags");
   const pathContext = getFlagValue(flags, "--path");
-  const sourceAgent = getFlagValue(flags, "--source-agent") ?? "";
+  const sourceAgent = getFlagValue(flags, "--source-agent") ?? currentWriter();
   const explicitFlags: AddExplicitFlags = {
     tags: explicitTags !== undefined,
     context: getFlagValue(flags, "--context") !== undefined,
     memoryType: getFlagValue(flags, "--type") !== undefined,
     certainty: getFlagValue(flags, "--certainty") !== undefined,
     sourceAgent: getFlagValue(flags, "--source-agent") !== undefined,
-    updatedBy: getFlagValue(flags, "--updated-by") !== undefined,
     refs: getFlagValue(flags, "--refs") !== undefined,
     expiresAfterDays: getFlagValue(flags, "--expires-after-days") !== undefined,
   };
@@ -613,14 +613,14 @@ function parseAddUpsertQuery(flags: CommandFlags): string | undefined {
 }
 
 function shouldSetLastUpdatedBy(metadata: AddMetadata): boolean {
-  return metadata.explicit.updatedBy || metadata.explicit.sourceAgent;
+  return metadata.updatedBy !== "";
 }
 
-function comparableText(parts: EmbeddingDocumentParts): string {
+export function comparableText(parts: EmbeddingDocumentParts): string {
   return [parts.content, parts.tags, parts.context].join(" ");
 }
 
-function storedComparableText(row: JsonObject): string {
+export function storedComparableText(row: JsonObject): string {
   return comparableText({
     content: stringValue(row.content),
     tags: stringValue(row.tags),
@@ -843,6 +843,64 @@ function addDryRunPayload(
   return payload;
 }
 
+/** --emit-candidate checks the memory like --dry-run and writes it to a file, not the database. */
+function addIsDryRun(flags: CommandFlags): boolean {
+  return hasFlag(flags, "--dry-run") || hasFlag(flags, "--emit-candidate");
+}
+
+/**
+ * --emit-candidate <file>: a child agent's finding, checked like a real add
+ * and appended to a file for the parent to write with `import --review`.
+ * Returns the fields to add to the dry-run output; `blocked` says the add
+ * itself would be refused.
+ */
+function emitCandidate(
+  write: AddWrite,
+  plan: AddPlan,
+  blocked: boolean,
+): JsonObject {
+  if (!hasFlag(write.flags, "--emit-candidate")) {
+    return {};
+  }
+  const path = getFlagValue(write.flags, "--emit-candidate");
+  if (path === undefined) {
+    usageError("--emit-candidate needs a file path, such as findings.json.");
+  }
+  if (blocked) {
+    return { candidate_emitted: false };
+  }
+  if (plan.target) {
+    return {
+      candidate_emitted: false,
+      note: `A candidate file holds new memories only, and this add would update memory ${Number(plan.target.id)}. Report that id and the new content to the parent agent, which runs the update.`,
+    };
+  }
+  const { content, metadata } = write;
+  const candidate: JsonObject = {
+    content,
+    tags: metadata.tags,
+    context: metadata.memo,
+    memory_type: metadata.memoryType,
+    certainty: metadata.certainty,
+    evidence: metadata.evidence ?? [],
+    validation_gaps: metadata.validationGaps ?? [],
+    refs: metadata.refs,
+    source_agent: metadata.sourceAgent,
+  };
+  if (
+    metadata.expiresAfterDays !== undefined &&
+    metadata.expiresAfterDays !== null
+  ) {
+    candidate.expires_after_days = metadata.expiresAfterDays;
+  }
+  return {
+    candidate_emitted: true,
+    candidate_file: path,
+    candidates_in_file: appendCandidate(path, candidate),
+    note: `Nothing was written to the database. Hand ${path} to the parent agent, which writes its candidates with 'machine-memory import ${path} --review'.`,
+  };
+}
+
 /** Prints what the add would do and exits the way the real write would. */
 function runAddDryRun(
   write: AddWrite,
@@ -875,12 +933,15 @@ function runAddDryRun(
       }
     }
     payload.size = size;
+    const blocked = !size.within_budget || refusal !== undefined;
+    const emitted = emitCandidate(write, plan, blocked);
+    Object.assign(payload, emitted);
     yield* Effect.sync(() => {
       printCommandOutput(
         { command: "add", outputMode: write.outputMode },
         payload,
       );
-      if (!size.within_budget || refusal !== undefined) {
+      if (blocked || emitted.candidate_emitted === false) {
         process.exitCode = 1;
       }
     });
@@ -991,7 +1052,7 @@ function maybeHandleUpdateId(
   return Effect.gen(function* () {
     const target = yield* activeUpsertTarget(write.database, id, "id");
     assertAddEvidence(metadata, target);
-    if (hasFlag(flags, "--dry-run")) {
+    if (addIsDryRun(flags)) {
       return yield* runAddDryRun(write, {
         action: "update",
         candidates: [],
@@ -1076,7 +1137,7 @@ function maybeHandleAddUpsert(
       decision === "refuse"
         ? upsertRefusal(candidates, minScore, ADD_INTENT_HINTS)
         : duplicate && duplicateRefusal(duplicate, ADD_INTENT_HINTS);
-    if (hasFlag(flags, "--dry-run")) {
+    if (addIsDryRun(flags)) {
       return yield* runAddDryRun(write, {
         action: decision,
         refusal,
@@ -1261,7 +1322,7 @@ function runPlainAdd(
     const { database, content, metadata, outputMode } = write;
     const { duplicate, related } = yield* addNeighbourhood(write);
     const refusal = duplicate && duplicateRefusal(duplicate, ADD_INTENT_HINTS);
-    if (hasFlag(write.flags, "--dry-run")) {
+    if (addIsDryRun(write.flags)) {
       return yield* runAddDryRun(write, {
         action: "create",
         refusal,
@@ -1389,6 +1450,11 @@ function optionalCanonicalTags(value: string | undefined) {
   return value === undefined ? undefined : canonicalTags(value);
 }
 
+/** --updated-by, or the detected writer; undefined leaves last_updated_by as stored. */
+function updatedByFlag(flags: CommandFlags): string | undefined {
+  return getFlagValue(flags, "--updated-by") ?? (currentWriter() || undefined);
+}
+
 function updateSpec(
   clause: string,
   value: string | number | null | undefined,
@@ -1406,7 +1472,7 @@ function updateSetsAndParams(flags: CommandFlags, changes: RowChanges) {
     ...updateSpec("context = ?", changes.context),
     ...updateSpec("memory_type = ?", requestedType),
     ...updateSpec("certainty = ?", requireCertainty(flags)),
-    ...updateSpec("last_updated_by = ?", getFlagValue(flags, "--updated-by")),
+    ...updateSpec("last_updated_by = ?", updatedByFlag(flags)),
     ...updateSpec(
       "refs = ?",
       refs === undefined ? undefined : JSON.stringify(refs),
@@ -1847,7 +1913,7 @@ function deprecateSetsAndParams(flags: CommandFlags, targetIds: number[]) {
   ) {
     usageError("A memory cannot supersede itself.");
   }
-  const updatedBy = getFlagValue(flags, "--updated-by");
+  const updatedBy = updatedByFlag(flags);
   const sets = [
     "status = ?",
     "superseded_by = ?",

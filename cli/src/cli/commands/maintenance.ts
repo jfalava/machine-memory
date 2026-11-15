@@ -8,10 +8,13 @@ import {
   memoryContentError,
   sqliteDateToMs,
   type EvidenceKind,
+  sqliteTimestamp,
+  nearDuplicate,
 } from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
 
-import { printJson, usageError } from "../../cli-utils";
+import { currentWriter } from "../../attribution";
+import { hasFlag, printJson, usageError } from "../../cli-utils";
 import {
   CERTAINTY_LEVELS,
   MEMORY_TYPES,
@@ -52,9 +55,9 @@ import {
   normalizeCertaintyValue,
   normalizeSqliteRow,
   parseTags,
-  sqliteDateForComparison,
   stringValue,
 } from "../shared";
+import { comparableText, storedComparableText } from "./memory-write";
 import { readIndexStatus } from "./reindex";
 
 type ImportNormalized = {
@@ -157,7 +160,7 @@ function parseImportTimestamp(
   if (raw === undefined || Number.isNaN(Date.parse(raw))) {
     return undefined;
   }
-  return sqliteDateForComparison(raw);
+  return sqliteTimestamp(raw);
 }
 
 function parseImportMetadata(entry: JsonObject) {
@@ -348,10 +351,14 @@ function parseImportFile(
       catch: (cause) =>
         commandError("import", `Failed to parse JSON: ${String(cause)}`, cause),
     });
-    if (!isJsonArray(parsed)) {
-      usageError("Import file must contain a JSON array.");
+    // `export` prints its memories under `results`; a bare array also imports.
+    const memories = jsonObject(parsed)?.results ?? parsed;
+    if (!isJsonArray(memories)) {
+      usageError(
+        "Import file must be the output of export, or a JSON array of memories.",
+      );
     }
-    return [...parsed];
+    return [...memories];
   });
 }
 
@@ -436,6 +443,26 @@ function importSizeError(plan: ImportPlan, index: number): string | undefined {
     : `${embeddingBudgetMessage(`Import index ${index}`, size)} Nothing was imported.`;
 }
 
+/**
+ * Active memories that strongly match a new active entry. They are
+ * neighbours, not contradictions: only a strong match holds an entry back.
+ */
+function strongNeighbours(
+  database: MemoryDatabaseApi,
+  plan: ImportPlan,
+): Effect.Effect<JsonObject[], MemoryDatabaseError> {
+  if (plan.targetId || plan.value.statusRaw !== "active") {
+    return Effect.succeed([]);
+  }
+  return detectPotentialConflicts(database, {
+    content: plan.value.content,
+    tags: plan.value.tags,
+    context: plan.value.memoContext,
+  }).pipe(
+    Effect.map((rows) => rows.filter((row) => row.match_strength === "strong")),
+  );
+}
+
 function preflightImport(
   database: MemoryDatabaseApi,
   parsed: JsonValue[],
@@ -479,19 +506,9 @@ function preflightImport(
       if (oversize !== undefined) {
         return yield* commandError("import", oversize);
       }
-      if (!plan.targetId && plan.value.statusRaw === "active") {
-        const conflicts = yield* detectPotentialConflicts(database, {
-          content: plan.value.content,
-          tags: plan.value.tags,
-          context: plan.value.memoContext,
-        });
-        if (conflicts.length) {
-          results[index] = {
-            index,
-            status: "conflict",
-            potential_conflicts: conflicts,
-          };
-        }
+      const related = yield* strongNeighbours(database, plan);
+      if (related.length > 0) {
+        results[index] = { index, status: "conflict", related };
       }
       plans.push(plan);
     }
@@ -585,12 +602,120 @@ export function handleStatsCommand(commandCtx: CommandContext) {
   });
 }
 
+/** Why a candidate is not written, or undefined when it can be. */
+function candidateDecline(
+  database: MemoryDatabaseApi,
+  value: ImportNormalized,
+): Effect.Effect<JsonObject | undefined, MemoryDatabaseError> {
+  return Effect.gen(function* () {
+    if (value.statusRaw !== "active") {
+      return {
+        reason: "not_active",
+        note: "A candidate is a new active memory; deprecate or supersede records with the deprecate command.",
+      };
+    }
+    if (
+      value.certaintyNormalized === "verified" &&
+      value.evidence.length === 0
+    ) {
+      return {
+        reason: "verified_without_evidence",
+        note: "certainty verified needs at least one evidence kind. Name the evidence, or lower the certainty to inferred.",
+      };
+    }
+    const document = {
+      content: value.content,
+      tags: value.tags,
+      context: value.memoContext,
+    };
+    const size = embeddingSizeReport(document);
+    if (!size.within_budget) {
+      return {
+        reason: "over_size_limit",
+        note: embeddingBudgetMessage("The candidate", size),
+        size,
+      };
+    }
+    const neighbours = yield* detectPotentialConflicts(database, document);
+    const duplicate = nearDuplicate(
+      comparableText(document),
+      neighbours.map((row) => ({
+        id: Number(row.id),
+        text: storedComparableText(row),
+      })),
+    );
+    return duplicate === undefined
+      ? undefined
+      : {
+          reason: "near_duplicate",
+          duplicate_of: duplicate.id,
+          text_overlap: duplicate.text_overlap,
+          note: `Memory ${duplicate.id} already states nearly the same thing. To change it, run 'machine-memory update ${duplicate.id} "<whole new content>"'; if this is a different fact, add it with 'machine-memory add "<content>" --create-new'.`,
+        };
+  });
+}
+
+/**
+ * import --review: writes each candidate that passes the checks a plain add
+ * applies and reports the rest with the reason, so a parent agent can hand
+ * the declined ones back. One bad candidate does not stop the others.
+ */
+function reviewCandidates(commandCtx: CommandContext, parsed: JsonValue[]) {
+  return Effect.gen(function* () {
+    const database = requireDatabase(commandCtx);
+    const results: JsonObject[] = [];
+    for (const [index, rawEntry] of parsed.entries()) {
+      const normalized = normalizeImportEntry(rawEntry);
+      if (normalized.status === "skip") {
+        results.push({ index, status: "declined", reason: normalized.reason });
+        continue;
+      }
+      const { value } = normalized;
+      const decline = yield* candidateDecline(database, value);
+      if (decline !== undefined) {
+        results.push({ index, status: "declined", ...decline });
+        continue;
+      }
+      // The candidate names who found it; the parent is who wrote it.
+      const writer = currentWriter();
+      const inserted = yield* runImportInsert(database, {
+        ...value,
+        supersededBy: null,
+        updateCount: 0,
+        sourceAgent: value.sourceAgent || writer,
+        lastUpdatedBy: writer || value.sourceAgent,
+        createdAt: undefined,
+        updatedAt: undefined,
+      });
+      results.push({
+        index,
+        status: "written",
+        id: jsonNumber(jsonObject(inserted)?.lastInsertRowid) ?? null,
+      });
+    }
+    yield* Effect.sync(() => {
+      const written = results.filter((result) => result.status === "written");
+      printCommandOutput(commandCtx, {
+        repository: repositoryForCurrentDirectory(),
+        count: results.length,
+        written: written.length,
+        declined: results.length - written.length,
+        results,
+      });
+    });
+  });
+}
+
 export function handleImportCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const parsed = yield* parseImportFile(
       commandCtx.positionals[0],
       commandCtx.fileSystem,
     );
+    if (hasFlag(commandCtx.flags, "--review")) {
+      yield* assertWritableRepository(requireDatabase(commandCtx), "import");
+      return yield* reviewCandidates(commandCtx, parsed);
+    }
     const results: JsonObject[] = parsed.map((_, index) => ({
       index,
       status: "unprocessed",

@@ -12,14 +12,24 @@ machine-memory get <id> (--local|--remote)
 machine-memory get <id,id,...> (--local|--remote)
 ```
 
-`get` retrieves exact memory IDs for the current repository. A single ID
-returns one object; multiple IDs return a `results` array and report any
-missing IDs separately.
+`get` retrieves exact memory IDs for the current repository. One ID and
+several IDs print the same object, with the memories in `results`:
 
-IDs are unique across repositories. When a missing ID exists in another
-repository, the output lists it under `found_elsewhere` as
+```json
+{
+  "repository": "owner/name",
+  "count": 1,
+  "missing_ids": [99],
+  "results": [{ "id": 42, "content": "…", "tags": "area:cli" }]
+}
+```
+
+An ID the repository does not hold is listed in `missing_ids`, and the command
+still exits `0`. IDs are unique across repositories: when a missing ID exists
+in another repository, the output lists it under `found_elsewhere` as
 `{ id, repository }` and stderr names the `--repo` to pass.
 
-Output flags: `--json-min` prints `{count, ids, results}` with each result
-reduced to `{id, memory_type, certainty, status, tags}`; `--quiet` prints only
-`{count, ids}` (plus `missing_ids`); `--brief` prints one-line summaries.
+Output flags change only what each result carries. `--json-min` reduces it to
+`{id, memory_type, certainty, status, tags, content}` plus evidence, keeping
+the whole content because `get` is how a memory is read. `--quiet` reduces it
+to `{id}`. `--brief` prints one text line per memory.

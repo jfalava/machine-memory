@@ -14,7 +14,8 @@ machine-memory deprecate --match "old topic" --superseded-by <id> (--local|--rem
 
 Without `--superseded-by`, targeted memories receive the `deprecated` status.
 With it, they receive `superseded_by` and point at the canonical replacement.
-`--updated-by` records who made the change.
+`last_updated_by` records the [writer](/machine/add#who-wrote-it) that made
+the change; `--updated-by` names another.
 
 The command accepts either IDs or an active-memory `--match` query. It returns
 the changed rows, missing IDs for batch requests, and the count of updated

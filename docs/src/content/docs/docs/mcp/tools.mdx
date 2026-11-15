@@ -28,7 +28,7 @@ Call `list_repositories` before writes when the slug is not certain. Derive `own
 | `list_repositories`  | List slugs with total, active, deprecated, and superseded counts              |
 | `memory_suggest`     | File-scoped lookup: FTS over path terms + directory neighborhood              |
 | `memory_query`       | Keyword, semantic, or hybrid search with filters                              |
-| `memory_get`         | Fetch one memory by numeric id                                                |
+| `memory_get`         | Fetch up to 100 memories in full by numeric `ids`; misses are `missing_ids`   |
 | `memory_history`     | List complete previous revisions, newest first, with the current update count |
 | `memory_list`        | List memories with filters and offset pagination                              |
 | `memory_doctor`      | Audit duplicates, status expiry, types, tags, and refs                        |
@@ -45,6 +45,22 @@ Call `list_repositories` before writes when the slug is not certain. Derive `own
 | `memory_delete_many` | Permanently delete up to 100 explicit ids and their vectors                   |
 
 Every tool that takes `repository` expects `owner/name`. Rows live in D1; embeddings sync to Vectorize on write. `memory_query`, `memory_list`, and `memory_suggest` accept a `tags` substring filter alongside `status` / `memory_type` / `certainty`.
+
+### Read results
+
+`memory_get`, `memory_query`, `memory_list` and `memory_suggest` all return an
+object that starts with `repository` and `count` and holds the memories in
+`results`. `memory_get` takes `ids` and never fails on a missing id: it lists
+the id in `missing_ids`, and in `found_elsewhere` when another repository
+holds it.
+
+### Who wrote a memory
+
+`memory_add`, `memory_update` and `memory_deprecate` take an optional
+`source_agent`: the agent and its thread or session, such as `amp:T-1234`. It
+is stored as `source_agent` on a new memory and as `last_updated_by` on every
+write. When it is omitted, the write is attributed to the authenticated GitHub
+user as `mcp:<login>`.
 
 ### Pagination and repository counts
 
@@ -178,7 +194,7 @@ Successful writes echo scope so a wrong namespace is obvious in the transcript:
 
 1. `list_repositories` if the slug is unknown
 2. `memory_suggest` (known files) or `memory_query` / `memory_list` before code changes
-3. `memory_get` for full records you will rely on
+3. `memory_get` with the `ids` of the records you will rely on
 4. `memory_verify` / `memory_diff` when an inference may conflict
 5. `memory_size` when content may be large
 6. `memory_doctor` / `memory_stats` / `memory_gc` during maintenance

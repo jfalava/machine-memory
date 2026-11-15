@@ -32,6 +32,7 @@ import {
   type MatchAssessment,
   type MatchScope,
   type MatchStrength,
+  isoTimestamp,
 } from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
 import type { FileSystem } from "effect/FileSystem";
@@ -292,6 +293,12 @@ export function normalizeSqliteRow(row: JsonValue | undefined): JsonObject {
   next.certainty = normalizeCertaintyValue(next.certainty);
   next.evidence = parseStoredEvidence(next.evidence);
   next.validation_gaps = parseStoredValidationGaps(next.validation_gaps);
+  for (const field of ["created_at", "updated_at", "snapshot_at"]) {
+    const stored = jsonString(next[field]);
+    if (stored !== undefined) {
+      next[field] = isoTimestamp(stored);
+    }
+  }
   if (next.update_count !== undefined) {
     next.update_count = Number(next.update_count ?? 0);
   }
@@ -1169,13 +1176,4 @@ export function parseSinceDate(flags: CommandFlags): string | undefined {
     usageError(`Invalid --since date: ${value}`);
   }
   return value;
-}
-
-export function sqliteDateForComparison(isoLike: string): string {
-  const ms = Date.parse(isoLike);
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(
-    d.getUTCHours(),
-  )}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
 }

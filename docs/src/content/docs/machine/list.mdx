@@ -15,9 +15,30 @@ machine-memory list --tags area:docs --type decision (--local|--remote) --json-m
 `list` returns memories for the current repository ordered by most recently
 updated. It does not perform full-text search.
 
+```json
+{
+  "repository": "owner/name",
+  "count": 100,
+  "total_count": 184,
+  "offset": 0,
+  "limit": 100,
+  "has_more": true,
+  "results": []
+}
+```
+
+`total_count` is how many memories match the filters. While `has_more` is
+true, pass `--offset <n>` (the previous offset plus `count`) to read the next
+page.
+
 ## Filters
 
 `--tags`, `--type`, `--certainty`, and `--status` filter the result set.
-`--include-deprecated` includes deprecated and superseded memories, and
-`--limit` caps the result count. Use `--brief`, `--json-min`, or `--quiet` for
-smaller machine-facing output.
+`--mine` keeps only the memories the current session created or last changed,
+and `--by <writer>` those of another [writer](/machine/add#who-wrote-it). A
+bare agent name such as `--by amp` covers every thread of that agent.
+
+`--include-deprecated` includes deprecated and superseded memories.
+`--limit` sets the page size; it defaults to 100, which is also the most. Use
+`--json-min` for a summary of each memory with a snippet, `--quiet` for the
+ids alone, or `--brief` for one text line per memory.

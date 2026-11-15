@@ -1,8 +1,14 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { repositorySlugError } from "@machine-memory/contract";
+import { Schema } from "effect";
 
-let cachedRepository: string | undefined;
+/** Where a slug came from: --repo or MACHINE_MEMORY_REPO, the pin file, or the origin remote. */
+export type RepositorySource = "explicit" | "pin" | "origin";
+
+let cachedRepository: ResolvedRepository | undefined;
 
 type RepositoryTarget = {
   /** Slug from --repo or MACHINE_MEMORY_REPO; undefined infers it from Git. */
@@ -64,31 +70,102 @@ export function similarRepositories(
   return similar.length > 0 ? similar : others;
 }
 
+function gitOutput(cwd: string, args: string[]): string | undefined {
+  try {
+    return String(
+      execFileSync("git", args, {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }),
+    ).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * The repository commands act on: --repo or MACHINE_MEMORY_REPO when given,
- * otherwise the path of the current checkout's origin remote.
+ * The committed pin file: at the top of the Git checkout, so it is found from
+ * any subdirectory, or in `cwd` outside a checkout.
+ */
+export function repositoryPinPath(cwd = process.cwd()): string {
+  const root = gitOutput(cwd, ["rev-parse", "--show-toplevel"]) || cwd;
+  return join(root, ".agents", "machine-memory.json");
+}
+
+const decodePin = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ repository: Schema.String })),
+);
+
+/** The slug `init` pinned for this checkout, or undefined when there is no pin file. */
+export function readRepositoryPin(cwd = process.cwd()): string | undefined {
+  const path = repositoryPinPath(cwd);
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  let pinned: string;
+  try {
+    pinned = decodePin(readFileSync(path, "utf8")).repository.trim();
+  } catch (cause) {
+    throw new Error(
+      `${path} is not a repository pin. It must hold {"repository": "<slug>"}; run 'machine-memory init' to rewrite it, or delete it.`,
+      { cause },
+    );
+  }
+  const error = repositorySlugError(pinned);
+  if (error !== undefined) {
+    throw new Error(`${path} pins an invalid repository '${pinned}': ${error}`);
+  }
+  return pinned;
+}
+
+/** The pin file's content for `slug`. */
+export function repositoryPinContent(slug: string): string {
+  return `${JSON.stringify({ repository: slug }, null, 2)}\n`;
+}
+
+/** Where the slug of this run comes from. */
+export function repositorySource(cwd = process.cwd()): RepositorySource {
+  repositoryForCurrentDirectory(cwd);
+  return repositoryTarget.slug !== undefined
+    ? "explicit"
+    : (cachedRepository?.source ?? "origin");
+}
+
+/**
+ * The repository commands act on, from the first of: --repo,
+ * MACHINE_MEMORY_REPO, the pin file `init` writes, and the path of the
+ * checkout's origin remote.
  */
 export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
   if (repositoryTarget.slug !== undefined) {
     return repositoryTarget.slug;
   }
   if (cachedRepository !== undefined && cwd === process.cwd()) {
-    return cachedRepository;
+    return cachedRepository.slug;
+  }
+  const resolved = resolveRepository(cwd);
+  if (cwd === process.cwd()) {
+    cachedRepository = resolved;
+  }
+  return resolved.slug;
+}
+
+type ResolvedRepository = {
+  readonly slug: string;
+  readonly source: RepositorySource;
+};
+
+function resolveRepository(cwd: string): ResolvedRepository {
+  const pinned = readRepositoryPin(cwd);
+  if (pinned !== undefined) {
+    return { slug: pinned, source: "pin" };
   }
 
-  let remote: string;
-  try {
-    remote = String(
-      execFileSync("git", ["config", "--get", "remote.origin.url"], {
-        cwd,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }),
-    ).trim();
-  } catch (cause) {
+  const remote = gitOutput(cwd, ["config", "--get", "remote.origin.url"]);
+  if (remote === undefined) {
     throw new Error(
-      "Could not infer the repository from Git remote.origin.url. Run this command inside a Git checkout with an origin remote.",
-      { cause },
+      "Could not infer the repository: there is no pin file and no Git remote.origin.url. Pass --repo <slug>, or run this command inside a Git checkout with an origin remote.",
     );
   }
 
@@ -99,10 +176,7 @@ export function repositoryForCurrentDirectory(cwd = process.cwd()): string {
     );
   }
 
-  if (cwd === process.cwd()) {
-    cachedRepository = repository;
-  }
-  return repository;
+  return { slug: repository, source: "origin" };
 }
 
 /** The slug for a Git remote URL, or undefined when its path is not one. */

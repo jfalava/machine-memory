@@ -41,6 +41,41 @@ When the new memory is not a duplicate, the response lists `related`: the
 active memories that strongly match it, so you can check that it does not
 repeat or contradict them. The field is absent when nothing matches strongly.
 
+## Candidates for a parent agent
+
+When a parent agent owns memory, a child agent returns its findings instead of
+writing them. `--emit-candidate <file>` makes that a file:
+
+```sh
+machine-memory add "Lint runs oxlint with the anti-slop plugin" \
+  --type reference --tags area:lint \
+  --emit-candidate findings.json (--local|--remote)
+```
+
+The command checks the memory the way a real `add` does (size, evidence,
+near-duplicates), prints the `--dry-run` output, and writes nothing to the
+database. A memory that passes is appended to the JSON array in the file, and
+the output reports `candidate_emitted: true` and `candidates_in_file`. A
+memory that a real `add` would refuse, or that would update an existing
+memory, is not appended: the command exits `1` and `note` says why.
+
+The parent writes the file with
+[`import <file> --review`](/machine/import#reviewing-candidates), which
+reports each candidate as written or declined.
+
+## Who wrote it
+
+Every write records its writer: `source_agent` is who created the memory and
+`last_updated_by` who last changed it, as `<agent>:<thread>`, such as
+`amp:T-1234`. The CLI reads the writer from the agent harness it runs under
+(Amp, Claude Code or Codex). Set `MACHINE_MEMORY_AGENT` to name it yourself,
+or pass `--source-agent` and `--updated-by` on one write. Outside a harness
+with neither set, both stay empty.
+
+[`list`](/machine/list), [`export`](/machine/export) and
+[`checkpoint`](/machine/checkpoint) take `--mine` to read only what the
+current session wrote, and `--by <writer>` for another writer.
+
 ## Upsert by topic
 
 Use `--upsert-match <query>` when you do not know the ID and an existing strong

@@ -9,7 +9,7 @@ const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
  * checkouts that still carry an older block are told to run `init` again. A
  * block without a version line predates versions and counts as 1.
  */
-export const MEMORY_BLOCK_VERSION = 4;
+export const MEMORY_BLOCK_VERSION = 5;
 
 export type AgentsMemoryBackend = "local" | "remote" | "mcp";
 
@@ -53,12 +53,12 @@ function cliTerms(flag: "--local" | "--remote"): BlockTerms {
 
 const MCP_TERMS: BlockTerms = {
   intro:
-    "This repository keeps durable project knowledge in `machine-memory`, reached through its MCP tools (`list_repositories` and `memory_*`); no CLI is needed. Every tool takes `repository`, the path of this checkout's origin remote, such as `owner/name`. Confirm it with `list_repositories` before the first write: a wrong slug reads as empty and writes to a new repository.",
+    "This repository keeps durable project knowledge in `machine-memory`, reached through its MCP tools (`list_repositories` and `memory_*`), not a CLI. Every tool takes `repository`: the slug in `.agents/machine-memory.json`, or without that file the origin remote's path, such as `owner/name`. Check it with `list_repositories` before the first write: a wrong slug reads as empty and writes to a new repository.",
   scanFiles: "`memory_suggest` with `{ repository, files }`",
   scanTopic: "`memory_query` with `{ repository, query }`",
-  read: "`memory_get` for each id",
+  read: "`memory_get` with their `ids`",
   expiry: "`expires_after_days`",
-  size: "`memory_size` with the content, tags and context you intend to write",
+  size: "`memory_size` with the content, tags and context",
   update: "`memory_update` (`id` and the whole new `content`)",
   metadataUpdate: "Omit `content`",
   add: "`memory_add` and `upsert_match`",

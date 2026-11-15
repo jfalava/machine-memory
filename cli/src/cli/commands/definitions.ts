@@ -51,6 +51,7 @@ import {
 import { handleMigrateCommand } from "./migrate";
 import { handleIndexCommand, handleReindexCommand } from "./reindex";
 import { remoteCommand } from "./remote";
+import { repoCommand } from "./repo";
 import { handleSizeCommand } from "./size";
 import { handleTagMapCommand } from "./tag-map";
 import { handleVerifyCommand } from "./verify";
@@ -66,6 +67,7 @@ const addCommand = effectCommand(
     "allow-drop": booleanFlag("allow-drop"),
     "upsert-threshold": stringFlag("upsert-threshold"),
     "dry-run": booleanFlag("dry-run"),
+    "emit-candidate": stringFlag("emit-candidate"),
     path: stringFlag("path"),
     tags: stringFlag("tags"),
     context: stringFlag("context"),
@@ -86,6 +88,7 @@ const addCommand = effectCommand(
     booleanSpec("allow-drop"),
     stringSpec("upsert-threshold"),
     booleanSpec("dry-run"),
+    stringSpec("emit-candidate"),
     stringSpec("path"),
     stringSpec("tags"),
     stringSpec("context"),
@@ -141,6 +144,9 @@ const listCommand = effectCommand(
     status: stringFlag("status"),
     "include-deprecated": booleanFlag("include-deprecated"),
     limit: stringFlag("limit"),
+    offset: stringFlag("offset"),
+    by: stringFlag("by"),
+    mine: booleanFlag("mine"),
     ...outputConfig(),
   },
   [
@@ -150,6 +156,9 @@ const listCommand = effectCommand(
     stringSpec("status"),
     booleanSpec("include-deprecated"),
     stringSpec("limit"),
+    stringSpec("offset"),
+    stringSpec("by"),
+    booleanSpec("mine"),
     ...outputSpecs,
   ],
   "read",
@@ -323,6 +332,9 @@ const checkpointCommand = effectCommand(
     query: stringFlag("query"),
     since: stringFlag("since"),
     limit: stringFlag("limit"),
+    by: stringFlag("by"),
+    mine: booleanFlag("mine"),
+    "last-commit": booleanFlag("last-commit"),
     ...outputConfig(),
   },
   [
@@ -331,6 +343,9 @@ const checkpointCommand = effectCommand(
     stringSpec("query"),
     stringSpec("since"),
     stringSpec("limit"),
+    stringSpec("by"),
+    booleanSpec("mine"),
+    booleanSpec("last-commit"),
     ...outputSpecs,
   ],
   "read",
@@ -339,8 +354,8 @@ const checkpointCommand = effectCommand(
 
 const doctorCommand = effectCommand(
   "doctor",
-  outputConfig(),
-  outputSpecs,
+  { only: stringFlag("only"), since: stringFlag("since"), ...outputConfig() },
+  [stringSpec("only"), stringSpec("since"), ...outputSpecs],
   "read",
   handleDoctorCommand,
 );
@@ -407,8 +422,8 @@ const sizeCommand = effectCommand(
 );
 const importCommand = effectCommand(
   "import",
-  { args: positionalArgs(), ...outputConfig() },
-  outputSpecs,
+  { args: positionalArgs(), review: booleanFlag("review"), ...outputConfig() },
+  [booleanSpec("review"), ...outputSpecs],
   "write",
   handleImportCommand,
 );
@@ -448,6 +463,8 @@ const exportCommand = effectCommand(
     type: stringFlag("type"),
     certainty: stringFlag("certainty"),
     since: stringFlag("since"),
+    by: stringFlag("by"),
+    mine: booleanFlag("mine"),
     ...outputConfig(),
   },
   [
@@ -455,6 +472,8 @@ const exportCommand = effectCommand(
     stringSpec("type"),
     stringSpec("certainty"),
     stringSpec("since"),
+    stringSpec("by"),
+    booleanSpec("mine"),
     ...outputSpecs,
   ],
   "read",
@@ -515,6 +534,7 @@ export const featureCommands = [
   initCommand,
   localCommand,
   remoteCommand,
+  repoCommand,
 ] as const;
 
 function printUpgradeProgress(progress: UpgradeProgress): void {

@@ -237,6 +237,7 @@ describe("product ops schemas", () => {
     const payload = {
       ok: true as const,
       result: {
+        repository: "o/r",
         count: 1,
         no_strong_match: false,
         results: [
@@ -269,6 +270,7 @@ describe("product ops schemas", () => {
     const list = {
       ok: true as const,
       result: {
+        repository: "o/r",
         count: 1,
         total_count: 3,
         offset: 1,
@@ -308,11 +310,12 @@ describe("product ops schemas", () => {
     const suggest = {
       ok: true as const,
       result: {
+        repository: "o/r",
+        count: 0,
         files: ["src/a.ts"],
         normalized_path_terms: ["a"],
         derived_terms: ["a"],
         neighborhood: { tags: [], paths: [] },
-        count: 0,
         no_strong_match: true,
         results: [],
       },

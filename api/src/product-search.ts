@@ -199,6 +199,7 @@ export const productSearchHandlers = (
         normalizeMemoryQueryArgs(input),
       );
       return {
+        repository: input.repository,
         count: results.length,
         no_strong_match: !hasStrongMatch(results),
         results,
@@ -261,6 +262,8 @@ export const productSearchHandlers = (
         .slice(0, args.limit)
         .map(scoredResultRow);
       return {
+        repository: args.repository,
+        count: results.length,
         files,
         normalized_path_terms: pathTerms,
         derived_terms: scoreTerms,
@@ -268,7 +271,6 @@ export const productSearchHandlers = (
           tags: neighborhood.tagHints,
           paths: neighborhood.pathHints,
         },
-        count: results.length,
         no_strong_match: !hasStrongMatch(results),
         results,
       };

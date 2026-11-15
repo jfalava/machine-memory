@@ -1,0 +1,88 @@
+---
+title: repo
+description: List the repositories that hold memories and merge one into another.
+sidebar:
+  order: 17.5
+---
+
+## Usage
+
+```sh
+machine-memory repo list (--local|--remote)
+machine-memory repo merge <from> <into> [--dry-run] (--local|--remote)
+```
+
+## repo list
+
+`repo list` prints every repository that holds memories, with its `total`,
+`active`, `deprecated` and `superseded` counts. It also reports the slug the
+current checkout resolves to:
+
+```json
+{
+  "current": "owner/name",
+  "source": "pin",
+  "pin": "owner/name",
+  "count": 2,
+  "results": [
+    {
+      "repository": "@namespace/name",
+      "total": 12,
+      "active": 9,
+      "deprecated": 3,
+      "superseded": 0
+    },
+    {
+      "repository": "owner/name",
+      "total": 240,
+      "active": 201,
+      "deprecated": 30,
+      "superseded": 9
+    }
+  ]
+}
+```
+
+`source` is `explicit` (`--repo` or `MACHINE_MEMORY_REPO`), `pin` or `origin`;
+see [Other repositories](/machine/overview#other-repositories).
+
+## repo merge
+
+When one project's memories were written under two slugs, for example
+`@namespace/name` from one remote and `owner/name` from another,
+`repo merge <from> <into>` moves the active memories of `<from>` under
+`<into>`:
+
+```sh
+machine-memory repo merge @namespace/name owner/name --dry-run --remote
+machine-memory repo merge @namespace/name owner/name --remote
+```
+
+A memory's repository cannot change in place, because its id and its vector
+namespace belong to the repository. The merge therefore copies each active
+memory into `<into>` under a new id and deprecates the original. The output
+lists the new ids:
+
+```json
+{
+  "from": "@namespace/name",
+  "into": "owner/name",
+  "copied": 9,
+  "deprecated": 9,
+  "id_map": [{ "from_id": 31, "into_id": 412 }]
+}
+```
+
+- Content, tags, context, type, certainty, evidence, refs, `source_agent` and
+  both timestamps are kept. `update_count` restarts at `0`, and
+  `last_updated_by` becomes `merge:<from>#<old id>`, so each copy names the
+  memory it came from.
+- Deprecated and superseded memories, and the revision history, stay in
+  `<from>`.
+- A merge that was interrupted can be run again: a memory that was already
+  copied is not copied twice.
+- With `--remote`, each copy is embedded again for semantic search.
+- The merge does not look for memories both repositories held. Run
+  [`doctor`](/machine/doctor) on `<into>` afterwards.
+
+`--dry-run` prints `would_copy` and writes nothing.

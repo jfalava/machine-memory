@@ -12,6 +12,7 @@ import {
   normalizeMemoryListArgs,
   normalizeMemorySizeArgs,
   type JsonObject,
+  type MemoryGetResult,
 } from "@machine-memory/contract";
 import * as Effect from "effect/Effect";
 
@@ -85,11 +86,40 @@ export const productReadHandlers = (
 
   get: (input) =>
     Effect.gen(function* () {
-      const row = yield* fetchProductRow(ctx, input.repository, input.id);
-      if (!row) {
-        return yield* memoryNotFound(ctx, input.id, input.repository);
+      const ids = [...new Set(input.ids)];
+      const placeholders = ids.map(() => "?").join(", ");
+      const rows = yield* ctx.sql.unsafe<JsonObject>(
+        `SELECT * FROM memories WHERE repository = ? AND id IN (${placeholders})`,
+        [input.repository, ...ids],
+      );
+      const byId = new Map(
+        rows.map(toProductRow).map((row) => [row.id, row] as const),
+      );
+      // Results come back in the order the ids were asked for.
+      const results = ids.flatMap((id) => {
+        const row = byId.get(id);
+        return row === undefined ? [] : [row];
+      });
+      const missing = ids.filter((id) => !byId.has(id));
+      const result: MemoryGetResult = {
+        repository: input.repository,
+        count: results.length,
+        results,
+      };
+      if (missing.length === 0) {
+        return result;
       }
-      return row;
+      // A miss is an answer, not an error: it says which ids, and who holds them.
+      const elsewhere = yield* ctx.sql.unsafe<{
+        id: number;
+        repository: string;
+      }>(
+        `SELECT id, repository FROM memories WHERE id IN (${missing.map(() => "?").join(", ")}) ORDER BY id`,
+        missing,
+      );
+      return elsewhere.length > 0
+        ? { ...result, missing_ids: missing, found_elsewhere: elsewhere }
+        : { ...result, missing_ids: missing };
     }),
 
   history: (input) =>
@@ -136,6 +166,7 @@ export const productReadHandlers = (
       const totalCount = jsonNumber(countRows[0]?.total_count) ?? 0;
       const results = rows.map(toProductRow);
       return {
+        repository: args.repository,
         count: results.length,
         total_count: totalCount,
         offset: args.offset,

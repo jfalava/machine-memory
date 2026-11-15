@@ -12,7 +12,7 @@ The managed section lives between HTML markers and can be replaced safely:
 
 ```html
 <!-- machine-memory:start -->
-<!-- machine-memory:version 4 mcp -->
+<!-- machine-memory:version 5 mcp -->
 …
 <!-- machine-memory:end -->
 ```
@@ -90,11 +90,9 @@ Exactly one of `--local`, `--remote`, or `--mcp` is required.
 
 ## What agents get
 
-The MCP block tells agents to:
-
 The MCP block is about 2,500 bytes, because agents read it on every turn. It tells agents to:
 
-- Pass the repository slug of the checkout's origin remote and confirm it with `list_repositories` before the first write
+- Pass the repository slug pinned in `.agents/machine-memory.json`, or the path of the checkout's origin remote when there is no pin, and check it with `list_repositories` before the first write
 - Scan once before changing code with `memory_suggest` (known files) or `memory_query` (a topic, or a task that touches no files), then read the relevant records with `memory_get`, judging results by `match_strength`
 - Follow the user when an instruction contradicts a stored record, and update the record
 - Write one fact per record, keep delivery state in one expiring `status` record, and leave out pixel values, UI state, deploy outcomes and facts about one machine

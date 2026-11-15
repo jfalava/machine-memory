@@ -85,12 +85,18 @@ describe("pretty output", () => {
 
   it("renders a memory detail as labeled fields", () => {
     const output = renderPretty("get", {
-      id: 3,
-      content: "Keep output stable",
-      memory_type: "decision",
-      certainty: "verified",
-      tags: "cli",
-      refs: ["docs/output"],
+      repository: "owner/name",
+      count: 1,
+      results: [
+        {
+          id: 3,
+          content: "Keep output stable",
+          memory_type: "decision",
+          certainty: "verified",
+          tags: "cli",
+          refs: ["docs/output"],
+        },
+      ],
     });
 
     expect(output).toContain("Memory #3");

@@ -24,6 +24,13 @@ command accepts:
 | `--json-min` | Compact JSON with stable identifiers and minimal summaries.       |
 | `--quiet`    | The smallest machine-oriented response available for the command. |
 
+The read commands (`get`, `query`, `list`, `suggest`, `sweep` and `export`)
+all print one object: `repository`, `count`, the fields of that command, then
+`results`, which is an array even for one memory or none. The output flags
+change only what each result carries: the whole memory by default, a summary
+with `--json-min`, and the id alone with `--quiet`. `--brief` prints one text
+line per memory instead of JSON.
+
 All machine commands also accept the global `--pretty` flag. It renders a
 human-readable result instead of JSON. Existing explicit output flags take
 precedence, so `--json-min`, `--brief`, and `--quiet` remain safe for scripts.
@@ -35,14 +42,33 @@ machine-memory --pretty query "backend" --remote
 machine-memory query "backend" --remote --pretty
 ```
 
+## ASCII-only output
+
+Memory content, the `…` that ends a snippet, and the symbols in `--pretty`
+output are not ASCII, and some shells and tools treat such output as binary.
+Pass `--ascii` on any command to print every non-ASCII character as a
+`\uXXXX` escape. JSON parsers read the escapes back as the original text, so
+the output carries the same data.
+
+```sh
+machine-memory query "backend" --remote --json-min --ascii
+```
+
 ## Other repositories
 
-Commands act on the repository named by the current checkout's `origin`
-remote. To read or write another repository's memories without changing
-directory, pass `--repo <slug>` anywhere on the command line, or set
-`MACHINE_MEMORY_REPO`. The flag wins over the variable. A slug is the remote's
-path: `owner/name`, `@namespace/name`, or `group/subgroup/name` for a GitLab
-subgroup, which keeps every segment.
+Commands act on one repository, named by the first of these that is set:
+
+1. `--repo <slug>`, anywhere on the command line.
+2. The `MACHINE_MEMORY_REPO` environment variable.
+3. The pin in `.agents/machine-memory.json`, which
+   [`init`](/human/init) writes at the top of the checkout.
+4. The path of the checkout's `origin` remote.
+
+A slug is the remote's path: `owner/name`, `@namespace/name`, or
+`group/subgroup/name` for a GitLab subgroup, which keeps every segment.
+Commit the pin, so every clone and mirror of the project uses the same slug
+whatever its remote is called. [`repo list`](/machine/repo) shows which slug
+the checkout resolves to and why.
 
 ```sh
 machine-memory query "node overlay" --repo jfalava/outfit --remote

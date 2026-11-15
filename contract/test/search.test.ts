@@ -5,10 +5,33 @@ import {
   extractQueryIdentifiers,
   fileIdentifiers,
   hasStrongMatch,
+  isoTimestamp,
   matchText,
   mergeSuggestCandidates,
   orderByMatchStrength,
+  sqliteTimestamp,
 } from "../src/index";
+
+describe("timestamps", () => {
+  it("adds the zone SQLite leaves out and keeps values that already have one", () => {
+    expect(isoTimestamp("2026-09-05 12:30:00")).toBe("2026-09-05T12:30:00Z");
+    expect(isoTimestamp("2026-09-05T12:30:00Z")).toBe("2026-09-05T12:30:00Z");
+    expect(isoTimestamp("2026-09-05T14:30:00+02:00")).toBe(
+      "2026-09-05T14:30:00+02:00",
+    );
+    expect(isoTimestamp("")).toBe("");
+  });
+
+  it("stores any ISO time as UTC in SQLite's form", () => {
+    expect(sqliteTimestamp("2026-09-05T12:30:00Z")).toBe("2026-09-05 12:30:00");
+    expect(sqliteTimestamp("2026-09-05T14:30:00+02:00")).toBe(
+      "2026-09-05 12:30:00",
+    );
+    expect(sqliteTimestamp("2026-09-05T12:30:00.789Z")).toBe(
+      "2026-09-05 12:30:00",
+    );
+  });
+});
 
 describe("search match assessment", () => {
   it("extracts literal identifiers and ignores plain words", () => {

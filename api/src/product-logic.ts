@@ -25,6 +25,7 @@ import {
   jsonNumber,
   jsonString,
   type JsonObject,
+  isoTimestamp,
 } from "@machine-memory/contract";
 import { Schema } from "effect";
 
@@ -62,7 +63,7 @@ export function toHistoryRow(value: JsonObject): MemoryHistoryEntry {
     ...row,
     revision_id: Number(value.revision_id),
     operation: jsonString(value.operation) ?? "update",
-    snapshot_at: jsonString(value.snapshot_at) ?? "",
+    snapshot_at: isoTimestamp(jsonString(value.snapshot_at) ?? ""),
   };
 }
 
@@ -160,7 +161,8 @@ function ingestStatus(accumulator: StatsAccumulator, status: string): void {
 }
 
 function ingestOldest(accumulator: StatsAccumulator, row: JsonObject): void {
-  const createdAt = rawString(row, "created_at") || null;
+  const stored = rawString(row, "created_at");
+  const createdAt = stored === "" ? null : isoTimestamp(stored);
   const time =
     createdAt === null
       ? Number.POSITIVE_INFINITY

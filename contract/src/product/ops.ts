@@ -68,6 +68,13 @@ const allowDropField = optionalBoolean.annotateKey({
     "Set true to replace content even though the update drops a path, flag or symbol that no other active record mentions, or shares almost nothing with the stored content. Without it such an update is refused and the error names what would be lost.",
 });
 
+const sourceAgentField = Schema.optionalKey(
+  Schema.String.check(Schema.isMaxLength(200)),
+).annotateKey({
+  description:
+    "Who is making this write: the agent and its thread or session, such as amp:T-1234 or claude-code:<session id>. Stored as source_agent on a new memory and as last_updated_by on every write, so a later reader can tell which thread wrote a record. Defaults to the authenticated user.",
+});
+
 const filterFields = {
   status: Schema.optionalKey(MemoryStatusSchema),
   memory_type: Schema.optionalKey(MemoryTypeSchema),
@@ -135,7 +142,7 @@ export function normalizeMemoryQueryArgs(
 
 export const MemoryGetArgsSchema = Schema.Struct({
   repository: RepositorySchema,
-  id: memoryId,
+  ids: memoryIds,
 });
 
 export const MemoryHistoryArgsSchema = Schema.Struct({
@@ -277,6 +284,7 @@ export const MemoryAddArgsInputSchema = Schema.Struct({
       "Set true after reading the existing records when this is a different fact. Creates a new memory despite an upsert match or a near-duplicate.",
   }),
   allow_drop: allowDropField,
+  source_agent: sourceAgentField,
   upsert_threshold: Schema.optionalKey(
     Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   ).annotateKey({
@@ -299,6 +307,7 @@ export type MemoryAddArgs = {
   readonly update_id?: number;
   readonly create_new?: boolean;
   readonly allow_drop?: boolean;
+  readonly source_agent?: string;
   readonly upsert_threshold: number;
 };
 export function normalizeMemoryAddArgs(
@@ -319,6 +328,7 @@ export function normalizeMemoryAddArgs(
     update_id: input.update_id,
     create_new: input.create_new,
     allow_drop: input.allow_drop,
+    source_agent: input.source_agent,
     upsert_threshold: input.upsert_threshold ?? UPSERT_DEFAULT_MIN_SCORE,
   };
 }
@@ -376,6 +386,7 @@ export const MemoryUpdateArgsSchema = Schema.Struct({
     description:
       "update_count from the read this update is based on. A different stored count refuses the update, so a concurrent change is not overwritten.",
   }),
+  source_agent: sourceAgentField,
 });
 
 export const MemoryRestoreArgsSchema = Schema.Struct({
@@ -447,6 +458,7 @@ export const MemoryDeprecateArgsSchema = Schema.Struct({
     description:
       "Id of the canonical memory replacing every target. Omit to mark targets deprecated without a replacement.",
   }),
+  source_agent: sourceAgentField,
 });
 
 export const MemoryDoctorArgsSchema = Schema.Struct({

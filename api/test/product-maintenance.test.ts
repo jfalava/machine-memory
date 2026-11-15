@@ -96,7 +96,7 @@ describe("product maintenance logic", () => {
       breakdown_by_memory_type: { decision: 1, status: 1 },
       breakdown_by_certainty: { verified: 1, inferred: 1 },
       tag_frequency_map: { "area:cli": 1, "topic:parser": 1 },
-      oldest_memory: { id: 1, created_at: "2026-01-01 00:00:00" },
+      oldest_memory: { id: 1, created_at: "2026-01-01T00:00:00Z" },
       memories_not_updated_over_90_days: 1,
       memories_with_no_tags: 1,
     });

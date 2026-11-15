@@ -7,7 +7,7 @@ import { CliError, CliOutput, Command } from "effect/cli";
 import * as Layer from "effect/Layer";
 import pc from "picocolors";
 
-import { printJson, warnOnStderr } from "../cli-utils";
+import { printJson, setAsciiOutput, warnOnStderr } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
 import { CommandError } from "../effect/errors";
@@ -81,20 +81,24 @@ type RepositoryFlags = {
   readonly args: string[];
   readonly repo?: string;
   readonly allowNew: boolean;
+  readonly ascii: boolean;
 };
 
 /**
- * --repo and --allow-new-repo apply to every repository-scoped command, so they
- * are read before command parsing, like a global flag, and removed from argv.
+ * --repo, --allow-new-repo and --ascii apply to every command, so they are
+ * read before command parsing, like a global flag, and removed from argv.
  */
 function extractRepositoryFlags(args: ReadonlyArray<string>): RepositoryFlags {
   const rest: string[] = [];
   let repo = process.env["MACHINE_MEMORY_REPO"]?.trim() || undefined;
   let allowNew = false;
+  let ascii = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
     if (arg === "--allow-new-repo") {
       allowNew = true;
+    } else if (arg === "--ascii") {
+      ascii = true;
     } else if (arg === "--repo") {
       repo = args[index + 1];
       if (repo === undefined || repo.startsWith("--")) {
@@ -109,11 +113,12 @@ function extractRepositoryFlags(args: ReadonlyArray<string>): RepositoryFlags {
       rest.push(arg);
     }
   }
-  return { args: rest, repo, allowNew };
+  return { args: rest, repo, allowNew, ascii };
 }
 
 function applyRepositoryFlags(rawArgs: ReadonlyArray<string>): string[] {
   const flags = extractRepositoryFlags(rawArgs);
+  setAsciiOutput(flags.ascii);
   setRepositoryTarget({
     slug:
       flags.repo === undefined ? undefined : parseRepositorySlug(flags.repo),

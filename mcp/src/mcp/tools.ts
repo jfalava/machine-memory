@@ -96,12 +96,21 @@ export function createMemoryServer(
     return postProductRequest(api, apiToken, route, body);
   }
 
+  // The API cannot see who holds the token, so writes are attributed here.
+  const writer = authenticatedLogin ? `mcp:${authenticatedLogin}` : "mcp";
+  function attributed<T extends { readonly source_agent?: string }>(
+    args: T,
+  ): T {
+    return { ...args, source_agent: args.source_agent?.trim() || writer };
+  }
+
   /** Register a tool that returns the product route's result as `[result]`. */
   function register<R extends ProductRoute>(
     name: string,
     route: R,
     description: string,
     onError: (cause: unknown) => ToolResult = errorResult,
+    prepare: (args: ProductRequest<R>) => ProductRequest<R> = (args) => args,
   ): void {
     server.registerTool(
       name,
@@ -111,7 +120,7 @@ export function createMemoryServer(
       },
       async (args: ProductRequest<R>) => {
         try {
-          const success = await postProduct(route, args);
+          const success = await postProduct(route, prepare(args));
           return textResult([success.result]);
         } catch (cause) {
           return onError(cause);
@@ -133,20 +142,19 @@ export function createMemoryServer(
   register(
     "memory_query",
     "query",
-    "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none) and the query identifiers it matched exactly. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
+    "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { repository, count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none) and the query identifiers it matched exactly. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
   );
 
   register(
     "memory_get",
     "get",
-    "Fetch a single memory by its numeric id from a repository's memory store. This is a read-only tool — a wrong repository slug returns 'No memory found'; nothing is lost.",
-    notFoundOrError,
+    "Fetch one to 100 memories in full by their numeric ids, such as ids [12, 40]. Returns { repository, count, results }, with results in the order the ids were given. An id the repository does not hold is listed in missing_ids instead of failing the call, and found_elsewhere names the repository that does hold it, so a wrong repository slug shows up as count 0. This is a read-only tool.",
   );
 
   register(
     "memory_list",
     "list",
-    "List memories for a repository, optionally filtered by status, memory type, certainty, or tags. The response includes total_count and has_more; increase offset until has_more is false to inspect every match. This is a read-only tool — a wrong repository slug returns an empty list; nothing is lost.",
+    "List memories for a repository, optionally filtered by status, memory type, certainty, or tags. Returns { repository, count, total_count, offset, limit, has_more, results }; increase offset until has_more is false to inspect every match. This is a read-only tool — a wrong repository slug returns an empty list; nothing is lost.",
   );
 
   register(
@@ -158,7 +166,7 @@ export function createMemoryServer(
   register(
     "memory_doctor",
     "doctor",
-    "Audit active memories in one repository for exact and near duplicates, stale status overlap, canonical-topic overlap, missing status expiry, type-boundary problems, tag taxonomy issues, malformed refs, verified records without evidence (verified_without_evidence: legacy rows to review, not bulk-fix), and gotchas naming the same identifiers (gotcha_overlap: consolidate the shared workaround). This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
+    "Audit active memories in one repository for exact and near duplicates, a status superseded by a newer status on the same topic tag (stale_status_overlap), missing status expiry, status records past their expiry (expired_status: update or deprecate them), type-boundary problems, tag taxonomy issues, malformed refs, verified records without evidence (verified_without_evidence: legacy rows to review, not bulk-fix), and gotchas naming the same identifiers (gotcha_overlap: consolidate the shared workaround). Two kinds are informational and need no fix on their own: canonical_thread_overlap (several records on one topic) and similar_tags (tags such as topic:og and topic:og-image that may name one topic). counts_by_kind gives the size of each kind. This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
   );
 
   register(
@@ -197,6 +205,8 @@ export function createMemoryServer(
     "memory_add",
     "add",
     `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. A plain add is refused when an active memory already states nearly the same thing; the error names that memory. To restate an existing memory, pass update_id with its id: the content is replaced and the fields you omit keep their stored values. When you have read the existing memories and this is a different fact, pass create_new true. upsert_match resolves the target by topic instead: a strong match is updated in place (echoes mode and upsert_match), and a weak match is refused with up to three candidates, each with rank_score, text_overlap and shared_identifiers. Replacing content is refused when it drops a path, flag or symbol that no other active memory mentions; carry the detail over, or pass allow_drop true when it is obsolete. A new memory echoes related, the active memories that strongly match it, when there are any. certainty verified requires a non-empty evidence array naming what was established (user_requirement, observed_implementation, verified_mechanism, tested_behavior); record remaining limits in validation_gaps. evidence and validation_gaps are not embedded. Refuses a memory whose content, tags and context together exceed 2,000 UTF-8 bytes; call memory_size to preflight.`,
+    errorResult,
+    attributed,
   );
 
   register(
@@ -204,12 +214,15 @@ export function createMemoryServer(
     "update",
     `⚠️ WRITE OPERATION — a wrong repository slug will return not-found rather than silently corrupt data (the WHERE clause scopes by repository AND id). There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} Target by id, or by match (resolves the best active full-text match first; echoes it as matched). Only provided fields change, so omit content to change only metadata. content replaces the whole stored content; the update is refused when it drops a path, flag or symbol that no other active memory mentions, or shares almost nothing with the stored content. The error names what would be lost: carry it over, add a new memory instead when this is a different fact, or pass allow_drop true when the detail is obsolete. A content or status change returns dropped (identifiers and sentences the new content lost) and review_candidates (other active records that may rely on the old premise); resolve both. To change some tags or gaps, use add_tags, remove_tags, add_validation_gaps and remove_validation_gaps; tags, evidence and validation_gaps replace the stored values when given ([] clears). Setting certainty verified, or clearing evidence on a verified record, requires a non-empty evidence array. Commits the row and queues vector indexing together; semantic search catches up asynchronously. Refuses an active memory whose resulting content, tags and context together exceed 2,000 UTF-8 bytes; call memory_size to preflight.`,
     notFoundOrError,
+    attributed,
   );
 
   register(
     "memory_deprecate",
     "deprecate",
     `⚠️ WRITE OPERATION — marks one to 100 explicit ids deprecated, or superseded_by when a canonical replacement id is supplied. There is no default: repository is always required. Call list_repositories first if unsure.${ownerHint} This preserves audit history and re-syncs each changed vector. Returns review_candidates when other active records may rely on the retired premise; resolve each one. Prefer this over permanent deletion for obsolete or replaced memories.`,
+    errorResult,
+    attributed,
   );
 
   register(

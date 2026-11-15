@@ -89,8 +89,8 @@ const FULL_ROW = {
   update_count: 3,
   refs: ["docs/deploy.md"],
   expires_after_days: 7,
-  created_at: "2026-09-01 10:00:00",
-  updated_at: "2026-09-05 12:00:00",
+  created_at: "2026-09-01T10:00:00Z",
+  updated_at: "2026-09-05T12:00:00Z",
 } satisfies MemoryRow;
 
 const SIZE = {
@@ -128,17 +128,24 @@ const PASS_THROUGH_CASES: ReadonlyArray<
     "query",
     { repository: "o/r", query: "deploy" },
     {
+      repository: "o/r",
       count: 1,
       no_strong_match: false,
       results: [{ ...SCORED_ROW, score: 12.5 }],
     },
   ],
-  ["memory_get", "get", { repository: "o/r", id: 7 }, FULL_ROW],
+  [
+    "memory_get",
+    "get",
+    { repository: "o/r", ids: [7, 9] },
+    { repository: "o/r", count: 1, missing_ids: [9], results: [FULL_ROW] },
+  ],
   [
     "memory_list",
     "list",
     { repository: "o/r", limit: 1, offset: 50 },
     {
+      repository: "o/r",
       count: 1,
       total_count: 53,
       offset: 50,
@@ -164,7 +171,7 @@ const PASS_THROUGH_CASES: ReadonlyArray<
         {
           ...FULL_ROW,
           revision_id: 11,
-          snapshot_at: "2026-09-05 12:00:00",
+          snapshot_at: "2026-09-05T12:00:00Z",
           operation: "update",
         },
       ],
@@ -230,11 +237,12 @@ const PASS_THROUGH_CASES: ReadonlyArray<
     "suggest",
     { repository: "o/r", files: "src/index.ts" },
     {
+      repository: "o/r",
+      count: 1,
       files: ["src/index.ts"],
       normalized_path_terms: ["src", "index"],
       derived_terms: ["index"],
       neighborhood: { tags: ["area:src"], paths: ["src"] },
-      count: 1,
       no_strong_match: false,
       results: [{ ...SCORED_ROW, score: 3 }],
     },
@@ -315,10 +323,11 @@ const PASS_THROUGH_CASES: ReadonlyArray<
 async function linkedClient(
   bindings: { api: ApiFetcher; apiToken: string },
   scopes: readonly string[] | "trusted-internal" = "trusted-internal",
+  login?: string,
 ) {
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
-  const server = createMemoryServer(bindings, undefined, scopes);
+  const server = createMemoryServer(bindings, login, scopes);
   await server.connect(serverTransport);
   const client = new Client({ name: "gateway-test", version: "0.0.0" });
   await client.connect(clientTransport);
@@ -367,7 +376,12 @@ describe("mcp gateway to api product routes", () => {
           `https://product.internal${productRoutePath(route)}`,
         );
         expect(seen[0]?.authorization).toBe("Bearer test-token");
-        expect(seen[0]?.body).toEqual(args);
+        // Writes gain the gateway's writer; everything else passes unchanged.
+        expect(seen[0]?.body).toEqual(
+          ["memory_add", "memory_update", "memory_deprecate"].includes(name)
+            ? { ...args, source_agent: "mcp" }
+            : args,
+        );
       } finally {
         await client.close();
       }
@@ -403,7 +417,7 @@ describe("mcp gateway to api product routes", () => {
   test.each([
     ["list_repositories", {}],
     ["memory_query", { repository: "o/r", query: "fact" }],
-    ["memory_get", { repository: "o/r", id: 7 }],
+    ["memory_get", { repository: "o/r", ids: [7] }],
     ["memory_history", { repository: "o/r", id: 7 }],
     ["memory_list", { repository: "o/r" }],
     ["memory_doctor", { repository: "o/r" }],
@@ -431,6 +445,49 @@ describe("mcp gateway to api product routes", () => {
     }
   });
 
+  test("writes are attributed to the authenticated login unless the agent names itself", async () => {
+    const seen: SeenCall[] = [];
+    const client = await linkedClient(
+      { api: stubApi({}, seen), apiToken: "test-token" },
+      "trusted-internal",
+      "alice",
+    );
+    try {
+      await client.callTool({
+        name: "memory_add",
+        arguments: { repository: "o/r", content: "fact" },
+      });
+      await client.callTool({
+        name: "memory_update",
+        arguments: { repository: "o/r", id: 7, tags: "area:cli" },
+      });
+      await client.callTool({
+        name: "memory_deprecate",
+        arguments: { repository: "o/r", ids: [7], source_agent: "amp:T-1" },
+      });
+      // Reads carry no writer.
+      await client.callTool({
+        name: "memory_list",
+        arguments: { repository: "o/r" },
+      });
+    } finally {
+      await client.close();
+    }
+    expect(
+      seen.map((call) => [
+        new URL(call.url).pathname,
+        Schema.decodeUnknownSync(
+          Schema.Struct({ source_agent: Schema.optionalKey(Schema.String) }),
+        )(call.body).source_agent,
+      ]),
+    ).toEqual([
+      ["/product/add", "mcp:alice"],
+      ["/product/update", "mcp:alice"],
+      ["/product/deprecate", "amp:T-1"],
+      ["/product/list", undefined],
+    ]);
+  });
+
   test("memory_get carries all metadata through the encoded API response", async () => {
     const client = await linkedClient({
       api: stubApi(
@@ -439,7 +496,7 @@ describe("mcp gateway to api product routes", () => {
             status: 200,
             body: encodeResponse(PRODUCT_OPERATIONS.get.response, {
               ok: true,
-              result: FULL_ROW,
+              result: { repository: "o/r", count: 1, results: [FULL_ROW] },
             }),
           },
         },
@@ -449,10 +506,12 @@ describe("mcp gateway to api product routes", () => {
     });
     const result = await client.callTool({
       name: "memory_get",
-      arguments: { repository: "o/r", id: 7 },
+      arguments: { repository: "o/r", ids: [7] },
     });
     expect(result.isError).toBeFalsy();
-    expect(JSON.parse(firstText(result))).toEqual([FULL_ROW]);
+    expect(JSON.parse(firstText(result))).toEqual([
+      { repository: "o/r", count: 1, results: [FULL_ROW] },
+    ]);
   });
 
   test("memory_restore surfaces a stale revision conflict instead of reporting success", async () => {
@@ -489,7 +548,7 @@ describe("mcp gateway to api product routes", () => {
     "MCP and API reject oversized namespaces before fetching: %s",
     async (repository) => {
       const seen: SeenCall[] = [];
-      const args = { repository, id: 7 };
+      const args = { repository, ids: [7] };
       expect(decodeRequest(PRODUCT_OPERATIONS.get.request, args).ok).toBe(
         false,
       );
@@ -553,7 +612,7 @@ describe("mcp gateway to api product routes", () => {
       [],
     );
     await expect(
-      postProduct(api, "token", "get", { repository: "o/r", id: 7 }),
+      postProduct(api, "token", "get", { repository: "o/r", ids: [7] }),
     ).rejects.toThrow("invalid response");
   });
 
@@ -580,12 +639,12 @@ describe("mcp gateway to api product routes", () => {
     expect(firstText(result)).toBe(guidance);
   });
 
-  test("memory_get maps 404 to a plain not-found message", async () => {
+  test("memory_verify maps 404 to a plain not-found message", async () => {
     const seen: SeenCall[] = [];
     const client = await linkedClient({
       api: stubApi(
         {
-          "/product/get": {
+          "/product/verify": {
             status: 404,
             body: {
               ok: false,
@@ -598,8 +657,8 @@ describe("mcp gateway to api product routes", () => {
       apiToken: "test-token",
     });
     const result = await client.callTool({
-      name: "memory_get",
-      arguments: { repository: "o/r", id: 9 },
+      name: "memory_verify",
+      arguments: { repository: "o/r", id: 9, fact: "fact" },
     });
     expect(result.isError).toBeFalsy();
     expect(firstText(result)).toContain("No memory found with id 9");

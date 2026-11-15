@@ -130,9 +130,33 @@ export const StoredMemoryRowSchema = Schema.Struct({
 });
 export type StoredMemoryRow = typeof StoredMemoryRowSchema.Type;
 
+/**
+ * Output form of a stored timestamp. SQLite's `datetime('now')` writes UTC as
+ * `YYYY-MM-DD HH:MM:SS` with no zone, which readers took for local time.
+ */
+export function isoTimestamp(stored: string): string {
+  return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(stored)
+    ? `${stored.replace(" ", "T")}Z`
+    : stored;
+}
+
+/** Storage form of a timestamp: UTC `YYYY-MM-DD HH:MM:SS`, as `datetime('now')` writes it. */
+export function sqliteTimestamp(isoLike: string): string {
+  return new Date(Date.parse(isoLike))
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+}
+
+function isoOrNull(stored: string | null): string | null {
+  return stored === null ? null : isoTimestamp(stored);
+}
+
 export function normalizeStoredMemoryRow(row: StoredMemoryRow): MemoryRow {
   return {
     ...row,
+    created_at: isoOrNull(row.created_at),
+    updated_at: isoOrNull(row.updated_at),
     tags: row.tags ?? "",
     context: row.context ?? "",
     source_agent: row.source_agent ?? "",

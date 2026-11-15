@@ -47,6 +47,7 @@ export type RestHandlers<R = RuntimeContext> = {
   readonly handleMigration: RestHandlerFn<R>;
   readonly handleMigrationLinks: RestHandlerFn<R>;
   readonly handleVectorizeSearch: RestHandlerFn<R>;
+  readonly handleStatus: RestHandlerFn<R>;
   readonly handleProduct: (
     route: ProductRoute,
     body: JsonValue,
@@ -76,6 +77,7 @@ const KNOWN_ROUTES = new Set([
   "/migrate",
   "/migrate/links",
   "/vectorize/search",
+  "/status",
 ]);
 
 export function handleRestRequest<R>(
@@ -94,6 +96,9 @@ export function handleRestRequest<R>(
     }
     if (request.url === "/vectorize/search") {
       return handlers.handleVectorizeSearch(body);
+    }
+    if (request.url === "/status") {
+      return handlers.handleStatus(body);
     }
     const productRoute = normalizeProductRoute(request.url);
     if (productRoute !== undefined) {

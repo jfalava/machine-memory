@@ -42,8 +42,23 @@ The line after the start marker records the block's version and backend:
 
 ```html
 <!-- machine-memory:start -->
-<!-- machine-memory:version 4 remote -->
+<!-- machine-memory:version 5 remote -->
 ```
+
+`init` also pins the repository slug in `.agents/machine-memory.json`:
+
+```json
+{
+  "repository": "owner/name"
+}
+```
+
+Commit that file. Without it the CLI derives the slug from the `origin` remote,
+so a clone with a different remote, such as a mirror or a renamed repository,
+would read and write another repository's memories. `init --repo <slug>` pins a
+slug other than the remote's. See
+[Other repositories](/machine/overview#other-repositories) for the full
+resolution order.
 
 When the block in the current directory is older than the one the installed CLI writes, every command except `init`, `help`, `version` and `upgrade` prints one line on stderr that names the `init` command to run. A block without a version line counts as version 1.
 

@@ -88,7 +88,25 @@ export const ListRepositoriesSuccessSchema = okResponseSchema(
   ListRepositoriesResultSchema,
 );
 
-export const MemoryGetSuccessSchema = okResponseSchema(MemoryRowSchema);
+/**
+ * Every read of memories answers in this order: `repository`, `count`, the
+ * fields of that read, then `results`.
+ */
+export const MemoryGetResultSchema = Schema.Struct({
+  repository: Schema.String,
+  count: Schema.Finite,
+  /** Requested ids the repository does not hold. */
+  missing_ids: Schema.optionalKey(Schema.Array(Schema.Finite)),
+  /** Missing ids that another repository holds; ids are unique across repositories. */
+  found_elsewhere: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ id: Schema.Finite, repository: Schema.String }),
+    ),
+  ),
+  results: Schema.Array(MemoryRowSchema),
+});
+export type MemoryGetResult = typeof MemoryGetResultSchema.Type;
+export const MemoryGetSuccessSchema = okResponseSchema(MemoryGetResultSchema);
 export type MemoryGetSuccess = typeof MemoryGetSuccessSchema.Type;
 
 export const MemoryHistoryEntrySchema = Schema.Struct({
@@ -115,6 +133,7 @@ export const MemoryHistorySuccessSchema = okResponseSchema(
 );
 
 export const MemoryListResultSchema = Schema.Struct({
+  repository: Schema.String,
   count: Schema.Finite,
   total_count: Schema.Finite,
   offset: Schema.Finite,
@@ -125,6 +144,7 @@ export const MemoryListResultSchema = Schema.Struct({
 export const MemoryListSuccessSchema = okResponseSchema(MemoryListResultSchema);
 
 export const MemoryQueryResultSchema = Schema.Struct({
+  repository: Schema.String,
   count: Schema.Finite,
   no_strong_match: Schema.Boolean,
   results: Schema.Array(ScoredMemoryRowSchema),
@@ -134,6 +154,8 @@ export const MemoryQuerySuccessSchema = okResponseSchema(
 );
 
 export const MemorySuggestResultSchema = Schema.Struct({
+  repository: Schema.String,
+  count: Schema.Finite,
   files: Schema.Array(Schema.String),
   normalized_path_terms: Schema.Array(Schema.String),
   derived_terms: Schema.Array(Schema.String),
@@ -141,7 +163,6 @@ export const MemorySuggestResultSchema = Schema.Struct({
     tags: Schema.Array(Schema.String),
     paths: Schema.Array(Schema.String),
   }),
-  count: Schema.Finite,
   no_strong_match: Schema.Boolean,
   results: Schema.Array(ScoredMemoryRowSchema),
 });

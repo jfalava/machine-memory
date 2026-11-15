@@ -197,7 +197,8 @@ export function handleRestoreCommand(commandCtx: CommandContext) {
         snapshot.certainty,
         JSON.stringify(snapshot.refs),
         snapshot.expires_after_days,
-        snapshot.created_at,
+        // The stored form: normalized rows carry ISO timestamps for output.
+        decoded.value.created_at,
         ...evidenceParams,
         repository,
         id,

@@ -56,8 +56,3 @@ export type CliOutput = typeof CliOutputSchema.Type;
 export const decodeCliOutput = Schema.decodeSync(
   Schema.fromJsonString(CliOutputSchema),
 );
-
-/** Decode stdout of a CLI command that prints a JSON array of rows. */
-export const decodeCliRows = Schema.decodeSync(
-  Schema.fromJsonString(Schema.Array(CliRowSchema)),
-);

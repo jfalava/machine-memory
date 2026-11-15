@@ -36,7 +36,8 @@ write happened in between and the update is refused with nothing written.
 `--evidence`, and `--validation-gaps` replace the corresponding metadata;
 omitted flags keep the stored values. `--evidence none` and
 `--validation-gaps none` clear them. `--expires-after-days <n|null>` sets or
-clears expiry.
+clears expiry. `last_updated_by` is set to the current
+[writer](/machine/add#who-wrote-it) unless `--updated-by` names another.
 
 To change part of a list without restating it:
 

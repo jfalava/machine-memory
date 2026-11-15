@@ -1,6 +1,9 @@
 import {
+  CLI_LIMIT_MAX,
   EVIDENCE_KINDS,
   MATCH_THRESHOLDS,
+  SEARCH_LIMIT_DEFAULT,
+  SEARCH_LIMIT_MAX,
   NEAR_DUPLICATE_THRESHOLD,
   REPLACEMENT_MIN_OVERLAP,
   UPSERT_DEFAULT_MIN_SCORE,
@@ -68,21 +71,29 @@ export function helpPayload() {
         "update/diff/add --upsert-match/add --update-id: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
       review_candidates:
         "update/deprecate/add --upsert-match: other active records that may rely on the changed or retired premise (strong = shares a literal path or identifier). Update or deprecate them too. Minimal output lists review_candidate_ids.",
+      results:
+        "get, query, list, suggest, sweep and export all print one object: repository, count, the fields of that command, then results, an array even for one memory or none. The output mode changes only what each result carries: the whole memory by default, a summary with --json-min, the id alone with --quiet. --brief prints one text line per memory instead.",
       snippet:
-        "First 140 characters of content in --json-min summaries, for triage before a full get.",
+        "First 140 characters of content in --json-min summaries, for triage before a full get. get --json-min carries the whole content instead.",
       repository:
-        "The repository slug a read ran against. Object-shaped read output carries it; bare row arrays carry it on each row.",
+        "The repository slug a read ran against; the first field of every read's output.",
+      source_agent:
+        "source_agent is who created a memory and last_updated_by who last changed it, as <agent>:<thread>, such as amp:T-1234. add, update and deprecate fill them from the agent harness they run under (Amp, Claude Code, Codex), or from MACHINE_MEMORY_AGENT when it is set; --source-agent and --updated-by override both. list, export and checkpoint take --mine to read only what this session wrote, or --by <writer>, where a bare agent name such as amp covers every thread of that agent.",
+      total_count:
+        "list: how many memories match the filters, of which this page holds count. has_more is true while offset + count is below it; pass --offset to read the next page.",
       warning:
         "A read found nothing and the repository has no memories at all: the slug is probably not the one the memories were written under. Lists repositories that do have memories. Also printed on stderr.",
       found_elsewhere:
-        "get: missing ids that exist in another repository, as { id, repository }. Ids are unique across repositories.",
+        "get: missing_ids lists requested ids the repository does not hold; found_elsewhere lists those another repository holds, as { id, repository }. Ids are unique across repositories. A miss is not an error: get exits 0 with count 0.",
       stderr:
         "Lines starting with 'machine-memory:' report dropped content, review candidates, a repository without memories, or a stale AGENTS.md block, in every output mode, so filtering stdout cannot hide them.",
     },
     global_options: {
       pretty:
         "Render human-readable output for machine commands; existing human commands keep their normal output.",
-      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without it the slug is the path of the origin remote.",
+      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without either, the slug is the one init pinned in .agents/machine-memory.json, and without a pin it is the path of the origin remote.",
+      ascii:
+        "--ascii, on any command, prints only 7-bit ASCII: every other character becomes a \\uXXXX escape. JSON parsers read the escapes back as the original text, so nothing is lost. Use it when a shell or tool treats the output as binary.",
       allow_new_repo:
         "--allow-new-repo lets add/import start a repository that has no memories yet. Without it they refuse when the database holds other repositories, whether the slug came from --repo or from the Git remote, and list those repositories.",
     },
@@ -94,12 +105,16 @@ export function helpPayload() {
       },
       query: {
         usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--semantic|--hybrid] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        notes: `--limit defaults to ${SEARCH_LIMIT_DEFAULT}; the most is ${CLI_LIMIT_MAX}, or ${SEARCH_LIMIT_MAX} with --semantic or --hybrid. suggest and sweep use the same default.`,
       },
       list: {
-        usage: `list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>] [--offset <n>] [--by <writer> | --mine]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        notes: `Newest first. --limit defaults to ${CLI_LIMIT_MAX}, which is also the most. Read on with --offset while has_more is true.`,
       },
       get: {
         usage: `get <id|id,id,...>${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        notes:
+          "Prints the same object for one id and for several; the memories are in results. --json-min keeps the whole content of each memory.",
       },
       history: {
         usage: `history <id> [--limit <n>] [--offset <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -133,14 +148,14 @@ export function helpPayload() {
         usage: `sweep (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--query <search_term>] [--tags <tag>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       doctor: {
-        usage: `doctor${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `doctor [--only <kind,kind>] [--since <ISO date>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
         notes:
-          "verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
+          "--only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. canonical_thread_overlap and similar_tags describe the collection, not a defect in one record: they are counted in informational_counts and listed only with --only. verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
       },
       checkpoint: {
-        usage: `checkpoint [--files "src/a.ts,src/b.ts" | --files-json '[...]'] [--query <search_term>] [--since <ISO date>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `checkpoint [--files "src/a.ts,src/b.ts" | --files-json '[...]'] [--query <search_term>] [--since <ISO date>] [--limit <n>] [--by <writer> | --mine] [--last-commit]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
         description:
-          "End-of-task review: memories written since --since (default 12 hours ago), memories related to the touched files (default: changed files in the Git working tree, else the last commit), review flags, and the five-way classification with commands.",
+          "End-of-task review: the five-way classification with commands, memories written since --since (default 12 hours ago), memories related to the touched files, and review flags. files_source says where the files came from: flag, working_tree (changed and untracked files), last_commit (only with --last-commit, for a task that already committed), or none, when the tree is clean and no related memories were looked up.",
       },
       verify: { usage: `verify <id> <fact>${DATABASE_BACKEND_USAGE}` },
       diff: {
@@ -156,7 +171,11 @@ export function helpPayload() {
       coverage: { usage: `coverage [--root <path>]${DATABASE_BACKEND_USAGE}` },
       gc: { usage: `gc --dry-run${DATABASE_BACKEND_USAGE}` },
       stats: { usage: `stats${DATABASE_BACKEND_USAGE}` },
-      import: { usage: `import <memories.json>${DATABASE_BACKEND_USAGE}` },
+      import: {
+        usage: `import <memories.json> [--review]${DATABASE_BACKEND_USAGE}`,
+        notes:
+          "Takes the output of export, or a JSON array of memories. Without --review it restores a backup: every entry is checked first, and one invalid entry stops the import before anything is written; an entry that strongly matches an active memory is reported as conflict with those memories in related, and is not inserted. With --review it writes a candidate file from add --emit-candidate: each candidate passes or fails on its own, with the checks of a plain add (size limit, evidence for verified, near-duplicate). results lists each as written with its id, or declined with a reason and a note to hand back to the agent that found it.",
+      },
       reindex: {
         usage: REINDEX_USAGE,
         description:
@@ -168,14 +187,28 @@ export function helpPayload() {
           "Report where records stand in the semantic index: pending (written, not indexed yet), retrying (last index write failed and will be tried again), parked (cannot be indexed until the record changes or reindex re-queues it), oldest_pending_seconds, and failures grouped by error with record ids. stats reports the same under index.",
       },
       export: {
-        usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>]${DATABASE_BACKEND_USAGE}`,
+        usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>] [--by <writer> | --mine]${DATABASE_BACKEND_USAGE}`,
+        notes:
+          "Prints every matching memory in results, newest first, with no limit. import reads that output.",
       },
       version: { usage: "version" },
       upgrade: { usage: "upgrade" },
       init: {
         usage: "init (--local|--remote|--mcp)",
         description:
-          "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file (CLI local/remote or MCP-only)",
+          "Creates or replaces the managed machine-memory block in the current directory's AGENTS.md file (CLI local/remote or MCP-only), and pins this checkout's repository slug in .agents/machine-memory.json. Commit the pin: it keeps the slug the same when the origin remote differs between clones or changes. init --repo <slug> pins another slug.",
+      },
+      repo: {
+        list: {
+          usage: `repo list${DATABASE_BACKEND_USAGE}`,
+          description:
+            "Every repository with memories and its total, active, deprecated and superseded counts, plus current (the slug this checkout resolves to), source (explicit, pin or origin) and pin.",
+        },
+        merge: {
+          usage: `repo merge <from> <into> [--dry-run]${DATABASE_BACKEND_USAGE}`,
+          description:
+            "Moves a repository's active memories under another slug, for memories written under two slugs of one project. It copies them into <into> under new ids and deprecates the originals; id_map lists each { from_id, into_id }. Deprecated and superseded memories stay in <from>. Run it again after an interruption: a memory already copied is not copied twice.",
+        },
       },
       remote: {
         setup: {
@@ -188,6 +221,11 @@ export function helpPayload() {
             "remote provision [--stack-name <name>] [--database-name <name>] [--api-name <name>]",
           description:
             "Deploy the Alchemy D1 stack and store its Worker credentials",
+        },
+        status: {
+          usage: "remote status",
+          description:
+            "Asks the configured Worker for its version and schema level and prints them next to this CLI's version: cli_version, worker_version, versions_match, authenticated, schema_level and schema_expected, with a note that names the fix when they differ. Run it first when a --remote command fails in a way the command does not explain. Exits 1 when the Worker is unreachable, refuses the token, or is too old to answer.",
         },
       },
       local: {
@@ -223,6 +261,7 @@ const HELP_FOCUS = {
   add: {
     sections: ["embedding_budget"],
     fields: [
+      "source_agent",
       "related",
       "upsert_match",
       "replacement",
@@ -239,6 +278,7 @@ const HELP_FOCUS = {
   update: {
     sections: ["embedding_budget"],
     fields: [
+      "source_agent",
       "size",
       "evidence",
       "validation_gaps",
@@ -253,11 +293,16 @@ const HELP_FOCUS = {
     fields: ["size"],
     enums: [],
   },
-  deprecate: { sections: [], fields: ["review_candidates"], enums: [] },
+  deprecate: {
+    sections: [],
+    fields: ["review_candidates", "source_agent"],
+    enums: [],
+  },
   diff: { sections: [], fields: ["dropped"], enums: [] },
   query: {
     sections: [],
     fields: [
+      "results",
       "match_strength",
       "no_strong_match",
       "exact_matches",
@@ -270,6 +315,7 @@ const HELP_FOCUS = {
   suggest: {
     sections: [],
     fields: [
+      "results",
       "match_strength",
       "no_strong_match",
       "exact_matches",
@@ -281,21 +327,48 @@ const HELP_FOCUS = {
   },
   sweep: {
     sections: [],
-    fields: ["match_strength", "no_strong_match", "exact_matches", "snippet"],
+    fields: [
+      "results",
+      "match_strength",
+      "no_strong_match",
+      "exact_matches",
+      "snippet",
+    ],
     enums: [],
   },
   checkpoint: {
     sections: [],
-    fields: ["match_strength", "snippet", "evidence", "validation_gaps"],
+    fields: [
+      "source_agent",
+      "match_strength",
+      "snippet",
+      "evidence",
+      "validation_gaps",
+    ],
     enums: ["evidence"],
   },
-  get: { sections: [], fields: ["evidence", "validation_gaps"], enums: [] },
+  get: {
+    sections: [],
+    fields: ["results", "found_elsewhere", "evidence", "validation_gaps"],
+    enums: [],
+  },
   list: {
     sections: [],
-    fields: ["evidence", "validation_gaps"],
+    fields: [
+      "results",
+      "total_count",
+      "snippet",
+      "source_agent",
+      "evidence",
+      "validation_gaps",
+    ],
     enums: ["memory_type", "certainty", "status"],
   },
-  export: { sections: [], fields: [], enums: ["memory_type", "certainty"] },
+  export: {
+    sections: [],
+    fields: ["results", "source_agent"],
+    enums: ["memory_type", "certainty"],
+  },
 } as const satisfies {
   [command: string]: {
     sections: readonly ["embedding_budget"] | readonly [];
@@ -356,6 +429,7 @@ function workflowHelpPayload(): JsonObject {
     delegation: [
       "The parent agent owns memory. It scans once and passes the relevant record ids and constraints to child agents; a child scans only when its scope differs.",
       "Children do not write memory unless the parent delegates writes to exactly one child. Otherwise they return candidates: the finding, its evidence (file paths, commands, versions, test output), the evidence kind and related record ids.",
+      'A child with the CLI can return its candidates as a file: add "<content>" --emit-candidate <file> <backend>, with the flags of a real add. It checks the memory the way add does, writes nothing to the database, and appends the memory to <file>. The parent then runs import <file> --review <backend>, which writes the candidates that pass and lists the declined ones with reasons.',
     ],
     checkpoint: [
       "Before the final response, run checkpoint <backend> --json-min: it lists the records written since --since (default 12 hours), the records related to the touched files, and review flags.",

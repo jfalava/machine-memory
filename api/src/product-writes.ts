@@ -39,6 +39,7 @@ import {
   type MemoryWriteResult,
   type ProductRequest,
   type UpsertMatchInfo,
+  sqliteTimestamp,
 } from "@machine-memory/contract";
 import * as Effect from "effect/Effect";
 
@@ -53,6 +54,7 @@ import { badRequest, conflict, notFound } from "./http-failure";
 import {
   INSERT_SQL,
   insertParams,
+  writerOf,
   updateSets,
   type InsertInput,
 } from "./product-api";
@@ -308,6 +310,7 @@ const createProduct = (
       evidence: args.evidence,
       validation_gaps: args.validation_gaps,
       expires_after_days: args.expires_after_days ?? null,
+      source_agent: args.source_agent,
     };
     const size = embeddingSizeReport(insert);
     if (!size.within_budget) {
@@ -430,6 +433,7 @@ const applyStrongUpsert = (
       validation_gaps: input.validation_gaps,
       expires_after_days:
         prospective.memory_type !== "status" ? null : input.expires_after_days,
+      source_agent: input.source_agent,
     })!; // Content is required, so updateSets always has a field.
     const rowData = yield* ctx.d1
       .prepare(
@@ -713,15 +717,24 @@ const deprecateProductRows = (
   ctx: ApiContext,
   repository: string,
   ids: readonly number[],
-  status: "deprecated" | "superseded_by",
-  supersededBy: number | null,
+  change: {
+    readonly status: "deprecated" | "superseded_by";
+    readonly supersededBy: number | null;
+    readonly writer: string;
+  },
 ) =>
   Effect.gen(function* () {
     const rows = yield* ctx.d1
       .prepare(
-        `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = 'api', updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id IN (SELECT value FROM json_each(?)) RETURNING *`,
+        `UPDATE memories SET status = ?, superseded_by = ?, last_updated_by = ?, updated_at = datetime('now'), update_count = COALESCE(update_count, 0) + 1 WHERE repository = ? AND id IN (SELECT value FROM json_each(?)) RETURNING *`,
       )
-      .bind(status, supersededBy, repository, JSON.stringify(ids))
+      .bind(
+        change.status,
+        change.supersededBy,
+        change.writer,
+        repository,
+        JSON.stringify(ids),
+      )
       .all<JsonObject>();
     const deprecated = rows.results.map(toProductRow);
     const changed = new Set(deprecated.map((row) => row.id));
@@ -843,7 +856,10 @@ export const productWriteHandlers = (
           history.expires_after_days,
           JSON.stringify(history.evidence),
           JSON.stringify(history.validation_gaps),
-          history.created_at,
+          // Rows leave the database with ISO timestamps; storage keeps SQLite's form.
+          history.created_at === null
+            ? null
+            : sqliteTimestamp(history.created_at),
           input.repository,
           input.id,
           input.expected_update_count,
@@ -920,8 +936,7 @@ export const productWriteHandlers = (
         ctx,
         input.repository,
         requestedIds,
-        status,
-        supersededBy,
+        { status, supersededBy, writer: writerOf(input.source_agent) },
       );
       const reviewCandidates = yield* fetchReviewCandidates(
         ctx,
