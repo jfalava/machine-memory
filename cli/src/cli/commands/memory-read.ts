@@ -25,13 +25,13 @@ import {
 } from "../../cli-utils";
 import type { MemoryDatabaseError } from "../../effect/database";
 import { jsonNumber, jsonObject, type JsonObject } from "../../json";
-import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { hasMinimalOutput, printRead, readEnvelope } from "../runtime/output";
 import {
   HYBRID_FUSION,
   annotateMatches,
   applySqlFilters,
+  repositoryClause,
   combineHybridResults,
   hasStrongMatchRow,
   mergeSuggestionResults,
@@ -225,7 +225,6 @@ function fetchSemanticCandidates(
     filters.status ?? (filters.includeDeprecated ? undefined : "active");
 
   const searchRequest = {
-    repository: repositoryForCurrentDirectory(),
     query: term,
     top_k: topK,
   } satisfies JsonObject;
@@ -239,7 +238,17 @@ function fetchSemanticCandidates(
     Object.assign(searchRequest, { certainty: filters.certainty });
   }
 
-  return vectorize.search(searchRequest).pipe(
+  // Each repository is its own Vectorize namespace: search each, keep the best.
+  const repositories = repositoryClause();
+  return Effect.forEach(repositories.params, (repository) =>
+    vectorize.search({ ...searchRequest, repository }),
+  ).pipe(
+    Effect.map((searches) => ({
+      matches: searches
+        .flatMap((search) => search.matches)
+        .sort((left, right) => right.score - left.score)
+        .slice(0, topK),
+    })),
     Effect.flatMap((searchResult) =>
       Effect.gen(function* () {
         const validIds = searchResult.matches
@@ -251,8 +260,8 @@ function fetchSemanticCandidates(
 
         const rows = yield* database.all(
           `SELECT * FROM memories
-             WHERE repository = ? AND id IN (${validIds.map(() => "?").join(", ")})`,
-          [repositoryForCurrentDirectory(), ...validIds],
+             WHERE ${repositories.sql} AND id IN (${validIds.map(() => "?").join(", ")})`,
+          [...repositories.params, ...validIds],
         );
         const rowsById = new Map(
           rows.map((row) => {

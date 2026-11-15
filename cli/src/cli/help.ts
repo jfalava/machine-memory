@@ -95,7 +95,7 @@ export function helpPayload() {
     global_options: {
       pretty:
         "Render human-readable output for machine commands; existing human commands keep their normal output.",
-      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without either, the slug is the one init pinned in .agents/machine-memory.json, and without a pin it is the path of the origin remote.",
+      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without either, the slug is the one init pinned in .agents/machine-memory.json, and without a pin it is the path of the origin remote. query, get and list read several repositories at once with --repo a,b: the output names them in repositories, each result carries its repository, and a slug without memories is named in warning. Every other command takes one slug.",
       ascii:
         "--ascii, on any command, prints only 7-bit ASCII: every other character becomes a \\uXXXX escape. JSON parsers read the escapes back as the original text, so nothing is lost. Use it when a shell or tool treats the output as binary.",
       allow_new_repo:

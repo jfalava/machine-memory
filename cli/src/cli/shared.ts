@@ -68,6 +68,7 @@ import {
 } from "../json";
 import {
   allowsNewRepository,
+  readRepositories,
   repositoryForCurrentDirectory,
   similarRepositories,
 } from "../repository";
@@ -599,6 +600,18 @@ function appendStatusFilter(
   }
 }
 
+/** SQL for the repositories a read covers: one, or the list given to --repo. */
+export function repositoryClause(prefix = "") {
+  const params = readRepositories();
+  return {
+    sql:
+      params.length === 1
+        ? `${prefix}repository = ?`
+        : `${prefix}repository IN (${params.map(() => "?").join(", ")})`,
+    params,
+  };
+}
+
 export function applySqlFilters(
   clauses: string[],
   params: (string | number)[],
@@ -611,8 +624,9 @@ export function applySqlFilters(
   } = {},
 ) {
   const prefix = options.columnPrefix ?? "";
-  clauses.push(`${prefix}repository = ?`);
-  params.push(repositoryForCurrentDirectory());
+  const repositories = repositoryClause(prefix);
+  clauses.push(repositories.sql);
+  params.push(...repositories.params);
   if (options.hideExpiredStatus && filters.memoryType !== "status") {
     clauses.push(`NOT ${expiredStatusSql(prefix)}`);
   }
@@ -640,9 +654,10 @@ export function getMemoryById(
   database: MemoryDatabaseApi,
   id: number,
 ): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
+  const repositories = repositoryClause();
   return database
-    .get("SELECT * FROM memories WHERE repository = ? AND id = ?", [
-      repositoryForCurrentDirectory(),
+    .get(`SELECT * FROM memories WHERE ${repositories.sql} AND id = ?`, [
+      ...repositories.params,
       id,
     ])
     .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
@@ -836,6 +851,35 @@ function otherRepositoriesText(unknown: UnknownRepository): string {
 }
 
 /**
+ * `repositories` for a read across several. A slug without memories adds
+ * nothing to the results, so it is named in `warning` and on stderr.
+ */
+function listScope(
+  database: MemoryDatabaseApi,
+  repositories: string[],
+): Effect.Effect<JsonObject, MemoryDatabaseError> {
+  return database
+    .all(
+      `SELECT repository FROM memories WHERE repository IN (${repositories.map(() => "?").join(", ")}) GROUP BY repository`,
+      repositories,
+    )
+    .pipe(
+      Effect.map((rows) => {
+        const known = new Set(
+          rows.map((row) => stringValue(jsonObject(row)?.repository)),
+        );
+        const empty = repositories.filter((slug) => !known.has(slug));
+        if (empty.length === 0) {
+          return { repositories };
+        }
+        const warning = `No memories in: ${empty.join(", ")}. 'machine-memory repo list' shows the repositories that have memories.`;
+        warnOnStderr(warning);
+        return { repositories, warning };
+      }),
+    );
+}
+
+/**
  * `repository` for a read's output. When the read found nothing because the
  * repository holds no memories at all, adds `warning` and repeats it on stderr:
  * a wrong slug otherwise looks like "nothing is known about this".
@@ -844,6 +888,10 @@ export function readScope(
   database: MemoryDatabaseApi,
   found: number,
 ): Effect.Effect<JsonObject, MemoryDatabaseError> {
+  const repositories = readRepositories();
+  if (repositories.length > 1) {
+    return listScope(database, repositories);
+  }
   const scope: JsonObject = { repository: repositoryForCurrentDirectory() };
   if (found > 0) {
     return Effect.succeed(scope);

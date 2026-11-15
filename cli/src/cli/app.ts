@@ -11,7 +11,11 @@ import { printJson, setAsciiOutput, warnOnStderr } from "../cli-utils";
 import { VERSION } from "../constants";
 import { MemoryDatabaseError } from "../effect/database";
 import { CommandError } from "../effect/errors";
-import { parseRepositorySlug, setRepositoryTarget } from "../repository";
+import {
+  parseRepositoryList,
+  repositoryListError,
+  setRepositoryTarget,
+} from "../repository";
 import { UpgradeError } from "../upgrade";
 import { staleMemoryBlockWarning } from "./commands/agents-md-content";
 import { builtinCommands, featureCommands } from "./commands/definitions";
@@ -119,9 +123,10 @@ function extractRepositoryFlags(args: ReadonlyArray<string>): RepositoryFlags {
 function applyRepositoryFlags(rawArgs: ReadonlyArray<string>): string[] {
   const flags = extractRepositoryFlags(rawArgs);
   setAsciiOutput(flags.ascii);
+  const slugs = flags.repo === undefined ? [] : parseRepositoryList(flags.repo);
   setRepositoryTarget({
-    slug:
-      flags.repo === undefined ? undefined : parseRepositorySlug(flags.repo),
+    slug: slugs[0],
+    others: slugs.slice(1),
     allowNew: flags.allowNew,
   });
   return flags.args;
@@ -355,20 +360,16 @@ export function runCli(rawArgs: ReadonlyArray<string>) {
   const command = unknownCommand(args);
   const commandPathName = commandPath(args);
   const pretty = prettyRequested(args);
+  const refusal = command
+    ? `Unknown command: ${command}. Run 'machine-memory help' for usage.`
+    : repositoryListError(commandPathName);
 
-  if (command) {
+  if (refusal !== undefined) {
     return Effect.sync(() => {
       if (pretty) {
-        console.error(
-          prettyErrorText(
-            "machine-memory",
-            `Unknown command: ${command}. Run 'machine-memory help' for usage.`,
-          ),
-        );
+        console.error(prettyErrorText("machine-memory", refusal));
       } else {
-        printJson({
-          error: `Unknown command: ${command}. Run 'machine-memory help' for usage.`,
-        });
+        printJson({ error: refusal });
       }
       process.exitCode = 1;
     });

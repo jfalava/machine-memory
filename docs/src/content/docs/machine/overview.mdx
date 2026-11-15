@@ -74,6 +74,19 @@ the checkout resolves to and why.
 machine-memory query "node overlay" --repo jfalava/outfit --remote
 ```
 
+`query`, `get` and `list` read several repositories at once when `--repo`
+lists them, separated by commas:
+
+```sh
+machine-memory query "node overlay" --repo jfalava/outfit,jfalava/machines --remote
+```
+
+The output then has `repositories` instead of `repository`, and each result
+carries the `repository` it is in. A slug without memories is named in
+`warning` and on stderr. `--semantic` and `--hybrid` search each repository's
+vectors and keep the best matches overall. Every other command, and every
+write, takes one slug.
+
 A mistyped slug, or a checkout whose remote maps to an unexpected slug, would
 silently start a new namespace. `add` and `import` therefore refuse a
 repository that has no memories yet, whether the slug came from `--repo` or

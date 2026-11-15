@@ -1657,6 +1657,92 @@ describe("CLI integration", () => {
     );
   });
 
+  it("reads several repositories with --repo a,b and writes to one only", async () => {
+    const { cwd, dbPath } = await createProject();
+    const local = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy pipeline applies migrations first",
+      "--quiet",
+    );
+    const foreignId = await insertMemoryFromRepository(
+      dbPath,
+      "acme/widgets",
+      "Deploy pipeline of the widgets service runs on tags",
+    );
+    const hiddenId = await insertMemoryFromRepository(
+      dbPath,
+      "acme/gadgets",
+      "Deploy pipeline of the gadgets service is manual",
+    );
+    const localId = Number(local.json.id);
+    const both = ["--repo", "jfalava/machine-memory,acme/widgets"];
+    const where = (rows: readonly { id?: unknown; repository?: unknown }[]) =>
+      rows
+        .map((row) => [Number(row.id), row.repository])
+        .sort(([left], [right]) => Number(left) - Number(right));
+
+    const queried = await runCli(
+      cwd,
+      dbPath,
+      "query",
+      "deploy pipeline",
+      ...both,
+      "--json-min",
+    );
+    expect(queried.json.repositories).toEqual([
+      "jfalava/machine-memory",
+      "acme/widgets",
+    ]);
+    expect(queried.json).not.toHaveProperty("repository");
+    expect(where(queried.json.results ?? [])).toEqual([
+      [localId, "jfalava/machine-memory"],
+      [foreignId, "acme/widgets"],
+    ]);
+
+    const fetched = await runCli(
+      cwd,
+      dbPath,
+      "get",
+      `${localId},${foreignId},${hiddenId}`,
+      ...both,
+    );
+    expect(where(fetched.json.results ?? [])).toEqual([
+      [localId, "jfalava/machine-memory"],
+      [foreignId, "acme/widgets"],
+    ]);
+    expect(fetched.json.missing_ids).toEqual([hiddenId]);
+
+    const listed = await runCli(cwd, dbPath, "list", ...both, "--json-min");
+    expect(listed.json.total_count).toBe(2);
+
+    const unknown = await runCli(
+      cwd,
+      dbPath,
+      "list",
+      "--repo",
+      "jfalava/machine-memory,acme/nothing",
+      "--quiet",
+    );
+    expect(unknown.json.warning).toContain("No memories in: acme/nothing.");
+    expect(unknown.stderr).toContain("No memories in: acme/nothing.");
+
+    for (const command of [
+      ["add", "Written to two repositories"],
+      ["suggest", "--files", "deploy/pipeline.ts"],
+    ]) {
+      const refused = await runCli(cwd, dbPath, ...command, ...both);
+      expect(refused.code).toBe(1);
+      expect(refused.json.error).toContain(
+        "only query, get and list read several at once",
+      );
+    }
+    expect((await runCliRows(cwd, dbPath, "list", "--quiet")).rows).toEqual([
+      { id: localId },
+    ]);
+  });
+
   it("leaves an expired status out of query and suggest, not out of list", async () => {
     const { cwd, dbPath } = await createProject();
     await runCli(
