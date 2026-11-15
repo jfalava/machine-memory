@@ -34,13 +34,15 @@ const STRONG_TRANSIENT_INDICATORS = new Set([
   "for now",
 ]);
 /**
- * Findings that describe the collection and are no fault of one record. They
- * are counted, and listed only on request, because nothing mechanical fixes
- * them.
+ * Findings nothing mechanical fixes, so they are counted and listed only on
+ * request. Two describe the collection and are no fault of one record. The
+ * third is a backlog: records saved as verified before evidence existed,
+ * which a write can no longer create and only a reviewer can settle.
  */
 export const INFORMATIONAL_DOCTOR_KINDS: readonly string[] = [
   "canonical_thread_overlap",
   "similar_tags",
+  "verified_without_evidence",
 ];
 const TRANSIENT_INDICATORS = [
   "currently",

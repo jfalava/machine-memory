@@ -22,9 +22,12 @@ import {
   matchText,
   extractQueryIdentifiers,
   orderByMatchStrength,
-  premiseQuery,
-  REVIEW_CANDIDATES_LIMIT,
+  nameHoldersFromRows,
+  nameHoldersQuery,
+  reviewCandidateRowsQuery,
+  reviewNames,
   reviewsDependents,
+  selectReviewCandidates,
   SEARCH_LIMIT_DEFAULT,
   type MatchAssessment,
   type MatchScope,
@@ -56,6 +59,7 @@ import {
   commandError,
   MemoryDatabaseError,
 } from "../effect/errors";
+import { toContractValue } from "../effect/remote-http";
 import {
   jsonNumber,
   jsonObject,
@@ -747,66 +751,74 @@ export function detectPotentialConflicts(
     );
 }
 
+/** A changed or retired memory, with the part of its text that no longer holds. */
+export type ReviewPremise = {
+  readonly id: number;
+  readonly memoryType: string;
+  /** The whole content when it is retired; the removed or rewritten part when updated. */
+  readonly text: string;
+};
+
 /**
- * Active records that may rely on a changed or retired premise. A shared
- * literal identifier makes a candidate strong; broad term overlap is weak.
+ * Active records that may rely on a changed or retired premise: they cite it
+ * by id, or share a name with its text that few other records carry. Each
+ * row carries shared_identifiers and cites.
  */
 export function findReviewCandidates(
   database: MemoryDatabaseApi,
-  premises: JsonObject[],
+  premises: readonly ReviewPremise[],
   alsoExclude: number[] = [],
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
-  const excluded = new Set([
-    ...premises.map((premise) => Number(premise.id)),
-    ...alsoExclude,
-  ]);
-  const durable = premises.filter((premise) => {
-    const memoryType = stringValue(premise.memory_type, "convention");
-    return isMemoryType(memoryType) && reviewsDependents(memoryType);
-  });
-  return Effect.forEach(durable, (premise) => {
-    const query = premiseQuery(stringValue(premise.content));
-    const terms = extractTerms(query.leadingText);
-    const ftsQuery = buildFtsQuery(terms);
-    if (!ftsQuery) {
-      return Effect.succeed<JsonObject[]>([]);
-    }
-    return database
-      .all(
-        `SELECT m.*, bm25(memories_fts) AS fts_rank
-         FROM memories m
-         JOIN memories_fts ON m.id = memories_fts.rowid
-         WHERE memories_fts MATCH ? AND m.repository = ? AND m.status = 'active'
-         ORDER BY bm25(memories_fts)
-         LIMIT 20`,
-        [ftsQuery, repositoryForCurrentDirectory()],
-      )
-      .pipe(
-        Effect.map((rows) =>
-          scoreRowsWithDetails(rows, terms, {
-            identifiers: query.identifiers,
-            scope: "files",
-          }),
-        ),
+  const repository = repositoryForCurrentDirectory();
+  const durable = premises.filter(
+    (premise) =>
+      isMemoryType(premise.memoryType) && reviewsDependents(premise.memoryType),
+  );
+  return Effect.forEach(durable, (premise) =>
+    Effect.gen(function* () {
+      const names = reviewNames(premise.text);
+      const holderQuery = nameHoldersQuery({
+        repository,
+        excludeId: premise.id,
+        names,
+      });
+      const holders = nameHoldersFromRows(
+        names.length === 0
+          ? []
+          : (yield* database.all(holderQuery.sql, holderQuery.params)).map(
+              toContractValue,
+            ),
       );
-  }).pipe(
-    Effect.map((groups) => {
-      const byId = new Map<number, JsonObject>();
-      for (const row of groups.flat()) {
-        const id = Number(row.id);
-        if (
-          !excluded.has(id) &&
-          !byId.has(id) &&
-          row.match_strength !== "none"
-        ) {
-          byId.set(id, row);
-        }
-      }
-      return orderRowsByMatchStrength([...byId.values()]).slice(
-        0,
-        REVIEW_CANDIDATES_LIMIT,
-      );
+      const rowQuery = reviewCandidateRowsQuery({
+        repository,
+        premiseId: premise.id,
+        holders,
+      });
+      const rows = yield* database.all(rowQuery.sql, rowQuery.params);
+      return {
+        id: premise.id,
+        holders,
+        rows: rows.map((row) => {
+          const normalized = normalizeSqliteRow(row);
+          return {
+            id: Number(normalized.id),
+            content: stringValue(normalized.content),
+            normalized,
+          };
+        }),
+      };
     }),
+  ).pipe(
+    Effect.map((groups) =>
+      selectReviewCandidates(
+        groups,
+        new Set([...premises.map((premise) => premise.id), ...alsoExclude]),
+      ).map((candidate) => ({
+        ...candidate.row.normalized,
+        shared_identifiers: candidate.shared_identifiers,
+        cites: candidate.cites,
+      })),
+    ),
   );
 }
 

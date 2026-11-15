@@ -2,6 +2,7 @@ import {
   assessReplacement,
   buildFtsQuery,
   canonicalTags,
+  changedText,
   compareMemoryFact,
   decideUpsert,
   decodeRequest,
@@ -16,15 +17,16 @@ import {
   extractQueryIdentifiers,
   extractTerms,
   hasDroppedDetails,
+  MemorySummarySchema,
   nameHoldersFromRows,
   nameHoldersQuery,
   nearDuplicate,
   normalizeMemoryAddArgs,
   normalizeStoredMemoryRow,
-  orderByMatchStrength,
-  premiseQuery,
-  REVIEW_CANDIDATES_LIMIT,
+  reviewCandidateRowsQuery,
+  reviewNames,
   reviewsDependents,
+  selectReviewCandidates,
   sharedIdentifiers,
   StoredMemoryRowSchema,
   upsertRefusal,
@@ -38,10 +40,12 @@ import {
   type MemoryType,
   type MemoryWriteResult,
   type ProductRequest,
+  type ReviewCandidateRow,
   type UpsertMatchInfo,
   sqliteTimestamp,
 } from "@machine-memory/contract";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import {
   fetchProductRow,
@@ -144,61 +148,59 @@ const guardReplacement = (
   });
 
 /**
- * Active records that may rely on a changed or retired premise. Literal
- * identifier overlap is decisive; broad term overlap is reported as weak.
+ * Active records that may rely on a changed or retired premise: they cite it
+ * by id, or share a name with its text that few other records carry.
  */
 const fetchReviewCandidates = (
   ctx: ApiContext,
   repository: string,
   premises: ReadonlyArray<{
     readonly id: number;
-    readonly content: string;
     readonly memory_type: MemoryType;
+    /** The whole content when retired; the removed or rewritten part when updated. */
+    readonly text: string;
   }>,
   alsoExclude: readonly number[],
 ) =>
   Effect.gen(function* () {
-    const excluded = new Set([
-      ...premises.map((premise) => premise.id),
-      ...alsoExclude,
-    ]);
-    const byId = new Map<number, ReturnType<typeof scoredResultRow>>();
+    const groups = [];
     for (const premise of premises) {
       if (!reviewsDependents(premise.memory_type)) {
         continue;
       }
-      const query = premiseQuery(premise.content);
-      const terms = extractTerms(query.leadingText);
-      const ftsQuery = buildFtsQuery(terms);
-      if (ftsQuery === undefined) {
-        continue;
-      }
-      const rows = yield* fetchRankedProductRows(
-        ctx,
-        ftsQuery,
+      const names = reviewNames(premise.text);
+      const holderQuery = nameHoldersQuery({
         repository,
-        { status: "active" },
-        20,
-      );
-      const scored = scoreMemoryRows(rows, {
-        terms,
-        identifiers: query.identifiers,
-        scope: "files",
+        excludeId: premise.id,
+        names,
       });
-      for (const row of scored) {
-        if (
-          !excluded.has(row.id) &&
-          !byId.has(row.id) &&
-          row.match_strength !== "none"
-        ) {
-          byId.set(row.id, scoredResultRow(row));
-        }
-      }
+      const holders = nameHoldersFromRows(
+        names.length === 0
+          ? []
+          : yield* ctx.sql.unsafe<JsonObject>(
+              holderQuery.sql,
+              holderQuery.params,
+            ),
+      );
+      const rowQuery = reviewCandidateRowsQuery({
+        repository,
+        premiseId: premise.id,
+        holders,
+      });
+      const rows = yield* ctx.sql.unsafe<JsonObject>(
+        rowQuery.sql,
+        rowQuery.params,
+      );
+      groups.push({ id: premise.id, holders, rows: rows.map(toProductRow) });
     }
-    return orderByMatchStrength([...byId.values()]).slice(
-      0,
-      REVIEW_CANDIDATES_LIMIT,
-    );
+    return selectReviewCandidates(
+      groups,
+      new Set([...premises.map((premise) => premise.id), ...alsoExclude]),
+    ).map((candidate): ReviewCandidateRow => ({
+      ...Schema.decodeSync(MemorySummarySchema)(candidate.row),
+      shared_identifiers: candidate.shared_identifiers,
+      cites: candidate.cites,
+    }));
   });
 
 /** Dropped details and dependent records for a content or status change. */
@@ -220,10 +222,15 @@ const reconcileUpdate = (
       }
     }
     if (contentChanged || retired) {
+      // Retiring withdraws the whole content; an update only what it removes or rewrites.
+      const text =
+        retired || fields.content === undefined
+          ? existing.content
+          : changedText(existing.content, fields.content);
       const candidates = yield* fetchReviewCandidates(
         ctx,
         repository,
-        [existing],
+        [{ id: existing.id, memory_type: existing.memory_type, text }],
         [],
       );
       if (candidates.length > 0) {
@@ -941,7 +948,11 @@ export const productWriteHandlers = (
       const reviewCandidates = yield* fetchReviewCandidates(
         ctx,
         input.repository,
-        deprecated,
+        deprecated.map((row) => ({
+          id: row.id,
+          memory_type: row.memory_type,
+          text: row.content,
+        })),
         supersededBy === null ? [] : [supersededBy],
       );
       const result: MemoryDeprecateResult = {

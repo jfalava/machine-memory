@@ -63,11 +63,10 @@ export {
   type MemoryType,
 } from "./literals";
 export {
-  REVIEW_CANDIDATES_LIMIT,
+  changedText,
   droppedDetails,
   gotchaOverlaps,
   hasDroppedDetails,
-  premiseQuery,
   reviewsDependents,
 } from "./reconcile";
 export {
@@ -124,12 +123,16 @@ export {
   nameHoldersFromRows,
   nameHoldersQuery,
   nearDuplicate,
+  reviewCandidateRowsQuery,
+  reviewNames,
+  selectReviewCandidates,
   sharedIdentifiers,
   upsertRefusal,
   type AddIntentHints,
   type DuplicateMatch,
   type NameHolders,
   type ReplacementAssessment,
+  type ReviewCandidate,
   type UpsertCandidate,
 } from "./write-guards";
 export {
@@ -200,6 +203,7 @@ export {
   type MemoryStatsSuccess,
   type MemoryWriteResult,
   type MatchedUpdateTarget,
+  type ReviewCandidateRow,
   type ScoredMemoryRow,
   type UpsertMatchInfo,
 } from "./product/results";

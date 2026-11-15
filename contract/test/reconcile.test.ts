@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  changedText,
   droppedDetails,
   gotchaOverlaps,
   hasDroppedDetails,
-  premiseQuery,
   reviewsDependents,
 } from "../src/index";
 
@@ -34,12 +34,20 @@ describe("reconciliation helpers", () => {
     expect(hasDroppedDetails(dropped)).toBe(false);
   });
 
-  it("puts identifiers first in the premise search text", () => {
-    const query = premiseQuery(
-      "Keep nixpkgs-security unchanged; Home Manager reimports nixpkgs.",
+  it("reduces an update to the text it removes or rewrites", () => {
+    const previous =
+      "Keycap styling lives in src/ui/Keycap.tsx. Use shadow-inset for pressed keys. Shortcuts use TanStack Hotkeys.";
+    // A reworded sentence counts even when it keeps its names and most words.
+    expect(
+      changedText(
+        previous,
+        "Keycap styling lives in  src/ui/keycap.tsx. Do not use shadow-inset for pressed keys. Shortcuts use TanStack Hotkeys.",
+      ),
+    ).toBe("Use shadow-inset for pressed keys.");
+    // An update that only adds changes nothing a record could rely on.
+    expect(changedText(previous, `${previous} Chords are not supported.`)).toBe(
+      "",
     );
-    expect(query.identifiers).toEqual(["nixpkgs-security"]);
-    expect(query.leadingText.startsWith("nixpkgs-security ")).toBe(true);
   });
 
   it("asks for dependent review only for durable records", () => {

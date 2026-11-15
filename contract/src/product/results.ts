@@ -31,6 +31,16 @@ export const ScoredMemoryRowSchema = Schema.Struct({
 });
 export type ScoredMemoryRow = typeof ScoredMemoryRowSchema.Type;
 
+/** An active record that may rely on a changed or retired memory. */
+export const ReviewCandidateRowSchema = Schema.Struct({
+  ...MemorySummarySchema.fields,
+  /** Names of the changed text this record also mentions and few others do. */
+  shared_identifiers: Schema.Array(Schema.String),
+  /** The record refers to the changed memory by id. */
+  cites: Schema.Boolean,
+});
+export type ReviewCandidateRow = typeof ReviewCandidateRowSchema.Type;
+
 export const UpsertMatchInfoSchema = Schema.Struct({
   id: Schema.Finite,
   /** Search rank of the record for the upsert query, 0 to 100. */
@@ -65,8 +75,8 @@ export const MemoryWriteResultSchema = Schema.Struct({
   related: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
   /** Paths, identifiers, and sentences the new content no longer carries. */
   dropped: Schema.optionalKey(DroppedDetailsSchema),
-  /** Other active records that may rely on the changed premise. */
-  review_candidates: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
+  /** Other active records that may rely on what the update removed or rewrote. */
+  review_candidates: Schema.optionalKey(Schema.Array(ReviewCandidateRowSchema)),
 });
 export type MemoryWriteResult = typeof MemoryWriteResultSchema.Type;
 
@@ -230,7 +240,7 @@ export const MemoryDeprecateResultSchema = Schema.Struct({
   not_found: Schema.Array(Schema.Finite),
   count: Schema.Finite,
   /** Active records that may rely on a retired premise. */
-  review_candidates: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
+  review_candidates: Schema.optionalKey(Schema.Array(ReviewCandidateRowSchema)),
 });
 export type MemoryDeprecateResult = typeof MemoryDeprecateResultSchema.Type;
 export const MemoryDeprecateSuccessSchema = okResponseSchema(

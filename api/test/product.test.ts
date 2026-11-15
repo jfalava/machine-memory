@@ -1695,6 +1695,12 @@ test("updates report dropped details and review candidates; deprecate reviews de
     content: "Security updates wait for nixpkgs-security bumps.",
     memory_type: "convention",
   });
+  const citing = await product("add", {
+    content: `Rollback notes follow the pin decision (#${premise.result.id}).`,
+    memory_type: "reference",
+  });
+  // Unrelated records are not candidates.
+  await product("add", { content: "Docs sidebar lists install first." });
   const diff = await product("diff", {
     id: premise.result.id,
     content: "Home Manager reimports nixpkgs.",
@@ -1733,8 +1739,18 @@ test("updates report dropped details and review candidates; deprecate reviews de
     "nixpkgs-security",
     "flake.nix",
   ]);
+  // The record that cites the premise comes first, then the one that shares a name.
   expect(updated.result.review_candidates).toEqual([
-    expect.objectContaining({ id: dependent.result.id }),
+    expect.objectContaining({
+      id: citing.result.id,
+      shared_identifiers: [],
+      cites: true,
+    }),
+    expect.objectContaining({
+      id: dependent.result.id,
+      shared_identifiers: ["nixpkgs-security"],
+      cites: false,
+    }),
   ]);
   const deprecated = await product("deprecate", { ids: [dependent.result.id] });
   expect(deprecated.status).toBe(200);

@@ -98,9 +98,11 @@ When the content changes, the response reports:
   in [`diff`](/machine/diff). `--dry-run` reports them per target before
   anything is written.
 - `review_candidates`: up to five other active memories that may rely on the
-  old premise, with `match_strength`. A strong candidate names the same path
-  or identifier. Update or deprecate each one, or confirm it still holds.
-  Status memories do not trigger this check.
+  sentences the update removed or reworded. Each one refers to the updated
+  memory by ID (`cites: true`), or names a path, flag or symbol from those
+  sentences that at most three other memories mention (`shared_identifiers`).
+  An update that only adds sentences lists none. Update or deprecate each one,
+  or confirm it still holds. Status memories do not trigger this check.
 
 `--json-min` and `--quiet` keep `dropped` and list `review_candidate_ids`
 instead of summaries; batch updates group both per ID under `reconciliation`.

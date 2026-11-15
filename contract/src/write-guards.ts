@@ -97,18 +97,21 @@ function identifierName(identifier: string): string | undefined {
  */
 export function droppedNames(previous: string, next: string): string[] {
   const nextLower = next.toLowerCase();
+  return namesOf(previous)
+    .filter((name) => !nextLower.includes(name))
+    .slice(0, GUARD_IDENTIFIERS_CHECKED);
+}
+
+/** The named things a text mentions, lowercased, each once. */
+function namesOf(text: string): string[] {
   const names: string[] = [];
-  for (const identifier of extractQueryIdentifiers(previous)) {
+  for (const identifier of extractQueryIdentifiers(text)) {
     const name = identifierName(identifier);
-    if (
-      name !== undefined &&
-      !nextLower.includes(name) &&
-      !names.includes(name)
-    ) {
+    if (name !== undefined && !names.includes(name)) {
       names.push(name);
     }
   }
-  return names.slice(0, GUARD_IDENTIFIERS_CHECKED);
+  return names;
 }
 
 /** For each dropped name, the other active records whose content still carries it. */
@@ -144,6 +147,133 @@ export function nameHoldersFromRows(rows: readonly JsonValue[]): NameHolders {
     }
   }
   return holders;
+}
+
+const REVIEW_NAMES_CHECKED = 24;
+/**
+ * A shared name points at a dependent only while few records carry it: a name
+ * half the repository mentions says nothing about which record relies on this one.
+ */
+const REVIEW_NAME_MAX_HOLDERS = 3;
+const REVIEW_CANDIDATES_LIMIT = 5;
+
+/** The names of a changed or retired premise to look up in other records. */
+export function reviewNames(text: string): string[] {
+  return namesOf(text).slice(0, REVIEW_NAMES_CHECKED);
+}
+
+/**
+ * Whether content refers to memory `id`: `#12`, `record 12`, `memory 12`, or
+ * `(12)` and `(11, 12)`. Ids under ten are not read from a bare `(1)`, which
+ * is usually a list marker.
+ */
+function citesMemory(content: string, id: number): boolean {
+  const forms = [`#${id}(?!\\d)`, `\\b(?:record|memory)\\s+${id}(?![\\d.])`];
+  if (id >= 10) {
+    forms.push(`\\((?:#?\\d+,\\s*)*${id}(?:,\\s*#?\\d+)*\\)`);
+  }
+  return new RegExp(forms.join("|"), "i").test(content);
+}
+
+/**
+ * The rows to judge as review candidates: the holders of a specific name, and
+ * every other active record whose content may cite the premise by id.
+ */
+export function reviewCandidateRowsQuery(input: {
+  readonly repository: string;
+  readonly premiseId: number;
+  readonly holders: NameHolders;
+}) {
+  const id = input.premiseId;
+  return {
+    sql: `SELECT m.* FROM memories m
+      WHERE m.repository = ? AND m.status = 'active' AND m.id != ?
+        AND (m.id IN (SELECT value FROM json_each(?))
+          OR instr(m.content, ?) > 0 OR instr(m.content, ?) > 0
+          OR instr(m.content, ?) > 0 OR instr(lower(m.content), ?) > 0
+          OR instr(lower(m.content), ?) > 0)`,
+    params: [
+      input.repository,
+      id,
+      JSON.stringify([...specificHolders(input.holders).keys()]),
+      `#${id}`,
+      `(${id}`,
+      `, ${id}`,
+      `record ${id}`,
+      `memory ${id}`,
+    ],
+  };
+}
+
+/** For each record that holds a specific name: those names, rarest first. */
+function specificHolders(holders: NameHolders): Map<number, string[]> {
+  const byRecord = new Map<number, string[]>();
+  const specific = [...holders.entries()]
+    .filter(([, ids]) => ids.length <= REVIEW_NAME_MAX_HOLDERS)
+    .sort(([, left], [, right]) => left.length - right.length);
+  for (const [name, ids] of specific) {
+    for (const id of ids) {
+      byRecord.set(id, [...(byRecord.get(id) ?? []), name]);
+    }
+  }
+  return byRecord;
+}
+
+export type ReviewCandidate<Row> = {
+  readonly row: Row;
+  /** Names of the premise this record also mentions and few others do. */
+  readonly shared_identifiers: string[];
+  /** The record refers to the premise by id. */
+  readonly cites: boolean;
+};
+
+/**
+ * Other active records that may rely on a changed or retired premise: those
+ * that cite it by id, then those that share the most specific names with it.
+ * `rows` come from reviewCandidateRowsQuery, one group per premise.
+ */
+export function selectReviewCandidates<
+  Row extends { readonly id: number; readonly content: string },
+>(
+  premises: readonly {
+    readonly id: number;
+    readonly holders: NameHolders;
+    readonly rows: readonly Row[];
+  }[],
+  exclude: ReadonlySet<number>,
+): ReviewCandidate<Row>[] {
+  const found = new Map<number, ReviewCandidate<Row> & { weight: number }>();
+  for (const premise of premises) {
+    const shared = specificHolders(premise.holders);
+    for (const row of premise.rows) {
+      const names = shared.get(row.id) ?? [];
+      const cites = citesMemory(row.content, premise.id);
+      if (
+        exclude.has(row.id) ||
+        found.has(row.id) ||
+        !(cites || names.length)
+      ) {
+        continue;
+      }
+      // A name one other record carries weighs 1, a name three carry 1/3.
+      const weight = names.reduce(
+        (sum, name) => sum + 1 / (premise.holders.get(name)?.length ?? 1),
+        0,
+      );
+      found.set(row.id, { row, shared_identifiers: names, cites, weight });
+    }
+  }
+  return [...found.values()]
+    .sort(
+      (left, right) =>
+        Number(right.cites) - Number(left.cites) || right.weight - left.weight,
+    )
+    .slice(0, REVIEW_CANDIDATES_LIMIT)
+    .map(({ row, shared_identifiers, cites }) => ({
+      row,
+      shared_identifiers,
+      cites,
+    }));
 }
 
 /** The name as the stored content spells it; names are compared in lower case. */

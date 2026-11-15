@@ -1922,9 +1922,20 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
         )
       ).code,
     ).toBe(0);
+    // A legacy backlog, not a new defect: counted, and listed on request.
     const doctor = await runCli(cwd, dbPath, "doctor");
-    expect(doctor.json.summary).toMatchObject({ verified_without_evidence: 1 });
-    expect(doctor.json.findings?.verified_without_evidence).toEqual([
+    expect(doctor.json.summary).not.toHaveProperty("verified_without_evidence");
+    expect(doctor.json["informational_counts"]).toMatchObject({
+      verified_without_evidence: 1,
+    });
+    const listed = await runCli(
+      cwd,
+      dbPath,
+      "doctor",
+      "--only",
+      "verified_without_evidence",
+    );
+    expect(listed.json.findings?.verified_without_evidence).toEqual([
       expect.objectContaining({ id: 1 }),
     ]);
   });
@@ -1990,19 +2001,35 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       "nixpkgs-security was removed from flake.nix; Home Manager reimports nixpkgs.",
       "--json-min",
     );
-    // The rewrite keeps the identifiers and most terms, so nothing is dropped.
+    // The rewrite keeps the identifiers and most terms, so nothing is dropped,
+    // but the reworded sentence names what the dependent relies on.
     expect(updated.json).toEqual({
       id: Number(premiseId),
       review_candidate_ids: [dependentId],
       size: { bytes: 76, remaining_bytes: 1924 },
     });
+    // An update that only adds leaves every earlier statement standing.
+    const appended = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      premiseId,
+      "nixpkgs-security was removed from flake.nix; Home Manager reimports nixpkgs. Rollbacks boot the previous generation.",
+      "--json-min",
+    );
+    expect(appended.json).not.toHaveProperty("review_candidate_ids");
+    expect(appended.stderr).not.toContain("may rely on the old content");
 
     const deprecated = await runCli(cwd, dbPath, "deprecate", premiseId);
     expect(deprecated.stderr).toContain(
       `Deprecating #${premiseId}: 1 record(s) may rely on the old content: #${dependentId}.`,
     );
     expect(deprecated.json.review_candidates).toEqual([
-      expect.objectContaining({ id: dependentId, match_strength: "strong" }),
+      expect.objectContaining({
+        id: dependentId,
+        shared_identifiers: ["nixpkgs-security"],
+        cites: false,
+      }),
     ]);
   });
 

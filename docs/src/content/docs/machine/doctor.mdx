@@ -25,9 +25,11 @@ overlapping gotchas. It does not modify the database.
 | `expired_status`                           | A status record is past `expires_after_days`. Update it or deprecate it.                                                                               |
 | `transient_non_status`                     | A non-status record uses `currently`, `in progress`, `wip`, `todo` or `for now`, or two of the weaker words such as `now`, `current`, `pass`, `fixed`. |
 | `canonical_thread_overlap`, `similar_tags` | Informational: several records on one topic, and tags such as `topic:og` and `topic:og-image` that may name one topic.                                 |
+| `verified_without_evidence`                | Informational: a `verified` memory names no evidence kind.                                                                                             |
 
-Informational kinds describe the collection and have no mechanical fix. They
-are counted in `informational_counts` and listed only when `--only` names them.
+Informational kinds have no mechanical fix: two describe the collection, and
+`verified_without_evidence` is a backlog only a reviewer can settle. They are
+counted in `informational_counts` and listed only when `--only` names them.
 
 `--only <kind,kind>` keeps the named kinds or output groups. `--since <date>`
 keeps findings that involve a memory changed since that date, so a
@@ -49,9 +51,11 @@ limit in its own record that references the workaround, and deprecate the
 redundant one with `--superseded-by`.
 
 `verified_without_evidence` findings are mostly memories saved before evidence
-existed. Only a reviewer knows which kind applies, so they carry a hint instead
-of a suggested command: add the evidence kinds that were established with
-`update --evidence`, or lower the memory to `--certainty inferred`.
+existed; a write can no longer create one. Only a reviewer knows which kind
+applies, so they carry a hint instead of a suggested command: add the evidence
+kinds that were established with `update --evidence`, or lower the memory to
+`--certainty inferred`. [`checkpoint`](/machine/checkpoint) flags the ones a
+task touches, so the backlog can shrink as those memories come up.
 
 Findings include suggested commands such as `update`, `deprecate`, or
 `delete`. A suggested `update` names only the field to change, such as

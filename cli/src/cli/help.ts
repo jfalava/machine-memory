@@ -74,7 +74,7 @@ export function helpPayload() {
       dropped:
         "update/diff/add --upsert-match/add --update-id: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
       review_candidates:
-        "update/deprecate/add --upsert-match: other active records that may rely on the changed or retired premise (strong = shares a literal path or identifier). Update or deprecate them too. Minimal output lists review_candidate_ids.",
+        "update/deprecate/add --upsert-match: up to five other active records that may rely on what the write changed or retired. Each one refers to the changed memory by id (cites true), or names a path, flag or symbol of the changed text that at most three other records mention (shared_identifiers). An update counts only the sentences it removed or reworded, so an update that only adds lists none. Update or deprecate each one, or confirm it still holds. Minimal output lists review_candidate_ids.",
       results:
         "get, query, list, suggest, sweep and export all print one object: repository, count, the fields of that command, then results, an array even for one memory or none. The output mode changes only what each result carries: the whole memory by default, a summary with --json-min, the id alone with --quiet. --brief prints one text line per memory instead.",
       snippet:
@@ -156,7 +156,7 @@ export function helpPayload() {
       doctor: {
         usage: `doctor [--only <kind,kind>] [--since <ISO date>] [--limit <n>] [--offset <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
         notes:
-          "The full output lists 50 findings at a time: page reports offset, limit, total and has_more, --limit and --offset move through them, and summary always counts every finding. On a remote database, unindexed counts the active records semantic search cannot find; reindex --unindexed queues them. --only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. canonical_thread_overlap and similar_tags describe the collection, not a defect in one record: they are counted in informational_counts and listed only with --only. verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
+          "The full output lists 50 findings at a time: page reports offset, limit, total and has_more, --limit and --offset move through them, and summary always counts every finding. On a remote database, unindexed counts the active records semantic search cannot find; reindex --unindexed queues them. --only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. Three kinds are counted in informational_counts and listed only with --only: canonical_thread_overlap and similar_tags describe the collection, not a defect in one record, and verified_without_evidence is the backlog of records saved as verified before evidence existed (checkpoint flags the ones a task touches). verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
       },
       checkpoint: {
         usage: `checkpoint [--files "src/a.ts,src/b.ts" | --files-json '[...]'] [--query <search_term>] [--since <ISO date>] [--limit <n>] [--by <writer> | --mine] [--last-commit]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -427,7 +427,7 @@ function workflowHelpPayload(): JsonObject {
       "Recover an overwrite with history <id>, then restore <id> --revision <revision_id> --expected-update-count <current_update_count>, using the current count from history. Delete is permanent and removes history; prefer deprecate.",
     ],
     reconcile: [
-      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates (strong ones name the same path or identifier): resolve each one or confirm it still holds.",
+      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates, each with the names it shares with the changed text (shared_identifiers) or cites true when it refers to the changed memory by id: resolve each one or confirm it still holds.",
       "Consolidate overlapping records instead of adding a partly redundant one. Use deprecate <id> --superseded-by <id> when a record is replaced.",
     ],
     evidence: [

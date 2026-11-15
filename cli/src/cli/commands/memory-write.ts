@@ -1,6 +1,7 @@
 import {
   assessReplacement,
   canonicalTags,
+  changedText,
   compareMemoryFact,
   decideUpsert,
   droppedDetails,
@@ -220,7 +221,14 @@ function reconcileWrite(
   if (stringValue(previous.content) === content) {
     return Effect.succeed({ id, reviewCandidates: [] });
   }
-  return findReviewCandidates(database, [previous]).pipe(
+  // Records can only come to rely on what the update removes or rewrites.
+  return findReviewCandidates(database, [
+    {
+      id,
+      memoryType: stringValue(previous.memory_type, "convention"),
+      text: changedText(stringValue(previous.content), content),
+    },
+  ]).pipe(
     Effect.map((reviewCandidates) => ({
       id,
       dropped: droppedFor(previous, content),
@@ -247,8 +255,11 @@ function reconciliationFields(
         Number(row.id),
       );
     } else {
-      fields.review_candidates =
-        reconciliation.reviewCandidates.map(minimalResultSummary);
+      fields.review_candidates = reconciliation.reviewCandidates.map((row) => ({
+        ...minimalResultSummary(row),
+        shared_identifiers: row.shared_identifiers ?? [],
+        cites: row.cites === true,
+      }));
     }
   }
   return fields;
@@ -2078,7 +2089,11 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     const { rows, missingIds } = result;
     const reviewCandidates = yield* findReviewCandidates(
       database,
-      rows,
+      rows.map((row) => ({
+        id: Number(row.id),
+        memoryType: stringValue(row.memory_type, "convention"),
+        text: stringValue(row.content),
+      })),
       supersededBy === undefined || supersededBy === null ? [] : [supersededBy],
     );
     yield* Effect.sync(() => {
