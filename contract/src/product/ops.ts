@@ -31,6 +31,7 @@ import {
   type MemoryType,
   type SearchMode,
 } from "../literals";
+import { COVERAGE_DIRECTORIES_MAX } from "../path-tags";
 
 const RepositorySchema = RepositoryInputSchema.annotateKey({
   description: `Repository slug such as owner/name, @namespace/name or group/subgroup/name, at most ${MAX_NAMESPACE_BYTES} UTF-8 bytes. Required for repository operations; call list_repositories first if unsure.`,
@@ -260,6 +261,10 @@ export const MemoryAddArgsInputSchema = Schema.Struct({
   tags: optionalString.annotateKey({
     description: "Comma-separated tags, e.g. area:cli,topic:backend.",
   }),
+  paths: optionalString.annotateKey({
+    description:
+      "Comma-separated paths of the files the memory is about, e.g. src/auth.ts,src/routes.ts. The repository's tag map adds the tags of every prefix that matches; the result lists them in path_tag_matches and the paths that matched nothing in unmatched_paths.",
+  }),
   context: optionalString.annotateKey({
     description: "Supporting context for the memory.",
   }),
@@ -459,6 +464,42 @@ export const MemoryDeprecateArgsSchema = Schema.Struct({
       "Id of the canonical memory replacing every target. Omit to mark targets deprecated without a replacement.",
   }),
   source_agent: sourceAgentField,
+});
+
+export const TagMapListArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  paths: optionalString.annotateKey({
+    description:
+      "Comma-separated file paths. When given, the result also reports the tags the map assigns to them, the prefix each path matched, and the paths that matched nothing.",
+  }),
+});
+
+const pathPrefix = Schema.NonEmptyString.annotateKey({
+  description:
+    "Path prefix relative to the repository root, e.g. src/cli. It matches the path itself and everything under it.",
+});
+
+export const TagMapSetArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  path_prefix: pathPrefix,
+  tags: Schema.NonEmptyString.annotateKey({
+    description:
+      "Comma-separated tags for memories about files under the prefix, e.g. area:cli,topic:commands. They replace the tags the prefix had.",
+  }),
+});
+
+export const TagMapDeleteArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  path_prefix: pathPrefix,
+});
+
+export const MemoryCoverageArgsSchema = Schema.Struct({
+  repository: RepositorySchema,
+  directories: Schema.Array(Schema.String)
+    .check(Schema.isMinLength(1), Schema.isMaxLength(COVERAGE_DIRECTORIES_MAX))
+    .annotateKey({
+      description: `Directory paths relative to the repository root, e.g. ["src/", "src/cli/"], at most ${COVERAGE_DIRECTORIES_MAX}. Leave out dependency and build output directories.`,
+    }),
 });
 
 export const MemoryDoctorArgsSchema = Schema.Struct({

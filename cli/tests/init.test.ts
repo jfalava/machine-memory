@@ -72,6 +72,7 @@ describe("init templates", () => {
       "Check size before writing",
       "read the record first and keep the details that still hold",
       "`dropped` or `review_candidates`",
+      "update or deprecate the listed records that rely on what you changed",
       "Reading the code proves only `observed_implementation`",
       "the parent writes them",
       "Before the final response",

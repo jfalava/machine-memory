@@ -99,10 +99,13 @@ When the content changes, the response reports:
   anything is written.
 - `review_candidates`: up to five other active memories that may rely on the
   sentences the update removed or reworded. Each one refers to the updated
-  memory by ID (`cites: true`), or names a path, flag or symbol from those
-  sentences that at most three other memories mention (`shared_identifiers`).
-  An update that only adds sentences lists none. Update or deprecate each one,
-  or confirm it still holds. Status memories do not trigger this check.
+  memory by ID (`cites: true`), or names at least two paths, flags or symbols
+  from those sentences that at most three other memories each mention
+  (`shared_identifiers`). One shared name is not enough: it says the memory is
+  about the same file or flag, not that it relies on the update. An update
+  that only adds sentences lists none. They are candidates: read each one, and
+  update or deprecate it only when it relies on what changed. Status memories
+  do not trigger this check.
 
 `--json-min` and `--quiet` keep `dropped` and list `review_candidate_ids`
 instead of summaries; batch updates group both per ID under `reconciliation`.

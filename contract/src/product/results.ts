@@ -9,6 +9,7 @@ import {
   MemoryStatusSchema,
 } from "../entities";
 import { IndexStatusSchema } from "../index-status";
+import { PathTagMappingSchema, PathTagMatchSchema } from "../path-tags";
 import { DroppedDetailsSchema } from "../reconcile";
 import { MatchStrengthSchema } from "../search";
 
@@ -73,6 +74,10 @@ export const MemoryWriteResultSchema = Schema.Struct({
   matched: Schema.optionalKey(MatchedUpdateTargetSchema),
   /** Active records that strongly match the new content; neighbours, not contradictions. */
   related: Schema.optionalKey(Schema.Array(ScoredMemoryRowSchema)),
+  /** For an add with paths: each tag-map prefix that matched and its tags. */
+  path_tag_matches: Schema.optionalKey(Schema.Array(PathTagMatchSchema)),
+  /** For an add with paths: the paths no prefix matched, which added no tags. */
+  unmatched_paths: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Paths, identifiers, and sentences the new content no longer carries. */
   dropped: Schema.optionalKey(DroppedDetailsSchema),
   /** Other active records that may rely on what the update removed or rewrote. */
@@ -309,6 +314,47 @@ export const MemoryDoctorSuccessSchema = okResponseSchema(
 
 export const MemoryWriteSuccessSchema = okResponseSchema(
   MemoryWriteResultSchema,
+);
+
+export const TagMapListResultSchema = Schema.Struct({
+  repository: Schema.String,
+  count: Schema.Finite,
+  mappings: Schema.Array(PathTagMappingSchema),
+  /** With paths: the tags the map assigns to them, longest prefix first. */
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  matches: Schema.optionalKey(Schema.Array(PathTagMatchSchema)),
+  unmatched_paths: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type TagMapListResult = typeof TagMapListResultSchema.Type;
+export const TagMapListSuccessSchema = okResponseSchema(TagMapListResultSchema);
+
+export const TagMapSetResultSchema = Schema.Struct({
+  repository: Schema.String,
+  path_prefix: Schema.String,
+  tags: Schema.Array(Schema.String),
+});
+export const TagMapSetSuccessSchema = okResponseSchema(TagMapSetResultSchema);
+
+export const TagMapDeleteResultSchema = Schema.Struct({
+  repository: Schema.String,
+  path_prefix: Schema.String,
+  status: Schema.Literals(["deleted", "not_found"]),
+});
+export const TagMapDeleteSuccessSchema = okResponseSchema(
+  TagMapDeleteResultSchema,
+);
+
+export const MemoryCoverageResultSchema = Schema.Struct({
+  repository: Schema.String,
+  /** How many directories were compared. */
+  checked: Schema.Finite,
+  /** Directories no segment of which is a tag of an active memory. */
+  uncovered_paths: Schema.Array(Schema.String),
+  /** How many active memories carry each tag. */
+  tag_distribution: Schema.Record(Schema.String, Schema.Finite),
+});
+export const MemoryCoverageSuccessSchema = okResponseSchema(
+  MemoryCoverageResultSchema,
 );
 
 export const MemoryRestoreResultSchema = Schema.Struct({

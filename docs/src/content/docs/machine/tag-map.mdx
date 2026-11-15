@@ -8,22 +8,40 @@ sidebar:
 ## Usage
 
 ```sh
-machine-memory tag-map list
-machine-memory tag-map set cli/src area:cli,topic:commands
-machine-memory tag-map suggest cli/src/cli/app.ts
-machine-memory tag-map delete cli/src
+machine-memory tag-map list (--local|--remote)
+machine-memory tag-map set cli/src area:cli,topic:commands (--local|--remote)
+machine-memory tag-map suggest cli/src/cli/app.ts (--local|--remote)
+machine-memory tag-map delete cli/src (--local|--remote)
+machine-memory tag-map import (--local|--remote)
 ```
 
-`tag-map` is filesystem-only and does not take `--local` or `--remote`. It
-stores mappings in `.agents/path-tags.json` relative to the current working
-directory.
+The tag map is stored in the database, one map per repository, so every
+checkout and every MCP client of a remote database shares it. A prefix covers
+the path itself and everything under it: `cli/src` covers `cli/src/cli/app.ts`.
+A path under several prefixes gets the tags of all of them, longest prefix
+first.
 
-| Action                              | Behavior                                                                                             |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `list`                              | Print the file path and all configured mappings.                                                     |
-| `set <path_prefix> <tag1,tag2,...>` | Normalize and save a mapping.                                                                        |
-| `suggest <path\|path,path,...>`     | Return the tags for one or several paths, with `matches` (path, prefix, tags) and `unmatched` paths. |
-| `delete <path_prefix>`              | Remove a mapping and report whether it existed.                                                      |
+| Action                              | Behavior                                                                                                 |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `list`                              | Print the repository and all configured mappings.                                                        |
+| `set <path_prefix> <tag1,tag2,...>` | Normalize and save a mapping, replacing the tags the prefix had.                                         |
+| `suggest <path\|path,path,...>`     | Return the tags for one or several paths, with `matches` (path, prefix, tags) and `unmatched_paths`.     |
+| `delete <path_prefix>`              | Remove a mapping. `status` is `deleted`, or `not_found` when the map has no such prefix.                 |
+| `import`                            | Load the mappings of a legacy `.agents/path-tags.json` in the current directory into the database, once. |
 
 Mappings are consumed by `add --path`, which reports the same matches as
 `path_tag_matches` and warns on stderr about a path that matches no prefix.
+Changing the map does not change the tags of memories that already exist.
+
+## Moving from the file
+
+The map used to live in `.agents/path-tags.json`. That file is no longer
+read. Run `tag-map import` once per checkout that has one, then delete
+the file. `list` and `suggest` warn on stderr while the file exists and the
+repository's map is empty.
+
+## MCP
+
+`tag_map_list`, `tag_map_set` and `tag_map_delete` are the same operations as
+[MCP tools](/docs/mcp/tools). `tag_map_list` takes `paths` and then also
+returns what `suggest` returns.

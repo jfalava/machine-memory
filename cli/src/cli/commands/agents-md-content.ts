@@ -9,7 +9,7 @@ const MEMORY_BLOCK_END = "<!-- machine-memory:end -->";
  * checkouts that still carry an older block are told to run `init` again. A
  * block without a version line predates versions and counts as 1.
  */
-export const MEMORY_BLOCK_VERSION = 5;
+export const MEMORY_BLOCK_VERSION = 6;
 
 export type AgentsMemoryBackend = "local" | "remote" | "mcp";
 
@@ -53,7 +53,7 @@ function cliTerms(flag: "--local" | "--remote"): BlockTerms {
 
 const MCP_TERMS: BlockTerms = {
   intro:
-    "This repository keeps durable project knowledge in `machine-memory`, reached through its MCP tools (`list_repositories` and `memory_*`), not a CLI. Every tool takes `repository`: the slug in `.agents/machine-memory.json`, or without that file the origin remote's path, such as `owner/name`. Check it with `list_repositories` before the first write: a wrong slug reads as empty and writes to a new repository.",
+    "This repository keeps durable project knowledge in `machine-memory`, reached through its MCP tools, not a CLI. Every tool takes `repository`: the slug in `.agents/machine-memory.json`, or without that file the origin remote's path, such as `owner/name`. Check it with `list_repositories` before the first write: a wrong slug reads as empty and writes to a new repository.",
   scanFiles: "`memory_suggest` with `{ repository, files }`",
   scanTopic: "`memory_query` with `{ repository, query }`",
   read: "`memory_get` with their `ids`",
@@ -85,7 +85,7 @@ export function agentsMdContent(backend: AgentsMemoryBackend): string {
     `- Write one fact per record and start it with the command, path or identifier it is about. Store decisions, constraints, preferences, references and gotchas. Put delivery state in one \`status\` record with ${terms.expiry}. Leave out pixel values, UI state and deploy outcomes, and put facts about one machine in that machine's guidance file.`,
     `- Check size before writing: ${terms.size}. Content, tags and context share one 2,000-byte limit.`,
     `- Change a record with ${terms.update}. It replaces the content, so read the record first and keep the details that still hold. ${terms.metadataUpdate} to change only tags, type or certainty. Create one with ${terms.add}, which updates a strong match instead of adding a duplicate.`,
-    `- When a write reports ${terms.lossReport}, restore details dropped by mistake and update or deprecate the listed records.`,
+    `- When a write reports ${terms.lossReport}, restore details dropped by mistake, and update or deprecate the listed records that rely on what you changed.`,
     `- ${terms.evidence}: \`user_requirement\`, \`observed_implementation\`, \`verified_mechanism\` or \`tested_behavior\`. Reading the code proves only \`observed_implementation\`.`,
     "- When delegating, scan once and pass the record ids to child agents. Children return findings with their evidence; the parent writes them.",
     `- Before the final response, ${terms.checkpoint} add, update or deprecate records for what the task established.`,

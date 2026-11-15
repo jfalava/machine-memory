@@ -505,7 +505,9 @@ const tagMapCommand = effectCommand(
   "tag-map",
   { args: positionalArgs() },
   [],
-  undefined,
+  // list and suggest also need the table, which only a write connection adds
+  // to an older local database.
+  "write",
   handleTagMapCommand,
 );
 const initCommand = effectCommand(

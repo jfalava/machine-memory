@@ -10,14 +10,14 @@ After [enabling MCP](/docs/mcp/enable) and connecting a client to `/mcp`, these 
 
 ## Safety model
 
-| Kind     | Tools                                                                                                      | Wrong `repository` slug                 |
-| -------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| Read     | `memory_suggest`, `memory_query`, `memory_get`, `memory_history`, `memory_list`                            | Empty or not-found; nothing lost        |
-| Maintain | `memory_doctor`, `memory_stats`, `memory_gc`                                                               | Empty report; nothing lost              |
-| Check    | `memory_verify`, `memory_diff`                                                                             | Not-found message; nothing lost         |
-| Measure  | `memory_size`                                                                                              | N/A (no repository)                     |
-| Discover | `list_repositories`                                                                                        | N/A                                     |
-| Write    | `memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many` | Required exact `owner/name`; no default |
+| Kind     | Tools                                                                                                                                       | Wrong `repository` slug                 |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| Read     | `memory_suggest`, `memory_query`, `memory_get`, `memory_history`, `memory_list`, `tag_map_list`                                             | Empty or not-found; nothing lost        |
+| Maintain | `memory_doctor`, `memory_stats`, `memory_gc`, `memory_coverage`                                                                             | Empty report; nothing lost              |
+| Check    | `memory_verify`, `memory_diff`                                                                                                              | Not-found message; nothing lost         |
+| Measure  | `memory_size`                                                                                                                               | N/A (no repository)                     |
+| Discover | `list_repositories`                                                                                                                         | N/A                                     |
+| Write    | `memory_add`, `memory_update`, `memory_restore`, `memory_deprecate`, `memory_delete`, `memory_delete_many`, `tag_map_set`, `tag_map_delete` | Required exact `owner/name`; no default |
 
 Call `list_repositories` before writes when the slug is not certain. Derive `owner/name` from `git remote get-url origin` when it matches a known entry.
 
@@ -43,6 +43,10 @@ Call `list_repositories` before writes when the slug is not certain. Derive `own
 | `memory_deprecate`   | Mark up to 100 explicit ids deprecated or superseded, preserving history      |
 | `memory_delete`      | Permanently delete one memory and its vector                                  |
 | `memory_delete_many` | Permanently delete up to 100 explicit ids and their vectors                   |
+| `tag_map_list`       | List the tag map; with `paths`, the tags those files would get                |
+| `tag_map_set`        | Set the tags of one path prefix, replacing the tags it had                    |
+| `tag_map_delete`     | Remove one path prefix; reports `deleted` or `not_found`                      |
+| `memory_coverage`    | List the directories no active memory is tagged for                           |
 
 Every tool that takes `repository` expects `owner/name`. Rows live in D1; embeddings sync to Vectorize on write. `memory_query`, `memory_list`, and `memory_suggest` accept a `tags` substring filter alongside `status` / `memory_type` / `certainty`.
 
@@ -73,6 +77,11 @@ user as `mcp:<login>`.
 - `memory_gc` is always a dry run. It returns active status memories whose `expires_after_days` window has elapsed.
 - `memory_deprecate` accepts `ids` and optional `superseded_by`. It preserves the records and re-syncs their vector metadata.
 - `memory_delete_many` accepts one to 100 explicit `ids`. It is permanent and echoes `deleted_from`, `deleted_ids`, and `not_found`.
+- `memory_coverage` takes `directories`, one to 2,000 directory paths relative to the repository root, because the server cannot walk a checkout. It returns `checked`, `uncovered_paths` and `tag_distribution`. A directory is covered when one of its path segments equals a tag of an active memory, so a scoped tag such as `area:cli` does not cover `cli`.
+
+### Tag map
+
+The tag map gives memories about one directory the same tags. `tag_map_set` (`{ repository, path_prefix, tags }`) stores the tags of a prefix, and a prefix covers the path itself and everything under it. `memory_add` with `paths` then adds the tags of every prefix those paths fall under. `tag_map_list` returns `mappings`; with `paths` it also returns `tags`, `matches` and `unmatched_paths`, which is the CLI's `tag-map suggest`. `tag_map_delete` (`{ repository, path_prefix }`) reports `deleted` or `not_found`. Changing the map leaves the tags of existing memories as they are.
 
 ### Suggest
 
@@ -88,7 +97,7 @@ user as `mcp:<login>`.
 
 `memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change, so omitting `content` changes only metadata. `add_tags`, `remove_tags`, `add_validation_gaps` and `remove_validation_gaps` change part of a list; `tags` and `validation_gaps` replace it.
 
-Replacing content, through `memory_update`, `update_id` or a strong `upsert_match`, is refused when it drops a path, flag or symbol that no other active memory mentions, or shares almost nothing with the stored content. The error names what would be lost. Carry it over, add a new memory when this is a different fact, or pass `allow_drop: true` when the detail is obsolete. A content or status change also returns `dropped` (identifiers and sentences the new content lost) and `review_candidates` (other active memories that may rely on the old premise). `memory_deprecate` returns `review_candidates` too, and `memory_diff` returns `dropped` before anything is written. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
+Replacing content, through `memory_update`, `update_id` or a strong `upsert_match`, is refused when it drops a path, flag or symbol that no other active memory mentions, or shares almost nothing with the stored content. The error names what would be lost. Carry it over, add a new memory when this is a different fact, or pass `allow_drop: true` when the detail is obsolete. A content or status change also returns `dropped` (identifiers and sentences the new content lost) and `review_candidates`: up to five other active memories that cite the changed memory by id (`cites: true`) or share at least two paths, flags or symbols with the changed text (`shared_identifiers`). They are candidates: read each one and change it only when it relies on what changed. An update that only adds text lists none. `memory_deprecate` returns `review_candidates` too, and `memory_diff` returns `dropped` before anything is written. It also accepts `expires_after_days` (status memories only). Prefer `memory_deprecate` for dedicated deprecation and supersession workflows.
 
 ### History and recovery
 
@@ -135,6 +144,7 @@ Typical fields on `memory_add` / `memory_update`:
 
 - `content` (required on add) — put commands, paths, and identifiers in the first sentence
 - `tags` — comma-separated, e.g. `area:cli,topic:backend,kind:decision`
+- `paths` (add only) — the files the memory is about; adds the tags of every [tag map](/machine/tag-map) prefix they fall under, and the result lists them in `path_tag_matches` and the paths no prefix matched in `unmatched_paths`
 - `context` — optional supporting text
 - `memory_type` — `decision`, `convention`, `gotcha`, `preference`, `constraint`, `reference`, `status`
 - `certainty` — `verified`, `inferred`, `speculative`; `verified` requires a non-empty `evidence`

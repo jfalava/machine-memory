@@ -23,6 +23,11 @@ import {
   nearDuplicate,
   normalizeMemoryAddArgs,
   normalizeStoredMemoryRow,
+  normalizeTagMapPath,
+  normalizeTags,
+  pathTagMapDelete,
+  pathTagMapUpsert,
+  suggestPathTags,
   reviewCandidateRowsQuery,
   reviewNames,
   reviewsDependents,
@@ -48,6 +53,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  fetchPathTagMap,
   fetchProductRow,
   fetchRankedProductRows,
   memoryNotFound,
@@ -76,6 +82,34 @@ const withCanonicalTags = <T extends { readonly tags?: string | undefined }>(
   input.tags === undefined
     ? input
     : { ...input, tags: canonicalTags(input.tags) };
+
+/**
+ * Adds the tags the repository's tag map assigns to the paths a memory is
+ * about, and reports which prefixes matched.
+ */
+const withPathTags = (ctx: ApiContext, request: ProductRequest<"add">) =>
+  Effect.gen(function* () {
+    if (request.paths === undefined || request.paths.trim() === "") {
+      return { input: request, report: {} };
+    }
+    const suggestion = suggestPathTags(
+      yield* fetchPathTagMap(ctx, request.repository),
+      request.paths,
+    );
+    return {
+      input:
+        suggestion.tags.length === 0
+          ? request
+          : {
+              ...request,
+              tags: [request.tags ?? "", ...suggestion.tags].join(","),
+            },
+      report: {
+        path_tag_matches: suggestion.matches,
+        unmatched_paths: suggestion.unmatched,
+      },
+    };
+  });
 
 /** How an API caller states intent after a refused add. */
 const ADD_INTENT_HINTS: AddIntentHints = {
@@ -165,7 +199,11 @@ const fetchReviewCandidates = (
   Effect.gen(function* () {
     const groups = [];
     for (const premise of premises) {
-      if (!reviewsDependents(premise.memory_type)) {
+      // An update that only adds withdraws nothing a record could rely on.
+      if (
+        !reviewsDependents(premise.memory_type) ||
+        premise.text.trim() === ""
+      ) {
         continue;
       }
       const names = reviewNames(premise.text);
@@ -349,6 +387,25 @@ const createProduct = (
     }
     const related = neighbours.filter((row) => row.match_strength === "strong");
     return related.length > 0 ? { ...result, related } : result;
+  });
+
+/** Routes an add to an update by id, an upsert by topic, or a new memory. */
+const addProduct = (ctx: ApiContext, input: ProductRequest<"add">) =>
+  Effect.gen(function* () {
+    const args = normalizeMemoryAddArgs(input);
+    const upsertQuery = args.upsert_match?.trim() || undefined;
+    if (args.update_id !== undefined) {
+      if (upsertQuery !== undefined || args.create_new === true) {
+        return yield* badRequest(
+          "update_id names the memory to update, so it cannot be combined with upsert_match or create_new.",
+        );
+      }
+      return yield* applyStrongUpsert(ctx, input, args.update_id, undefined);
+    }
+    if (upsertQuery === undefined) {
+      return yield* createProduct(ctx, args, undefined);
+    }
+    return yield* upsertProductAdd(ctx, input, args, upsertQuery);
   });
 
 const strongUpsertError = (
@@ -754,25 +811,54 @@ export const productWriteHandlers = (
   ctx: ApiContext,
 ): Pick<
   ProductHandlers,
-  "add" | "update" | "restore" | "delete" | "delete-many" | "deprecate"
+  | "add"
+  | "update"
+  | "restore"
+  | "delete"
+  | "delete-many"
+  | "deprecate"
+  | "tag-map-set"
+  | "tag-map-delete"
 > => ({
   add: (request) =>
     Effect.gen(function* () {
-      const input = withCanonicalTags(request);
-      const args = normalizeMemoryAddArgs(input);
-      const upsertQuery = args.upsert_match?.trim() || undefined;
-      if (args.update_id !== undefined) {
-        if (upsertQuery !== undefined || args.create_new === true) {
-          return yield* badRequest(
-            "update_id names the memory to update, so it cannot be combined with upsert_match or create_new.",
-          );
-        }
-        return yield* applyStrongUpsert(ctx, input, args.update_id, undefined);
+      const mapped = yield* withPathTags(ctx, request);
+      const result = yield* addProduct(ctx, withCanonicalTags(mapped.input));
+      return { ...result, ...mapped.report };
+    }),
+
+  "tag-map-set": (input) =>
+    Effect.gen(function* () {
+      const mapping = {
+        repository: input.repository,
+        path_prefix: normalizeTagMapPath(input.path_prefix),
+        tags: normalizeTags(input.tags),
+      };
+      if (mapping.path_prefix === "" || mapping.tags.length === 0) {
+        return yield* badRequest(
+          "A tag map entry needs a path prefix and at least one tag.",
+        );
       }
-      if (upsertQuery === undefined) {
-        return yield* createProduct(ctx, args, undefined);
+      const query = pathTagMapUpsert(mapping);
+      yield* ctx.sql.unsafe(query.sql, query.params);
+      return mapping;
+    }),
+
+  "tag-map-delete": (input) =>
+    Effect.gen(function* () {
+      const pathPrefix = normalizeTagMapPath(input.path_prefix);
+      const existed = (yield* fetchPathTagMap(ctx, input.repository)).some(
+        (mapping) => mapping.path_prefix === pathPrefix,
+      );
+      if (existed) {
+        const query = pathTagMapDelete(input.repository, pathPrefix);
+        yield* ctx.sql.unsafe(query.sql, query.params);
       }
-      return yield* upsertProductAdd(ctx, input, args, upsertQuery);
+      return {
+        repository: input.repository,
+        path_prefix: pathPrefix,
+        status: existed ? ("deleted" as const) : ("not_found" as const),
+      };
     }),
 
   update: (request) =>

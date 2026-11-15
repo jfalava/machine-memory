@@ -770,9 +770,12 @@ export function findReviewCandidates(
   alsoExclude: number[] = [],
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
   const repository = repositoryForCurrentDirectory();
+  // An update that only adds withdraws nothing a record could rely on.
   const durable = premises.filter(
     (premise) =>
-      isMemoryType(premise.memoryType) && reviewsDependents(premise.memoryType),
+      premise.text.trim() !== "" &&
+      isMemoryType(premise.memoryType) &&
+      reviewsDependents(premise.memoryType),
   );
   return Effect.forEach(durable, (premise) =>
     Effect.gen(function* () {

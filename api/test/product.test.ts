@@ -81,6 +81,7 @@ beforeAll(async () => {
     "0007_embedding_budget",
     "0008_vector_sync_queue",
     "0009_vector_sync_model",
+    "0010_path_tag_map",
   ]) {
     await applyMigration(name);
   }
@@ -101,6 +102,7 @@ beforeEach(async () => {
   await db.prepare("DELETE FROM memory_history").run();
   await db.prepare("DELETE FROM memory_vector_sync").run();
   await db.prepare("DELETE FROM memory_migration_sources").run();
+  await db.prepare("DELETE FROM path_tag_map").run();
   vi.clearAllMocks();
   embed.mockReset().mockResolvedValue(values);
   upsert.mockReset().mockResolvedValue({ mutationId: "test" });
@@ -433,6 +435,106 @@ test("competing restores with the same current count allow exactly one mutation"
   });
   expect((await product("history", { id })).result.total_count).toBe(2);
   expect(await job(id)).toMatchObject({ generation: 3 });
+});
+
+test("the tag map is kept per repository and tags an add by its paths", async () => {
+  const set = await product("tag-map-set", {
+    path_prefix: "./src/cli",
+    tags: "Area:CLI, topic:commands,area:cli",
+  });
+  expect(set.result).toEqual({
+    repository: "o/r",
+    path_prefix: "src/cli",
+    tags: ["area:cli", "topic:commands"],
+  });
+  await product("tag-map-set", { path_prefix: "src", tags: "area:source" });
+  // Setting a prefix again replaces its tags.
+  await product("tag-map-set", { path_prefix: "src", tags: "area:src" });
+  await product("tag-map-set", {
+    repository: "other/repo",
+    path_prefix: "src",
+    tags: "area:elsewhere",
+  });
+  const empty = await productError("tag-map-set", {
+    path_prefix: "./",
+    tags: "area:cli",
+  });
+  expect(empty.status).toBe(400);
+
+  const listed = await product("tag-map-list", {
+    paths: "src/cli/app.ts,docs/readme.md",
+  });
+  expect(listed.result).toEqual({
+    repository: "o/r",
+    count: 2,
+    mappings: [
+      { path_prefix: "src", tags: ["area:src"] },
+      { path_prefix: "src/cli", tags: ["area:cli", "topic:commands"] },
+    ],
+    // The longest prefix comes first.
+    tags: ["area:cli", "topic:commands", "area:src"],
+    matches: [
+      {
+        path: "src/cli/app.ts",
+        prefix: "src/cli",
+        tags: ["area:cli", "topic:commands"],
+      },
+      { path: "src/cli/app.ts", prefix: "src", tags: ["area:src"] },
+    ],
+    unmatched_paths: ["docs/readme.md"],
+  });
+
+  const added = await product("add", {
+    content: "The CLI registers commands in definitions.ts.",
+    tags: "kind:reference",
+    paths: "src/cli/app.ts,docs/readme.md",
+  });
+  expect(added.result.memory.tags).toBe(
+    "kind:reference,area:cli,topic:commands,area:src",
+  );
+  expect(added.result.path_tag_matches).toHaveLength(2);
+  expect(added.result.unmatched_paths).toEqual(["docs/readme.md"]);
+  // Without paths the map is not consulted.
+  const plain = await product("add", { content: "Docs build with Astro." });
+  expect(plain.result.memory.tags).toBe("");
+  expect(plain.result).not.toHaveProperty("path_tag_matches");
+
+  const deleted = await product("tag-map-delete", { path_prefix: "src/cli" });
+  expect(deleted.result.status).toBe("deleted");
+  const again = await product("tag-map-delete", { path_prefix: "src/cli" });
+  expect(again.result.status).toBe("not_found");
+  expect((await product("tag-map-list")).result.mappings).toEqual([
+    { path_prefix: "src", tags: ["area:src"] },
+  ]);
+  expect(
+    (await product("tag-map-list", { repository: "other/repo" })).result.count,
+  ).toBe(1);
+});
+
+test("coverage lists the directories no active memory is tagged for", async () => {
+  await product("add", { content: "The API validates input.", tags: "api" });
+  await product("add", {
+    content: "The API encodes every response.",
+    tags: "API,area:cli",
+  });
+  const retired = await product("add", {
+    content: "Docs moved to Astro.",
+    tags: "docs",
+  });
+  await product("deprecate", { ids: [retired.result.id] });
+  const coverage = await product("coverage", {
+    directories: ["api/", "api/src/", "cli/", "docs/"],
+  });
+  expect(coverage.result).toEqual({
+    repository: "o/r",
+    checked: 4,
+    // A scoped tag such as area:cli does not cover cli/, and a deprecated
+    // memory covers nothing.
+    uncovered_paths: ["cli/", "docs/"],
+    tag_distribution: { api: 2, "area:cli": 1 },
+  });
+  const none = await productError("coverage", { directories: [] });
+  expect(none.status).toBe(400);
 });
 
 test("/status reports the Worker version and one schema level per migration file", async () => {
@@ -1729,6 +1831,10 @@ test("updates report dropped details and review candidates; deprecate reviews de
   expect(
     await db.prepare("SELECT COUNT(*) AS n FROM memory_history").first("n"),
   ).toBe(0);
+  const twoNames = await product("add", {
+    content: "Advisories for nixpkgs-security decide when flake.nix moves.",
+    memory_type: "convention",
+  });
   const updated = await product("update", {
     id: premise.result.id,
     content: "Home Manager reimports nixpkgs.",
@@ -1739,7 +1845,8 @@ test("updates report dropped details and review candidates; deprecate reviews de
     "nixpkgs-security",
     "flake.nix",
   ]);
-  // The record that cites the premise comes first, then the one that shares a name.
+  // The record that cites the premise comes first, then the one that shares
+  // two of its names. `dependent` shares one name, which is not enough.
   expect(updated.result.review_candidates).toEqual([
     expect.objectContaining({
       id: citing.result.id,
@@ -1747,11 +1854,19 @@ test("updates report dropped details and review candidates; deprecate reviews de
       cites: true,
     }),
     expect.objectContaining({
-      id: dependent.result.id,
-      shared_identifiers: ["nixpkgs-security"],
+      id: twoNames.result.id,
+      shared_identifiers: ["flake.nix", "nixpkgs-security"],
       cites: false,
     }),
   ]);
+  // An update that only adds withdraws nothing, so even the citing record is not listed.
+  const appended = await product("update", {
+    id: premise.result.id,
+    content:
+      "Home Manager reimports nixpkgs. Rollbacks boot the previous generation.",
+  });
+  expect(appended.status).toBe(200);
+  expect(appended.result).not.toHaveProperty("review_candidates");
   const deprecated = await product("deprecate", { ids: [dependent.result.id] });
   expect(deprecated.status).toBe(200);
   expect(deprecated.result).not.toHaveProperty("review_candidates");

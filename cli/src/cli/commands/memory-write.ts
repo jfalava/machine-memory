@@ -24,6 +24,8 @@ import {
   type EmbeddingDocumentParts,
   type EmbeddingSizeReport,
   type EvidenceKind,
+  type PathTagMatch,
+  type PathTagSuggestion,
   type ReplacementAssessment,
   type UpsertDecision,
 } from "@machine-memory/contract";
@@ -51,11 +53,7 @@ import {
   type JsonObject,
   type JsonValue,
 } from "../../json";
-import {
-  suggestTagsForPath,
-  type PathTagMatch,
-  type PathTagSuggestion,
-} from "../../path-tags";
+import { suggestTagsForPath } from "../../path-tags";
 import { repositoryForCurrentDirectory } from "../../repository";
 import {
   assertEvidenceWrite,
@@ -573,7 +571,7 @@ function resolveAddContent(
 
 function resolveAddMetadata(
   flags: CommandFlags,
-  fileSystem: CommandContext["fileSystem"],
+  database: MemoryDatabaseApi,
 ): Effect.Effect<AddMetadata, unknown> {
   const explicitTags = getFlagValue(flags, "--tags");
   const pathContext = getFlagValue(flags, "--path");
@@ -589,7 +587,7 @@ function resolveAddMetadata(
   };
   return (
     pathContext
-      ? suggestTagsForPath(fileSystem, pathContext)
+      ? suggestTagsForPath(database, pathContext)
       : Effect.succeed<PathTagSuggestion>({
           tags: [],
           matches: [],
@@ -1170,7 +1168,7 @@ function maybeHandleAddUpsert(
 function warnUnmatchedPaths(metadata: AddMetadata): void {
   if (metadata.unmatchedPaths.length > 0) {
     warnOnStderr(
-      `--path ${metadata.unmatchedPaths.join(",")} matched no prefix of the tag map, so it added no tags. List the prefixes with 'machine-memory tag-map list'.`,
+      `--path ${metadata.unmatchedPaths.join(",")} matched no prefix of the tag map, so it added no tags. List the prefixes with 'machine-memory tag-map list (--local|--remote)'.`,
     );
   }
 }
@@ -1426,7 +1424,7 @@ export function handleAddCommand(commandCtx: CommandContext) {
       commandCtx.positionals,
       commandCtx.fileSystem,
     );
-    const metadata = yield* resolveAddMetadata(flags, commandCtx.fileSystem);
+    const metadata = yield* resolveAddMetadata(flags, database);
     warnUnmatchedPaths(metadata);
     const write: AddWrite = { database, flags, content, metadata, outputMode };
     if (

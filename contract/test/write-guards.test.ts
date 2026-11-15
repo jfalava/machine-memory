@@ -114,7 +114,7 @@ describe("write guards", () => {
       { id: 8, content: "Pressed keys follow the keycap decision (12)." },
       { id: 9, content: "Step (1) installs, step 12 of 14 deploys." },
     ];
-    const [keycapTests, theme, , citing, listMarker] = rows;
+    const [keycapTests, , , citing, listMarker] = rows;
     expect(
       selectReviewCandidates([{ id: 12, holders, rows }], new Set([12])),
     ).toEqual([
@@ -124,7 +124,7 @@ describe("write guards", () => {
         shared_identifiers: ["src/ui/keycap.tsx", "shadow-inset"],
         cites: false,
       },
-      { row: theme, shared_identifiers: ["shadow-inset"], cites: false },
+      // Record 3 shares one name: it is about the same place, no more.
     ]);
     // A bare (1) is a list marker, not a reference to memory 1.
     expect(

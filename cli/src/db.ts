@@ -9,11 +9,13 @@ import historySql from "../../iac/migrations/0004_memory_history.sql" with { typ
 // 0005 only adds columns; ensureEvidenceColumns applies it idempotently here.
 import evidenceTriggersSql from "../../iac/migrations/0006_memory_evidence_triggers.sql" with { type: "text" };
 import embeddingBudgetSql from "../../iac/migrations/0007_embedding_budget.sql" with { type: "text" };
+// 0008 and 0009 change the vector queue, which a local database does not have.
+import pathTagMapSql from "../../iac/migrations/0010_path_tag_map.sql" with { type: "text" };
 import { DB_PATH } from "./constants";
 import { jsonObject, jsonString } from "./json";
 import { repositoryForCurrentDirectory } from "./repository";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const BUSY_TIMEOUT_MS = Number(
   process.env["MACHINE_MEMORY_BUSY_TIMEOUT_MS"] ?? 5000,
 );
@@ -227,7 +229,7 @@ function applyMigrationSql(database: Database) {
   database.exec(`${integritySql}\n${historySql}`);
   ensureEvidenceColumns(database, "memory_history");
   database.exec(
-    `${evidenceTriggersSql}\n${embeddingBudgetSql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
+    `${evidenceTriggersSql}\n${embeddingBudgetSql}\n${pathTagMapSql}\nPRAGMA user_version = ${SCHEMA_VERSION};`,
   );
 }
 

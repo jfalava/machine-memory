@@ -71,6 +71,22 @@ test("the vector sync queue migration dates every queued write", async () => {
   expect(statements.match(/queued_at = excluded\.queued_at;/g)).toHaveLength(3);
 });
 
+test("the tag map migration only creates its table and can run again", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0010_path_tag_map.sql", import.meta.url),
+    "utf8",
+  );
+  const statements = sql
+    .replace(/^--.*$/gm, "")
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  // The CLI runs this file on every local schema upgrade.
+  expect(statements).toHaveLength(1);
+  expect(statements[0]).toMatch(/^CREATE TABLE IF NOT EXISTS path_tag_map \(/);
+  expect(statements[0]).toContain("PRIMARY KEY (repository, path_prefix)");
+});
+
 test("the vector sync model migration adds the column once and backfills in one statement", async () => {
   const sql = await readFile(
     new URL("../migrations/0009_vector_sync_model.sql", import.meta.url),

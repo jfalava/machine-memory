@@ -12,7 +12,7 @@ The managed section lives between HTML markers and can be replaced safely:
 
 ```html
 <!-- machine-memory:start -->
-<!-- machine-memory:version 5 mcp -->
+<!-- machine-memory:version 6 mcp -->
 …
 <!-- machine-memory:end -->
 ```
@@ -98,7 +98,7 @@ The MCP block is about 2,500 bytes, because agents read it on every turn. It tel
 - Write one fact per record, keep delivery state in one expiring `status` record, and leave out pixel values, UI state, deploy outcomes and facts about one machine
 - Preflight size with `memory_size`
 - Read a record before `memory_update` and keep the details that still hold, or omit `content` to change only metadata; create with `memory_add` and `upsert_match`
-- Act on `dropped` and `review_candidates`
+- Restore details listed in `dropped` by mistake, and read the `review_candidates`, changing only those that rely on what changed
 - Name `evidence` kinds for `certainty: verified`
 - Keep memory writes with the parent agent when delegating
 - Review the task's writes before the final response
@@ -106,7 +106,7 @@ The MCP block is about 2,500 bytes, because agents read it on every turn. It tel
 The tool descriptions carry the detail: pagination, filters, defaults and the weak-match rule.
 
 - Keep durable knowledge separate from delivery status; say whether work is local, committed, pushed, or deployed in an expiring `status` record
-- Carry over unrelated details when replacing a record (`memory_diff` and `memory_update` report `dropped` details), and resolve the `review_candidates` that updates and deprecations return
+- Carry over unrelated details when replacing a record (`memory_diff` and `memory_update` report `dropped` details), and read the `review_candidates` that updates and deprecations return, changing only those that rely on what changed
 - Let the parent agent own memory writes; child agents return persistence candidates with evidence
 - Scan before edits, then run the end-of-task checkpoint: classify each finding as covered, new durable knowledge, superseded, transient status, or intentionally omitted
 

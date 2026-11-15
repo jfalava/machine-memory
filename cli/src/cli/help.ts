@@ -74,7 +74,7 @@ export function helpPayload() {
       dropped:
         "update/diff/add --upsert-match/add --update-id: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
       review_candidates:
-        "update/deprecate/add --upsert-match: up to five other active records that may rely on what the write changed or retired. Each one refers to the changed memory by id (cites true), or names a path, flag or symbol of the changed text that at most three other records mention (shared_identifiers). An update counts only the sentences it removed or reworded, so an update that only adds lists none. Update or deprecate each one, or confirm it still holds. Minimal output lists review_candidate_ids.",
+        "update/deprecate/add --upsert-match: up to five other active records that may rely on what the write changed or retired. Each one refers to the changed memory by id (cites true), or names at least two paths, flags or symbols of the changed text that at most three other records each mention (shared_identifiers). An update counts only the sentences it removed or reworded, so an update that only adds lists none. They are candidates: read each one, and update or deprecate it only when it relies on what changed. Minimal output lists review_candidate_ids.",
       results:
         "get, query, list, suggest, sweep and export all print one object: repository, count, the fields of that command, then results, an array even for one memory or none. The output mode changes only what each result carries: the whole memory by default, a summary with --json-min, the id alone with --quiet. --brief prints one text line per memory instead.",
       snippet:
@@ -170,8 +170,9 @@ export function helpPayload() {
           "Reports term changes plus dropped identifiers and sentences, the same check update applies.",
       },
       "tag-map": {
-        usage:
-          "tag-map <list|set|delete|suggest> [path_prefix] [tags_csv|path]",
+        usage: `tag-map <list|set|delete|suggest|import> [path_prefix] [tags_csv|path]${DATABASE_BACKEND_USAGE}`,
+        notes:
+          "The tag map is stored in the database, one per repository. A prefix covers the path itself and everything under it. import loads the mappings of a legacy .agents/path-tags.json once; that file is no longer read.",
       },
       migrate: { usage: `migrate${DATABASE_BACKEND_USAGE}` },
       coverage: { usage: `coverage [--root <path>]${DATABASE_BACKEND_USAGE}` },
@@ -427,7 +428,7 @@ function workflowHelpPayload(): JsonObject {
       "Recover an overwrite with history <id>, then restore <id> --revision <revision_id> --expected-update-count <current_update_count>, using the current count from history. Delete is permanent and removes history; prefer deprecate.",
     ],
     reconcile: [
-      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates, each with the names it shares with the changed text (shared_identifiers) or cites true when it refers to the changed memory by id: resolve each one or confirm it still holds.",
+      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates, each with the names it shares with the changed text (shared_identifiers) or cites true when it refers to the changed memory by id. Read each one and change it only when it relies on the old premise.",
       "Consolidate overlapping records instead of adding a partly redundant one. Use deprecate <id> --superseded-by <id> when a record is replaced.",
     ],
     evidence: [

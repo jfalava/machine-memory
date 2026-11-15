@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 
+import { coverageReport } from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { getFlagValue } from "../../cli-utils";
@@ -7,7 +8,7 @@ import { jsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
-import { collectDirectoriesEffect, parseTags, stringValue } from "../shared";
+import { collectDirectoriesEffect, stringValue } from "../shared";
 
 export function handleCoverageCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
@@ -22,31 +23,15 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
       "SELECT tags FROM memories WHERE repository = ? AND status = 'active'",
       [repositoryForCurrentDirectory()],
     );
-    const tagDistribution: Record<string, number> = {};
-    const tagSet = new Set<string>();
-    for (const row of rows) {
-      for (const tag of parseTags(stringValue(jsonObject(row)?.tags))) {
-        tagDistribution[tag] = (tagDistribution[tag] ?? 0) + 1;
-        tagSet.add(tag.toLowerCase());
-      }
-    }
-    const uncoveredPaths = directories.filter((dir) => {
-      const parts = dir
-        .replace(/\/$/, "")
-        .split("/")
-        .map((part) => part.toLowerCase())
-        .filter(Boolean);
-      return parts.length > 0 && !parts.some((part) => tagSet.has(part));
-    });
+    const report = coverageReport(
+      directories,
+      rows.map((row) => stringValue(jsonObject(row)?.tags)),
+    );
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.quiet) {
         return;
       }
-      printCommandOutput(commandCtx, {
-        root,
-        uncovered_paths: uncoveredPaths,
-        tag_distribution: tagDistribution,
-      });
+      printCommandOutput(commandCtx, { root, ...report });
     });
   });
 }
