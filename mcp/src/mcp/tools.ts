@@ -142,7 +142,7 @@ export function createMemoryServer(
   register(
     "memory_query",
     "query",
-    "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { repository, count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none) and the query identifiers it matched exactly. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
+    "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { repository, count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none), the query identifiers it matched exactly, and matched_terms with matched_in, the fields that hold them. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. A status memory past its expiry is left out unless memory_type is status; memory_list and memory_get still return it. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
   );
 
   register(
@@ -184,7 +184,7 @@ export function createMemoryServer(
   register(
     "memory_suggest",
     "suggest",
-    "Suggest memories relevant to file paths, e.g. the files about to be edited. Combines full-text search over path-derived terms with directory neighborhood matches (tags and content/context path hints), merged and scored. Results are strong only when a memory names a suggested file path or specific file name literally; no_strong_match is true otherwise. Use this for the pre-edit scan when touched paths are known.",
+    "Suggest memories relevant to file paths, e.g. the files about to be edited. Combines full-text search over path-derived terms with directory neighborhood matches (tags and content/context path hints), merged and scored. Results are strong only when a memory names a suggested file path or specific file name literally; no_strong_match is true otherwise. Manifests and lockfiles (package.json, bunfig.toml, *.lock) are searched by directory, not by name, and are listed in generic_files; use memory_query to find a memory about one. Use this for the pre-edit scan when touched paths are known.",
   );
 
   register(

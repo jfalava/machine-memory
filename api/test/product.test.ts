@@ -1053,6 +1053,63 @@ test("hybrid ranks agreement above a keyword-only leader before truncation", asy
   expect(result.result.results[0].id).not.toBe(first.result.id);
 });
 
+test("searches leave an expired status out, while writes and status searches still find it", async () => {
+  const durable = await product("add", {
+    content: "Deploy pipeline applies migrations before the workers",
+  });
+  const status = (content: string) =>
+    product("add", {
+      content,
+      memory_type: "status",
+      expires_after_days: 3,
+      create_new: true,
+    });
+  const expired = await status("Deploy pipeline migration is half finished");
+  const current = await status("Deploy pipeline dashboards await review");
+  await db
+    .prepare(
+      "UPDATE memories SET updated_at = datetime('now', '-4 days') WHERE id = ?",
+    )
+    .bind(expired.result.id)
+    .run();
+  const found = async (fields: Record<string, JsonValue>) =>
+    (
+      await product("query", { query: "deploy pipeline", ...fields })
+    ).result.results
+      .map((row: { id: number }) => row.id)
+      .sort((left: number, right: number) => left - right);
+  expect(await found({})).toEqual([durable.result.id, current.result.id]);
+  expect(await found({ memory_type: "status" })).toEqual([
+    expired.result.id,
+    current.result.id,
+  ]);
+  query.mockImplementation(() =>
+    Effect.succeed({
+      count: 1,
+      matches: [{ id: String(expired.result.id), score: 0.95 }],
+    }),
+  );
+  expect(await found({ mode: "semantic" })).toEqual([]);
+
+  const suggested = await product("suggest", {
+    files: "package.json,bun.lock",
+  });
+  expect(suggested.result).toMatchObject({
+    count: 0,
+    generic_files: ["package.json", "bun.lock"],
+    normalized_path_terms: [],
+  });
+
+  // The status update that refreshes the record must still find it.
+  const refreshed = await product("add", {
+    content: "Deploy pipeline migration is half finished",
+    upsert_match: "deploy pipeline migration half finished",
+    upsert_threshold: 0,
+  });
+  expect(refreshed.result.mode).toBe("updated");
+  expect(refreshed.result.id).toBe(expired.result.id);
+});
+
 test("migration retries retain inactive records and distinct metadata by source identity", async () => {
   const rows: JsonObject[] = [
     {

@@ -64,9 +64,16 @@ export const MAX_NAMESPACE_BYTES = 64;
 export const MAX_MIGRATION_ROWS = 50;
 export const MAX_MIGRATION_LINKS = 100;
 
-/** Upsert is strong only when similarity and FTS score both clear these bars. */
+/**
+ * Upsert updates a match only when the new content restates it (similarity)
+ * and the upsert query fits it (rank score). The best full-text candidate
+ * scores 30 before anything else counts, so 50 also asks for most of the
+ * query's terms. Measured on three repositories (2026-11-15): every query
+ * written from a record's own words scored 53 or more for that record, and 59
+ * of 75 queries taken from another repository scored below 50.
+ */
 export const UPSERT_MIN_SIMILARITY = 0.62;
-export const UPSERT_DEFAULT_MIN_SCORE = 32;
+export const UPSERT_DEFAULT_MIN_SCORE = 50;
 
 /**
  * bge-m3 accepts 8,192 tokens and rejects longer input instead of truncating

@@ -1,5 +1,6 @@
 import { SEARCH_LIMIT_MAX, UPSERT_MIN_SIMILARITY } from "./literals";
 import type { FactCheckResult } from "./product/results";
+import { isGenericFile } from "./search";
 
 /**
  * Search-side helpers shared by the API worker and the CLI's local and remote
@@ -157,9 +158,11 @@ export function normalizeSuggestPath(value: string): string {
 export function extractPathTerms(paths: readonly string[]): string[] {
   const terms: string[] = [];
   for (const path of paths) {
-    for (const segment of normalizeSuggestPath(path)
-      .split("/")
-      .filter(Boolean)) {
+    const segments = normalizeSuggestPath(path).split("/").filter(Boolean);
+    // A manifest or lockfile contributes its directories, not its name.
+    for (const segment of isGenericFile(path)
+      ? segments.slice(0, -1)
+      : segments) {
       terms.push(segment, ...segment.split(/[._-]+/).filter(Boolean));
     }
   }

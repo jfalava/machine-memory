@@ -85,6 +85,32 @@ describe("search ranking regressions from the memory usage audit", () => {
     ]);
   });
 
+  it("ranks the better full-text match over a broad, recent, often-updated record", () => {
+    // Both hold every query term. A fixed cap gave both the full-text maximum,
+    // and recency, certainty and update count then put the broad record first.
+    const results = rank("booru upload", [
+      memory({
+        id: 205,
+        content:
+          "Deploy script covers portal, booru frontend, booru backend, router and redirects; upload limits live elsewhere.",
+        ftsRank: -4,
+        ageDays: 5,
+        updateCount: 14,
+      }),
+      memory({
+        id: 245,
+        content: "Booru upload proxy streams the file to the backend.",
+        ftsRank: -9,
+        ageDays: 120,
+        certainty: "inferred",
+      }),
+    ]);
+    expect(results.map((row) => [row.id, row.match_strength])).toEqual([
+      [245, "strong"],
+      [205, "strong"],
+    ]);
+  });
+
   it("prefers the gotcha matching every query term over a busy bootstrap record", () => {
     const results = rank("outfit nix update", [
       memory({

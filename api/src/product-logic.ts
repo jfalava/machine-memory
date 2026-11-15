@@ -1,20 +1,15 @@
 import {
   assessMatch,
-  certaintyPoints,
+  bestFtsRank,
+  scoreCandidate,
   normalizeSuggestPath,
   normalizeTags,
   sqliteDateToMs,
-  exactMatchPoints,
-  ftsRankPoints,
   matchStrengthRank,
   matchText,
-  recencyPoints,
   StoredMemoryRowSchema,
   MemorySummarySchema,
   normalizeStoredMemoryRow,
-  tagMatchPoints,
-  termCoveragePoints,
-  updateCountPoints,
   type MatchAssessment,
   type MatchScope,
   type MemoryRow,
@@ -89,6 +84,12 @@ export function assessRowMatch(
     queryTerms: query.terms,
     identifiers: query.identifiers,
     text: matchText([row.content, row.tags, row.context, ...row.refs]),
+    fields: {
+      content: row.content,
+      tags: row.tags,
+      context: row.context,
+      refs: row.refs.join("\n"),
+    },
     semanticScore,
     scope: query.scope,
   });
@@ -241,18 +242,21 @@ export function scoreMemoryRows(
   rows: readonly FtsRankedMemoryRow[],
   query: MatchQuery,
 ): ScoredRankedRow[] {
+  const best = bestFtsRank(rows.map((row) => row.fts_rank));
   return rows
     .map((row) => {
       const match = assessRowMatch(row, query);
-      const score =
-        ftsRankPoints(row.fts_rank) +
-        termCoveragePoints(match.term_coverage) +
-        exactMatchPoints(match.exact_matches.length) +
-        tagMatchPoints(normalizeTags(row.tags), query.terms) +
-        recencyPoints(sqliteDateToMs(row.updated_at)) +
-        certaintyPoints(row.certainty) +
-        updateCountPoints(row.update_count);
-      return { ...row, ...match, score: Number(score.toFixed(3)) };
+      const { total } = scoreCandidate({
+        ftsRank: row.fts_rank,
+        bestFtsRank: best,
+        match,
+        tags: normalizeTags(row.tags),
+        queryTerms: query.terms,
+        updatedAtMs: sqliteDateToMs(row.updated_at),
+        certainty: row.certainty,
+        memoryType: row.memory_type,
+      });
+      return { ...row, ...match, score: total };
     })
     .sort(
       (left, right) =>
@@ -279,6 +283,8 @@ export function scoredResultRow(
     match_strength: row.match_strength,
     term_coverage: row.term_coverage,
     exact_matches: row.exact_matches,
+    matched_terms: row.matched_terms,
+    matched_in: row.matched_in,
   };
 }
 

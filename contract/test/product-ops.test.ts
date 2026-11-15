@@ -59,7 +59,7 @@ describe("product ops schemas", () => {
       expect(normalized.memory_type).toBe("convention");
       expect(normalized.certainty).toBe("inferred");
       expect(normalized.status).toBe("active");
-      expect(normalized.upsert_threshold).toBe(32);
+      expect(normalized.upsert_threshold).toBe(50);
     }
   });
 
@@ -256,6 +256,8 @@ describe("product ops schemas", () => {
             match_strength: "strong" as const,
             term_coverage: 1,
             exact_matches: [],
+            matched_terms: ["lint"],
+            matched_in: ["content"],
           },
         ],
       },
@@ -313,6 +315,7 @@ describe("product ops schemas", () => {
         repository: "o/r",
         count: 0,
         files: ["src/a.ts"],
+        generic_files: [],
         normalized_path_terms: ["a"],
         derived_terms: ["a"],
         neighborhood: { tags: [], paths: [] },

@@ -2,10 +2,13 @@ import { resolve, relative, sep } from "node:path";
 
 import {
   assessMatch,
+  bestFtsRank,
+  expiredStatusSql,
+  scoreCandidate,
+  type ScoreBreakdown,
   buildFtsQuery,
   canonicalTags,
   CLI_LIMIT_MAX,
-  certaintyPoints,
   extractTerms,
   mergeSuggestCandidates,
   normalizeSuggestPath,
@@ -14,21 +17,15 @@ import {
   RRF_K,
   sqliteDateToMs,
   type FileNeighborhood,
-  exactMatchPoints,
-  ftsRankPoints,
   MATCH_STRENGTHS,
   matchStrengthRank,
   matchText,
   extractQueryIdentifiers,
   orderByMatchStrength,
   premiseQuery,
-  recencyPoints,
   REVIEW_CANDIDATES_LIMIT,
   reviewsDependents,
   SEARCH_LIMIT_DEFAULT,
-  tagMatchPoints,
-  termCoveragePoints,
-  updateCountPoints,
   type MatchAssessment,
   type MatchScope,
   type MatchStrength,
@@ -320,17 +317,6 @@ export const HYBRID_FUSION = {
   k: RRF_K,
 } as const;
 
-export type ScoreBreakdown = {
-  fts_rank: number;
-  term_coverage: number;
-  exact_match: number;
-  tag_match: number;
-  recency: number;
-  certainty: number;
-  update_count: number;
-  total: number;
-};
-
 /** Query terms plus literal identifiers used for absolute match strength. */
 export type SearchMatchQuery = {
   terms: string[];
@@ -358,6 +344,12 @@ export function assessRowMatch(
       stringValue(row.context),
       ...storedStringArray(row.refs),
     ]),
+    fields: {
+      content: stringValue(row.content),
+      tags: stringValue(row.tags),
+      context: stringValue(row.context),
+      refs: storedStringArray(row.refs).join("\n"),
+    },
     semanticScore,
     scope: query.scope,
   });
@@ -368,6 +360,8 @@ function matchFields(match: MatchAssessment): JsonObject {
     match_strength: match.match_strength,
     term_coverage: match.term_coverage,
     exact_matches: [...match.exact_matches],
+    matched_terms: [...match.matched_terms],
+    matched_in: [...match.matched_in],
   };
 }
 
@@ -401,40 +395,18 @@ function scoreBreakdown(
   row: JsonObject,
   queryTokens: string[],
   match: MatchAssessment,
+  best: number,
 ): ScoreBreakdown {
-  const ftsRank = ftsRankPoints(jsonNumber(row.fts_rank) ?? 0);
-  const termCoverage = termCoveragePoints(match.term_coverage);
-  const exactMatch = exactMatchPoints(match.exact_matches.length);
-  const tagMatch = tagMatchPoints(
-    parseTags(stringValue(row.tags)),
-    queryTokens,
-  );
-  const recency = recencyPoints(sqliteDateToMs(stringValue(row.updated_at)));
-  const certainty = certaintyPoints(
-    normalizeCertaintyValue(row.certainty, "speculative"),
-  );
-  const updateCount = updateCountPoints(jsonNumber(row.update_count) ?? 0);
-  const total = Number(
-    (
-      ftsRank +
-      termCoverage +
-      exactMatch +
-      tagMatch +
-      recency +
-      certainty +
-      updateCount
-    ).toFixed(3),
-  );
-  return {
-    fts_rank: ftsRank,
-    term_coverage: termCoverage,
-    exact_match: exactMatch,
-    tag_match: tagMatch,
-    recency,
-    certainty,
-    update_count: updateCount,
-    total,
-  };
+  return scoreCandidate({
+    ftsRank: jsonNumber(row.fts_rank) ?? 0,
+    bestFtsRank: best,
+    match,
+    tags: parseTags(stringValue(row.tags)),
+    queryTerms: queryTokens,
+    updatedAtMs: sqliteDateToMs(stringValue(row.updated_at)),
+    certainty: normalizeCertaintyValue(row.certainty, "speculative"),
+    memoryType: stringValue(row.memory_type),
+  });
 }
 
 export function scoreRowsWithDetails(
@@ -448,9 +420,12 @@ export function scoreRowsWithDetails(
     scope: options.scope,
   };
   const normalized = rows.map((row) => normalizeSqliteRow(row));
+  const best = bestFtsRank(
+    normalized.map((row) => jsonNumber(row.fts_rank) ?? 0),
+  );
   const withScore = normalized.map((row) => {
     const match = assessRowMatch(row, query);
-    const breakdown = scoreBreakdown(row, queryTokens, match);
+    const breakdown = scoreBreakdown(row, queryTokens, match, best);
     const scored =
       jsonObject({
         ...row,
@@ -458,7 +433,7 @@ export function scoreRowsWithDetails(
         score: breakdown.total,
       }) ?? {};
     if (options.explainScore) {
-      Object.assign(scored, { score_breakdown: breakdown });
+      Object.assign(scored, { score_breakdown: { ...breakdown } });
     }
     return scored;
   });
@@ -628,11 +603,19 @@ export function applySqlFilters(
   clauses: string[],
   params: (string | number)[],
   filters: CommonFilters,
-  options: { defaultActiveOnly?: boolean; columnPrefix?: string } = {},
+  options: {
+    defaultActiveOnly?: boolean;
+    columnPrefix?: string;
+    /** Searches leave expired status memories out unless they ask for status. */
+    hideExpiredStatus?: boolean;
+  } = {},
 ) {
   const prefix = options.columnPrefix ?? "";
   clauses.push(`${prefix}repository = ?`);
   params.push(repositoryForCurrentDirectory());
+  if (options.hideExpiredStatus && filters.memoryType !== "status") {
+    clauses.push(`NOT ${expiredStatusSql(prefix)}`);
+  }
   if (filters.tag) {
     clauses.push(`${prefix}tags LIKE ?`);
     params.push(`%${filters.tag}%`);
@@ -1097,6 +1080,7 @@ export function queryNeighborhoodMatches(
   applySqlFilters(clauses, params, filters, {
     defaultActiveOnly: true,
     columnPrefix: "m.",
+    hideExpiredStatus: true,
   });
   return database
     .all(

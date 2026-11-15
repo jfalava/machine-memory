@@ -79,6 +79,8 @@ const SCORED_ROW = {
   match_strength: "strong",
   term_coverage: 1,
   exact_matches: [],
+  matched_terms: ["index"],
+  matched_in: ["content"],
 };
 
 const FULL_ROW = {
@@ -240,6 +242,7 @@ const PASS_THROUGH_CASES: ReadonlyArray<
       repository: "o/r",
       count: 1,
       files: ["src/index.ts"],
+      generic_files: [],
       normalized_path_terms: ["src", "index"],
       derived_terms: ["index"],
       neighborhood: { tags: ["area:src"], paths: ["src"] },

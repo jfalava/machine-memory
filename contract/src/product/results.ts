@@ -26,6 +26,8 @@ export const ScoredMemoryRowSchema = Schema.Struct({
   match_strength: MatchStrengthSchema,
   term_coverage: Schema.Finite,
   exact_matches: Schema.Array(Schema.String),
+  matched_terms: Schema.Array(Schema.String),
+  matched_in: Schema.Array(Schema.String),
 });
 export type ScoredMemoryRow = typeof ScoredMemoryRowSchema.Type;
 
@@ -157,6 +159,8 @@ export const MemorySuggestResultSchema = Schema.Struct({
   repository: Schema.String,
   count: Schema.Finite,
   files: Schema.Array(Schema.String),
+  /** Manifests and lockfiles among the files; their names are not searched. */
+  generic_files: Schema.Array(Schema.String),
   normalized_path_terms: Schema.Array(Schema.String),
   derived_terms: Schema.Array(Schema.String),
   neighborhood: Schema.Struct({

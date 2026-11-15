@@ -69,6 +69,35 @@ describe("product search ranking", () => {
     ]);
   });
 
+  it("ranks the better full-text match over a broad, recent, often-updated record", () => {
+    // Both hold every query term. A fixed cap gave both the full-text maximum,
+    // and recency, certainty and update count then put the broad record first.
+    const results = scoreMemoryRows(
+      [
+        ranked({
+          id: 205,
+          content:
+            "Deploy script covers portal, booru frontend, booru backend, router and redirects; upload limits live elsewhere.",
+          ftsRank: -4,
+          ageDays: 5,
+          updateCount: 14,
+        }),
+        ranked({
+          id: 245,
+          content: "Booru upload proxy streams the file to the backend.",
+          ftsRank: -9,
+          ageDays: 120,
+          certainty: "inferred",
+        }),
+      ],
+      { terms: extractTerms("booru upload"), identifiers: [] },
+    );
+    expect(results.map((row) => [row.id, row.match_strength])).toEqual([
+      [245, "strong"],
+      [205, "strong"],
+    ]);
+  });
+
   it("matches suggested file paths literally in refs", () => {
     const [row] = scoreMemoryRows(
       [
@@ -101,11 +130,15 @@ describe("product search ranking", () => {
       match_strength: "weak",
       term_coverage: 0.5,
       exact_matches: [],
+      matched_terms: [],
+      matched_in: [],
     } as const;
     const strong = {
       match_strength: "strong",
       term_coverage: 0.5,
       exact_matches: [],
+      matched_terms: [],
+      matched_in: [],
     } as const;
     expect(strongerMatch(weak, strong)).toBe(strong);
     expect(strongerMatch(strong, weak)).toBe(strong);

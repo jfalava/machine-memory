@@ -28,9 +28,16 @@ uses: each list adds `1 / (60 + rank)` to a memory's `hybrid_score`, so ranks
 are compared instead of unrelated score scales. Hybrid results also include
 `fts_score` and `semantic_score`.
 
-Full-text ranking is led by relevance: the FTS rank, the share of query terms
-the memory contains, literal identifier matches, and tag matches. Recency,
-certainty, and update count only break ties.
+Full-text ranking is led by relevance: the FTS rank relative to the best
+candidate of the same search, the share of query terms the memory contains,
+literal identifier matches, and tag matches. Recency and certainty add at most
+five points between them, so they order near-ties and nothing else. A status
+memory gives ten points back, so it ranks below a durable memory that matches
+as well.
+
+A status memory past its expiry is left out of `query`, `suggest` and `sweep`
+unless you pass `--type status`. `list` and `get` still return it, and
+[`doctor`](/machine/doctor) reports it as `expired_status`.
 
 ## Match strength
 
@@ -45,7 +52,9 @@ matched well. Every result therefore carries an absolute `match_strength`:
 
 Results are ordered strong, then weak, then none, keeping score order inside
 each tier. `exact_matches` lists the identifiers found and `term_coverage` the
-fraction of query terms found. The output reports `no_strong_match: true`
+fraction of query terms found. The full output also carries `matched_terms`,
+the query terms the memory holds, and `matched_in`, the fields that hold them
+(`content`, `tags`, `context` or `refs`). The output reports `no_strong_match: true`
 when nothing is strong: treat the results as loosely related candidates rather
 than an answer.
 

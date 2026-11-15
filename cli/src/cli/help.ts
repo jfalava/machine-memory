@@ -63,6 +63,10 @@ export function helpPayload() {
         "Query identifiers (paths, flags, snake/kebab/camel case, dotted or tag-like tokens) or suggested file paths found literally in the memory.",
       term_coverage:
         "Fraction of distinct query terms found in the memory's content, tags, context, or refs.",
+      matched_terms:
+        "Full output only: the query terms found in the memory. matched_in lists the fields that hold them or an exact match: content, tags, context or refs.",
+      generic_files:
+        "suggest/sweep: the manifests and lockfiles among the files. Their names were not searched, so an empty result for them does not mean nothing is recorded.",
       evidence:
         "Kinds of evidence behind a claim (see enums.evidence); [] means unspecified. add/update reject --certainty verified without at least one kind. Legacy verified rows keep their certainty until re-asserted; doctor lists them as verified_without_evidence. Not embedded.",
       validation_gaps:
@@ -105,7 +109,7 @@ export function helpPayload() {
       },
       query: {
         usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--semantic|--hybrid] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
-        notes: `--limit defaults to ${SEARCH_LIMIT_DEFAULT}; the most is ${CLI_LIMIT_MAX}, or ${SEARCH_LIMIT_MAX} with --semantic or --hybrid. suggest and sweep use the same default.`,
+        notes: `--limit defaults to ${SEARCH_LIMIT_DEFAULT}; the most is ${CLI_LIMIT_MAX}, or ${SEARCH_LIMIT_MAX} with --semantic or --hybrid. suggest and sweep use the same default. query, suggest and sweep leave out a status memory past its expiry unless --type status is given; list and get still return it, and doctor reports it as expired_status.`,
       },
       list: {
         usage: `list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>] [--offset <n>] [--by <writer> | --mine]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -143,6 +147,8 @@ export function helpPayload() {
       delete: { usage: `delete <id|id,id,...>${DATABASE_BACKEND_USAGE}` },
       suggest: {
         usage: `suggest (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        notes:
+          "Manifests and lockfiles (package.json, bunfig.toml, *.lock) are named in memories about unrelated things. suggest searches their directories, not their names, and lists them in generic_files. Use query to find a memory about such a file.",
       },
       sweep: {
         usage: `sweep (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--query <search_term>] [--tags <tag>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -307,6 +313,7 @@ const HELP_FOCUS = {
       "no_strong_match",
       "exact_matches",
       "term_coverage",
+      "matched_terms",
       "snippet",
       "evidence",
     ],
@@ -320,6 +327,8 @@ const HELP_FOCUS = {
       "no_strong_match",
       "exact_matches",
       "term_coverage",
+      "matched_terms",
+      "generic_files",
       "snippet",
       "evidence",
     ],

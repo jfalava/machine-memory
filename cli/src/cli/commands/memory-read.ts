@@ -1,5 +1,7 @@
 import {
   FTS_CANDIDATE_LIMIT,
+  isExpiredStatus,
+  isGenericFile,
   SEARCH_LIMIT_MAX,
   SEARCH_SCORE_WEIGHTS,
   buildFtsQuery,
@@ -9,6 +11,7 @@ import {
   extractTerms,
   fileIdentifiers,
   semanticCandidateCount,
+  sqliteDateToMs,
   type FileNeighborhood,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
@@ -65,6 +68,8 @@ type QueryResults = {
 
 type SuggestSnapshot = {
   files: string[];
+  /** Manifests and lockfiles among the files; their names are not searched. */
+  genericFiles: string[];
   normalizedPathTerms: string[];
   suggestTerms: string[];
   neighborhood: FileNeighborhood;
@@ -102,11 +107,13 @@ function scoredEnvelope(
     scope: JsonObject;
     /** Fields only the full output carries, such as the derived search terms. */
     detail?: JsonObject;
+    /** Fields every output mode carries, because they explain the results. */
+    always?: JsonObject;
     scoreWeights?: JsonObject | undefined;
     summarize?: (row: JsonObject) => JsonObject;
   },
 ): JsonObject {
-  const extras: JsonObject = {};
+  const extras: JsonObject = { ...options.always };
   if (!hasMinimalOutput(commandCtx.outputMode)) {
     Object.assign(extras, options.detail);
   }
@@ -125,6 +132,12 @@ function termMatchQuery(term: string): SearchMatchQuery {
     terms: extractTerms(term),
     identifiers: extractQueryIdentifiers(term),
   };
+}
+
+function genericFilesNote(snapshot: SuggestSnapshot): JsonObject {
+  return snapshot.genericFiles.length === 0
+    ? {}
+    : { generic_files: snapshot.genericFiles };
 }
 
 function suggestMatchQuery(snapshot: SuggestSnapshot): SearchMatchQuery {
@@ -154,6 +167,7 @@ export function fetchQueryResults(
   applySqlFilters(clauses, params, filters, {
     defaultActiveOnly: true,
     columnPrefix: "m.",
+    hideExpiredStatus: true,
   });
 
   return database
@@ -176,6 +190,16 @@ export function fetchQueryResults(
         filters,
       })),
     );
+}
+
+function rowIsExpiredStatus(row: JsonObject): boolean {
+  return isExpiredStatus(
+    {
+      memory_type: stringValue(row.memory_type),
+      expires_after_days: jsonNumber(row.expires_after_days) ?? null,
+    },
+    sqliteDateToMs(stringValue(row.updated_at)),
+  );
 }
 
 function fetchSemanticCandidates(
@@ -252,6 +276,9 @@ function fetchSemanticCandidates(
               .toLowerCase()
               .includes(filters.tag.toLowerCase())
           ) {
+            continue;
+          }
+          if (filters.memoryType !== "status" && rowIsExpiredStatus(row)) {
             continue;
           }
           results.push({
@@ -427,6 +454,7 @@ export function buildSuggestSnapshot(flags: CommandFlags): SuggestSnapshot {
   ]);
   return {
     files,
+    genericFiles: files.filter(isGenericFile),
     normalizedPathTerms,
     suggestTerms,
     neighborhood,
@@ -448,6 +476,7 @@ function fetchFtsSuggestResults(
   applySqlFilters(ftsClauses, ftsParams, snapshot.filters, {
     defaultActiveOnly: true,
     columnPrefix: "m.",
+    hideExpiredStatus: true,
   });
   return requireDatabase(commandCtx)
     .all(
@@ -507,6 +536,7 @@ function printSuggestResults(
     results,
     scoredEnvelope(commandCtx, results, {
       scope: options.scope,
+      always: genericFilesNote(snapshot),
       detail: {
         files: snapshot.files,
         normalized_files: snapshot.files,
@@ -576,6 +606,7 @@ function fetchListScoredResults(
   applySqlFilters(clauses, params, filters, {
     defaultActiveOnly: true,
     columnPrefix: "m.",
+    hideExpiredStatus: true,
   });
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return requireDatabase(commandCtx)
@@ -712,6 +743,7 @@ export function handleSweepCommand(commandCtx: CommandContext) {
         results,
         scoredEnvelope(commandCtx, results, {
           scope,
+          always: genericFilesNote(snapshot),
           detail: {
             files: snapshot.files,
             normalized_files: snapshot.files,

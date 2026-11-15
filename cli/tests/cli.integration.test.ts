@@ -1657,6 +1657,63 @@ describe("CLI integration", () => {
     );
   });
 
+  it("leaves an expired status out of query and suggest, not out of list", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy pipeline applies migrations before the workers",
+      "--type",
+      "decision",
+      "--quiet",
+    );
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy pipeline migration is half finished",
+      "--type",
+      "status",
+      "--expires-after-days",
+      "3",
+      "--create-new",
+      "--quiet",
+    );
+    const backdated = await execBun(
+      [
+        "-e",
+        `import { Database } from "bun:sqlite";
+const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE memories SET updated_at = datetime('now', '-4 days') WHERE memory_type = 'status'"); db.close();`,
+      ],
+      { env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath } },
+    );
+    expect(backdated.code).toBe(0);
+    const ids = async (...args: string[]) =>
+      (await runCliRows(cwd, dbPath, ...args, "--json-min")).rows
+        .map((row) => Number(row.id))
+        .sort((left, right) => left - right);
+    expect(await ids("query", "deploy pipeline")).toEqual([1]);
+    expect(await ids("query", "deploy pipeline", "--type", "status")).toEqual([
+      2,
+    ]);
+    expect(await ids("suggest", "--files", "deploy/pipeline.ts")).toEqual([1]);
+    expect(await ids("list")).toEqual([1, 2]);
+
+    const generic = await runCli(
+      cwd,
+      dbPath,
+      "suggest",
+      "--files",
+      "package.json,bun.lock",
+      "--json-min",
+    );
+    expect(generic.json).toMatchObject({
+      count: 0,
+      generic_files: ["package.json", "bun.lock"],
+    });
+  });
+
   it("flags legacy verified records without evidence in doctor", async () => {
     const { cwd, dbPath } = await createProject();
     await runCli(cwd, dbPath, "add", "Legacy verified claim", "--quiet");
