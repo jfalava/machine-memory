@@ -76,6 +76,13 @@ describe("write guards", () => {
         "Keycap styling lives in src/ui/Keycap.tsx. Built with bun@1.4.0, MAX_KEYS=16, released 2026-12-01 as v0.23.0.",
       ),
     ).toEqual(["shadow-inset"]);
+    // Alternatives written as a|b are still present when written apart.
+    expect(
+      droppedNames(
+        "reindex takes --failed-only|--unindexed|--all-repos.",
+        "reindex takes --failed-only, --unindexed or --every-repo.",
+      ),
+    ).toEqual(["--all-repos"]);
   });
 
   it("refuses an update that drops a name no other record carries", () => {

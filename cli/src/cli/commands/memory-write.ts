@@ -1367,17 +1367,24 @@ function runPlainAdd(
 /**
  * After a thread's first write to a repository, says once on stderr how to
  * review everything the thread wrote. A writer without a thread has nothing
- * to scope that review to, and later writes stay quiet.
+ * to scope that review to, and later writes stay quiet: either the thread has
+ * touched a second memory, or history holds a revision it wrote.
  */
 function remindOfCheckpoint(commandCtx: CommandContext) {
   const writer = currentWriter();
   if (!writer.includes(":") || hasFlag(commandCtx.flags, "--dry-run")) {
     return Effect.void;
   }
+  const repository = repositoryForCurrentDirectory();
   return requireDatabase(commandCtx)
     .get(
-      "SELECT COUNT(*) AS written FROM memories WHERE repository = ? AND (source_agent = ? OR last_updated_by = ?)",
-      [repositoryForCurrentDirectory(), writer, writer],
+      `SELECT
+        (SELECT COUNT(*) FROM memories
+          WHERE repository = ? AND (source_agent = ? OR last_updated_by = ?))
+        + (SELECT COUNT(*) FROM memory_history
+          WHERE repository = ? AND (source_agent = ? OR last_updated_by = ?))
+        AS written`,
+      [repository, writer, writer, repository, writer, writer],
     )
     .pipe(
       Effect.map((row) => {
@@ -1981,7 +1988,7 @@ function printDeprecateResults(params: {
   );
   const { outputMode } = commandCtx;
   warnReconciliation(
-    `Deprecating ${rows.map((row) => `#${Number(row.id)}`).join(", ")}:`,
+    `Deprecating ${rows.map((row) => `#${Number(row.id)}`).join(", ")}`,
     { id: 0, reviewCandidates: params.reviewCandidates },
   );
   if (targetIds.length === 1 && !rows.length) {

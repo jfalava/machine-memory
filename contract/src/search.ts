@@ -88,7 +88,8 @@ function isIdentifierToken(token: string): boolean {
  */
 export function extractQueryIdentifiers(query: string): string[] {
   const identifiers: string[] = [];
-  for (const raw of query.split(/[\s,]+/)) {
+  // `--local|--remote` lists alternatives; each one is its own identifier.
+  for (const raw of query.split(/[\s,|]+/)) {
     const token = raw.replace(IDENTIFIER_EDGE_PUNCTUATION, "");
     const lower = token.toLowerCase();
     if (isIdentifierToken(token) && !identifiers.includes(lower)) {

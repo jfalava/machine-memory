@@ -51,6 +51,12 @@ describe("search match assessment", () => {
       "sync:mcp",
     ]);
     expect(extractQueryIdentifiers("admin shortcuts 2026")).toEqual([]);
+    // A list of alternatives names each one, not one joined token.
+    expect(
+      extractQueryIdentifiers(
+        "reindex (--failed-only|--unindexed|--all-repos)",
+      ),
+    ).toEqual(["--failed-only", "--unindexed", "--all-repos"]);
   });
 
   it("derives file identifiers without generic entry-point basenames", () => {

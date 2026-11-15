@@ -24,6 +24,7 @@ import {
   commandErrorForRender,
   humanCommandFailureOutput,
 } from "./human-error";
+import { protectDashedText } from "./runtime/command";
 import {
   printCommandOutput,
   prettyOutput,
@@ -348,7 +349,7 @@ function renderError(
 export function runCli(rawArgs: ReadonlyArray<string>) {
   let args: string[];
   try {
-    args = applyRepositoryFlags(rawArgs);
+    args = protectDashedText(applyRepositoryFlags(rawArgs));
   } catch (cause) {
     return Effect.sync(() => {
       printJson({

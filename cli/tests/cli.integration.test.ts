@@ -1706,6 +1706,53 @@ describe("CLI integration", () => {
       "area:ops",
     );
     expect(other.stderr).toContain(reminder);
+    // Changing that one memory again is not a first write.
+    const again = await runCliAs(
+      project,
+      "codex:9",
+      "update",
+      "1",
+      "--tags",
+      "area:deploy",
+    );
+    expect(again.stderr).not.toContain(reminder);
+    const retired = await runCliAs(project, "codex:9", "deprecate", "1");
+    expect(retired.stderr).not.toContain(reminder);
+  });
+
+  it("takes content and flag values that start with a dash", async () => {
+    const { cwd, dbPath } = await createProject();
+    const content =
+      "--remote is required on every database command in this repository.";
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      content,
+      "--context",
+      "--local stays for scratch databases",
+      "--tags",
+      "area:cli",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const stored = await getMemory(cwd, dbPath, "1");
+    expect(stored.json.content).toBe(content);
+    expect(stored.json.context).toBe("--local stays for scratch databases");
+    expect(stored.json.tags).toBe("area:cli");
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1",
+      "-r is not a short form of --remote; every database command spells it out.",
+      "--quiet",
+    );
+    expect(updated.code).toBe(0);
+    expect((await getMemory(cwd, dbPath, "1")).json.content).toContain(
+      "-r is not a short form",
+    );
   });
 
   it("reads several repositories with --repo a,b and writes to one only", async () => {
@@ -1951,6 +1998,9 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     });
 
     const deprecated = await runCli(cwd, dbPath, "deprecate", premiseId);
+    expect(deprecated.stderr).toContain(
+      `Deprecating #${premiseId}: 1 record(s) may rely on the old content: #${dependentId}.`,
+    );
     expect(deprecated.json.review_candidates).toEqual([
       expect.objectContaining({ id: dependentId, match_strength: "strong" }),
     ]);
