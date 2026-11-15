@@ -286,6 +286,11 @@ export const MemoryDoctorResultSchema = Schema.Struct({
   count: Schema.Finite,
   findings: Schema.Array(MemoryDoctorFindingSchema),
   counts_by_kind: Schema.Record(Schema.String, Schema.Finite),
+  /**
+   * Active memories semantic search cannot find, because their vector predates
+   * the current index. 0 on a local database, which has no index.
+   */
+  unindexed: Schema.Finite,
 });
 export type MemoryDoctorResult = typeof MemoryDoctorResultSchema.Type;
 export const MemoryDoctorSuccessSchema = okResponseSchema(

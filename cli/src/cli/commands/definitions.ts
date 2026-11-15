@@ -354,8 +354,20 @@ const checkpointCommand = effectCommand(
 
 const doctorCommand = effectCommand(
   "doctor",
-  { only: stringFlag("only"), since: stringFlag("since"), ...outputConfig() },
-  [stringSpec("only"), stringSpec("since"), ...outputSpecs],
+  {
+    only: stringFlag("only"),
+    since: stringFlag("since"),
+    limit: stringFlag("limit"),
+    offset: stringFlag("offset"),
+    ...outputConfig(),
+  },
+  [
+    stringSpec("only"),
+    stringSpec("since"),
+    stringSpec("limit"),
+    stringSpec("offset"),
+    ...outputSpecs,
+  ],
   "read",
   handleDoctorCommand,
 );
@@ -431,12 +443,14 @@ const reindexCommand = effectCommand(
   "reindex",
   {
     "failed-only": booleanFlag("failed-only"),
+    unindexed: booleanFlag("unindexed"),
     id: stringFlag("id"),
     "all-repos": booleanFlag("all-repos"),
     ...outputConfig(),
   },
   [
     booleanSpec("failed-only"),
+    booleanSpec("unindexed"),
     stringSpec("id"),
     booleanSpec("all-repos"),
     ...outputSpecs,

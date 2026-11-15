@@ -34,6 +34,14 @@ keeps findings that involve a memory changed since that date, so a
 review can look at new findings without the backlog. `--json-min` prints
 `counts_by_kind` and `ids_by_kind` instead of the findings.
 
+The full output lists 50 findings at a time. `page` reports `offset`, `limit`,
+`total` and `has_more`; pass `--limit <n>` and `--offset <n>` to move through
+them. `summary` always counts every finding, whatever the page.
+
+With `--remote`, `unindexed` counts the active memories semantic search
+cannot find because their vector predates the current index, with the first
+ids and the command that queues them: `machine-memory reindex --unindexed`.
+
 `gotcha_overlap` pairs active gotchas that name at least two of the same
 identifiers, such as a package version and a patched path. They usually repeat
 one workaround: consolidate it into one record, keep any version-specific

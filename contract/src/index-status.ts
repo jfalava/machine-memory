@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 
 import type { JsonValue } from "./json";
+import { EMBEDDING_MODEL } from "./literals";
 
 /**
  * `next_attempt_at` of a `memory_vector_sync` row the drain will not pick up
@@ -21,6 +22,12 @@ export const IndexStatusSchema = Schema.Struct({
   parked: Schema.Finite,
   /** Seconds the oldest pending or retrying memory has waited; null when unknown. */
   oldest_pending_seconds: Schema.NullOr(Schema.Finite),
+  /**
+   * Active memories with nothing queued and no vector from the current
+   * embedding model, so semantic search cannot find them. They were indexed
+   * before the index was replaced; `reindex --unindexed` queues them.
+   */
+  unindexed: Schema.Finite,
   /** Failed memories grouped by error, largest group first. */
   failures: Schema.Array(
     Schema.Struct({
@@ -35,6 +42,25 @@ export const IndexStatusSchema = Schema.Struct({
 export type IndexStatus = typeof IndexStatusSchema.Type;
 
 /**
+ * True for a `memory_vector_sync` row, aliased `s`, whose latest write was
+ * delivered with another embedding model than the one bound to the parameter.
+ * Join `memories` and keep active rows: only those have a vector.
+ */
+export const UNINDEXED_SQL =
+  "s.generation = s.delivered_generation AND s.delivered_model IS NOT ?";
+
+/** The ids of a repository's unindexed memories, for doctor and `reindex --unindexed`. */
+export function unindexedIdsQuery(repository: string) {
+  return {
+    sql: `SELECT s.memory_id AS id FROM memory_vector_sync s
+      JOIN memories m ON m.id = s.memory_id
+      WHERE m.status = 'active' AND ${UNINDEXED_SQL} AND s.repository = ?
+      ORDER BY s.memory_id`,
+    params: [EMBEDDING_MODEL, repository],
+  };
+}
+
+/**
  * The two queries behind an index status: one row of counts, then the failure
  * groups. `repository` undefined covers every repository.
  */
@@ -47,12 +73,16 @@ export function indexStatusQueries(repository: string | undefined) {
         COALESCE(SUM(last_error IS NULL), 0) AS pending,
         COALESCE(SUM(last_error IS NOT NULL AND next_attempt_at < ?), 0) AS retrying,
         COALESCE(SUM(last_error IS NOT NULL AND next_attempt_at >= ?), 0) AS parked,
-        MIN(CASE WHEN next_attempt_at < ? AND queued_at > 0 THEN queued_at END) AS oldest_queued_at
+        MIN(CASE WHEN next_attempt_at < ? AND queued_at > 0 THEN queued_at END) AS oldest_queued_at,
+        (SELECT COUNT(*) FROM memory_vector_sync s JOIN memories m ON m.id = s.memory_id
+          WHERE m.status = 'active' AND ${UNINDEXED_SQL}${repository === undefined ? "" : " AND s.repository = ?"}) AS unindexed
         FROM memory_vector_sync WHERE generation > delivered_generation${scope}`,
       params: [
         VECTOR_SYNC_NEVER,
         VECTOR_SYNC_NEVER,
         VECTOR_SYNC_NEVER,
+        EMBEDDING_MODEL,
+        ...scopeParams,
         ...scopeParams,
       ],
     },
@@ -72,6 +102,7 @@ const CountsRowSchema = Schema.Struct({
   retrying: Schema.Finite,
   parked: Schema.Finite,
   oldest_queued_at: Schema.NullOr(Schema.Finite),
+  unindexed: Schema.Finite,
 });
 const FailureRowSchema = Schema.Struct({
   error: Schema.String,
@@ -95,6 +126,7 @@ export function indexStatusFromRows(
       counts.oldest_queued_at === null
         ? null
         : Math.max(0, Math.round((now - counts.oldest_queued_at) / 1000)),
+    unindexed: counts.unindexed,
     failures: failureRows.map((raw) => {
       const row = Schema.decodeUnknownSync(FailureRowSchema)(raw);
       return {

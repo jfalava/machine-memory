@@ -9,6 +9,6 @@ export const SIZE_USAGE =
   "size (<content> | --from-file <path>) [--tags <tags>] [--context <context>] [--local|--remote]";
 
 export const REINDEX_USAGE =
-  "reindex [--failed-only] [--id <id|id,id,...>] [--all-repos] --remote [--brief|--json-min|--quiet]";
+  "reindex [--failed-only | --unindexed] [--id <id|id,id,...>] [--all-repos] --remote [--brief|--json-min|--quiet]";
 export const INDEX_USAGE =
   "index status [--all-repos] --remote [--brief|--json-min|--quiet]";

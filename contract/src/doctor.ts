@@ -622,6 +622,7 @@ export function analyzeMemoryDoctor(
   repository: string,
   storedRows: readonly JsonObject[],
   now: number = Date.now(),
+  unindexed = 0,
 ): MemoryDoctorResult {
   const rows = doctorRows(storedRows);
   const findings = [
@@ -645,5 +646,6 @@ export function analyzeMemoryDoctor(
     count: findings.length,
     findings,
     counts_by_kind: countsByKind,
+    unindexed,
   };
 }

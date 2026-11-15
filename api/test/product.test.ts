@@ -80,6 +80,7 @@ beforeAll(async () => {
     "0006_memory_evidence_triggers",
     "0007_embedding_budget",
     "0008_vector_sync_queue",
+    "0009_vector_sync_model",
   ]) {
     await applyMigration(name);
   }
@@ -1343,6 +1344,7 @@ test("a memory that cannot be embedded is parked, reported by stats, and re-queu
     retrying: 0,
     parked: 1,
     oldest_pending_seconds: null,
+    unindexed: 0,
     failures: [
       {
         error: "Memory is over by 1 bytes of 2,000.",
@@ -1364,6 +1366,87 @@ test("a memory that cannot be embedded is parked, reported by stats, and re-queu
   });
   await drain(now + 700_000);
   expect(await job(id)).toMatchObject({ delivered_generation: 3, attempts: 0 });
+});
+
+test("an active memory whose vector predates the current index is unindexed until it is queued again", async () => {
+  const stale = await insert("indexed with the previous model");
+  const legacy = await insert("indexed before the model was recorded");
+  const fresh = await insert("indexed with the current model");
+  const inactive = await insert("deprecated, so it has no vector");
+  await product("deprecate", { ids: [inactive] });
+  const now = Date.now();
+  await drain(now);
+  expect(await job(fresh)).toMatchObject({
+    delivered_model: "@cf/baai/bge-m3",
+  });
+  const deliveredWith = (model: string | null, id: number) =>
+    db
+      .prepare(
+        "UPDATE memory_vector_sync SET delivered_model = ? WHERE memory_id = ?",
+      )
+      .bind(model, id)
+      .run();
+  await deliveredWith("@cf/baai/bge-base-en-v1.5", stale);
+  await deliveredWith(null, legacy);
+  await deliveredWith("@cf/baai/bge-base-en-v1.5", inactive);
+
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 0,
+    unindexed: 2,
+  });
+  expect((await product("doctor")).result.unindexed).toBe(2);
+
+  // What `reindex --unindexed` does: queue the write again.
+  await db
+    .prepare(
+      "UPDATE memory_vector_sync SET generation = generation + 1, next_attempt_at = 0 WHERE memory_id IN (?, ?)",
+    )
+    .bind(stale, legacy)
+    .run();
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 2,
+    unindexed: 0,
+  });
+  await drain(now + 120_000);
+  expect(await job(stale)).toMatchObject({
+    delivered_model: "@cf/baai/bge-m3",
+  });
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 0,
+    unindexed: 0,
+  });
+});
+
+test("the model migration marks only writes queued and delivered since the queue migration", async () => {
+  const delivered = await insert("queued and delivered on the current index");
+  const older = await insert("delivered before queued_at existed");
+  const pending = await insert("queued, not delivered yet");
+  const state = (id: number, sets: string) =>
+    db
+      .prepare(
+        `UPDATE memory_vector_sync SET delivered_model = NULL, ${sets} WHERE memory_id = ?`,
+      )
+      .bind(id)
+      .run();
+  await state(
+    delivered,
+    "delivered_generation = generation, queued_at = 1000, last_delivered_at = 2000",
+  );
+  await state(
+    older,
+    "delivered_generation = generation, queued_at = 0, last_delivered_at = 2000",
+  );
+  await state(pending, "queued_at = 1000, last_delivered_at = 500");
+  const sql = await readFile(
+    new URL("../../iac/migrations/0009_vector_sync_model.sql", import.meta.url),
+    "utf8",
+  );
+  const backfill = sql.replace(/--[^\n]*/g, "").split(";")[1];
+  expect(backfill).toContain("UPDATE memory_vector_sync");
+  await db.prepare(backfill!).run();
+  expect((await job(delivered))?.delivered_model).toBe("@cf/baai/bge-m3");
+  expect((await job(older))?.delivered_model).toBeNull();
+  expect((await job(pending))?.delivered_model).toBeNull();
 });
 
 test("stats reports a failing delivery as retrying with its error", async () => {

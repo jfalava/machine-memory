@@ -195,6 +195,7 @@ const PASS_THROUGH_CASES: ReadonlyArray<
         },
       ],
       counts_by_kind: { exact_duplicate: 1 },
+      unindexed: 4,
     },
   ],
   [
@@ -218,6 +219,7 @@ const PASS_THROUGH_CASES: ReadonlyArray<
         retrying: 0,
         parked: 0,
         oldest_pending_seconds: 12,
+        unindexed: 3,
         failures: [],
       },
     },

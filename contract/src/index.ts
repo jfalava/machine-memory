@@ -12,6 +12,8 @@ export {
   IndexStatusSchema,
   indexStatusFromRows,
   indexStatusQueries,
+  UNINDEXED_SQL,
+  unindexedIdsQuery,
   VECTOR_SYNC_NEVER,
   type IndexStatus,
 } from "./index-status";

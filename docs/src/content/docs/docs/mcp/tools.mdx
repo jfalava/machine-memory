@@ -69,7 +69,7 @@ user as `mcp:<login>`.
 ### Maintenance
 
 - `memory_doctor` audits active memories and returns typed findings with every involved id. Findings are suggestions: review them semantically before writing.
-- `memory_stats` reports aggregate status, type, certainty, tag, and age data for one repository. Its `index` field reports how many records are `pending`, `retrying` or `parked` in the semantic index and the failures grouped by error.
+- `memory_stats` reports aggregate status, type, certainty, tag, and age data for one repository. Its `index` field reports how many records are `pending`, `retrying` or `parked` in the semantic index, how many are `unindexed` (active records whose vector predates the current index), and the failures grouped by error.
 - `memory_gc` is always a dry run. It returns active status memories whose `expires_after_days` window has elapsed.
 - `memory_deprecate` accepts `ids` and optional `superseded_by`. It preserves the records and re-syncs their vector metadata.
 - `memory_delete_many` accepts one to 100 explicit `ids`. It is permanent and echoes `deleted_from`, `deleted_ids`, and `not_found`.

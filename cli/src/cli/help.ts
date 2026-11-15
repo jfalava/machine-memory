@@ -154,9 +154,9 @@ export function helpPayload() {
         usage: `sweep (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--query <search_term>] [--tags <tag>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       doctor: {
-        usage: `doctor [--only <kind,kind>] [--since <ISO date>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `doctor [--only <kind,kind>] [--since <ISO date>] [--limit <n>] [--offset <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
         notes:
-          "--only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. canonical_thread_overlap and similar_tags describe the collection, not a defect in one record: they are counted in informational_counts and listed only with --only. verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
+          "The full output lists 50 findings at a time: page reports offset, limit, total and has_more, --limit and --offset move through them, and summary always counts every finding. On a remote database, unindexed counts the active records semantic search cannot find; reindex --unindexed queues them. --only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. canonical_thread_overlap and similar_tags describe the collection, not a defect in one record: they are counted in informational_counts and listed only with --only. verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
       },
       checkpoint: {
         usage: `checkpoint [--files "src/a.ts,src/b.ts" | --files-json '[...]'] [--query <search_term>] [--since <ISO date>] [--limit <n>] [--by <writer> | --mine] [--last-commit]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -185,12 +185,12 @@ export function helpPayload() {
       reindex: {
         usage: REINDEX_USAGE,
         description:
-          "Queue records for the semantic index again: the whole current repository by default, only records whose last index write failed with --failed-only, the given records with --id, or every repository with --all-repos. Returns at once; watch progress with index status.",
+          "Queue records for the semantic index again: the whole current repository by default, only records whose last index write failed with --failed-only, only active records without a vector in the current index with --unindexed, the given records with --id, or every repository with --all-repos. Returns at once; watch progress with index status.",
       },
       index: {
         usage: INDEX_USAGE,
         description:
-          "Report where records stand in the semantic index: pending (written, not indexed yet), retrying (last index write failed and will be tried again), parked (cannot be indexed until the record changes or reindex re-queues it), oldest_pending_seconds, and failures grouped by error with record ids. stats reports the same under index.",
+          "Report where records stand in the semantic index: pending (written, not indexed yet), retrying (last index write failed and will be tried again), parked (cannot be indexed until the record changes or reindex re-queues it), oldest_pending_seconds, unindexed (active records semantic search cannot find because their vector predates the current index; reindex --unindexed queues them), and failures grouped by error with record ids. stats reports the same under index.",
       },
       export: {
         usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>] [--by <writer> | --mine]${DATABASE_BACKEND_USAGE}`,

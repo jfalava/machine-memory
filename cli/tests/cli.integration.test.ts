@@ -1955,6 +1955,42 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     expect(unknown.stdout + unknown.stderr).toContain("transient_non_status");
   });
 
+  it("doctor pages its findings and keeps the counts whole", async () => {
+    const { cwd, dbPath } = await createProject();
+    for (const content of [
+      "Deploys go through scripts/deploy.sh",
+      "Lint runs oxlint from the repository root",
+      "Fixtures live under tests/fixtures",
+    ]) {
+      await runCli(cwd, dbPath, "add", content, "--create-new", "--quiet");
+    }
+    const page = async (...flags: string[]) =>
+      (await runCli(cwd, dbPath, "doctor", "--only", "empty_tags", ...flags))
+        .json;
+    const first = await page("--limit", "2");
+    expect(first["page"]).toEqual({
+      offset: 0,
+      limit: 2,
+      total: 3,
+      has_more: true,
+    });
+    expect(first.summary).toMatchObject({ tag_hygiene: 3, unindexed: 0 });
+    expect(first.findings?.tag_hygiene).toHaveLength(2);
+    expect(first["suggested_commands"]).toHaveLength(2);
+
+    const last = await page("--limit", "2", "--offset", "2");
+    expect(last["page"]).toMatchObject({ offset: 2, has_more: false });
+    expect(last.findings?.tag_hygiene).toHaveLength(1);
+    // The two pages cover each finding once.
+    expect(
+      JSON.stringify([first.findings?.tag_hygiene, last.findings?.tag_hygiene])
+        .match(/"id":\d+/g)
+        ?.toSorted(),
+    ).toEqual(['"id":1', '"id":2', '"id":3']);
+    // A local database has no index, so nothing is unindexed.
+    expect(first).not.toHaveProperty("unindexed");
+  });
+
   it("flags overlapping gotchas in doctor", async () => {
     const { cwd, dbPath } = await createProject();
     for (const content of [

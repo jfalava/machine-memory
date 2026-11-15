@@ -25,6 +25,7 @@ Both commands require `--remote`; local databases do not have a Vectorize bindin
 ## Options
 
 - `--failed-only` queues only memories whose last index write failed, both the ones still retrying and the parked ones.
+- `--unindexed` queues only active memories that have no vector in the current index. Use it after the embedding model or the Vectorize index changes to index one repository, or the rest of one, without embedding again what is already there. It cannot be combined with `--failed-only`.
 - `--id <id|id,id,...>` queues the given memories of the current repository.
 - `--all-repos` queues every repository. Use it once after the embedding model or the Vectorize index changes, because the new index starts empty. It cannot be combined with `--id`.
 
@@ -57,6 +58,7 @@ Success means the work is durably queued, not that semantic search already refle
   "retrying": 2,
   "parked": 1,
   "oldest_pending_seconds": 95,
+  "unindexed": 0,
   "failures": [
     {
       "error": "AI unavailable",
@@ -78,6 +80,7 @@ Success means the work is durably queued, not that semantic search already refle
 - `retrying`: the last index write failed and will be tried again.
 - `parked`: the memory cannot be indexed as stored. Fix the memory, or run `reindex --id <id>` after fixing the cause.
 - `oldest_pending_seconds`: how long the oldest pending or retrying memory has waited; `null` when nothing waits or the age is unknown.
+- `unindexed`: active memories with nothing queued and no vector from the current embedding model. Semantic search cannot find them, and nothing indexes them on its own: they were indexed before the index was replaced. Run `reindex --unindexed`. When the count is above zero, the output adds a `note` with that command.
 - `failures`: failed memories grouped by error, with up to 20 ids per group.
 
 The index is up to date when `pending`, `retrying` and `parked` are all `0`. Until then semantic search can miss the waiting memories; keyword search is unaffected.
