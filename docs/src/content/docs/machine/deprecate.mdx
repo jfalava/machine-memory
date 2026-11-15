@@ -26,6 +26,7 @@ count}` payloads for batches.
 Retiring a premise can leave other memories relying on it. The response adds
 `review_candidates` (minimal output: `review_candidate_ids`): up to five
 active memories that refer to the deprecated memory by ID (`cites: true`), or
-that name a path, flag or symbol of its content that at most three other
-memories mention (`shared_identifiers`). The `--superseded-by` replacement is
-excluded. Resolve each one.
+that name at least two paths, flags or symbols of its content that at most
+three other memories each mention (`shared_identifiers`). The
+`--superseded-by` replacement is excluded. They are candidates: read each one,
+and update or deprecate it only when it relies on the retired premise.

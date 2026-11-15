@@ -2000,7 +2000,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       cwd,
       dbPath,
       "add",
-      "Security updates wait for nixpkgs-security bumps before switching.",
+      "Security updates wait for nixpkgs-security bumps in flake.nix before switching.",
       "--type",
       "convention",
       "--quiet",
@@ -2072,7 +2072,7 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     expect(deprecated.json.review_candidates).toEqual([
       expect.objectContaining({
         id: dependentId,
-        shared_identifiers: ["nixpkgs-security"],
+        shared_identifiers: ["nixpkgs-security", "flake.nix"],
         cites: false,
       }),
     ]);

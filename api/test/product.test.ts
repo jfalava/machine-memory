@@ -1831,6 +1831,10 @@ test("updates report dropped details and review candidates; deprecate reviews de
   expect(
     await db.prepare("SELECT COUNT(*) AS n FROM memory_history").first("n"),
   ).toBe(0);
+  const twoNames = await product("add", {
+    content: "Advisories for nixpkgs-security decide when flake.nix moves.",
+    memory_type: "convention",
+  });
   const updated = await product("update", {
     id: premise.result.id,
     content: "Home Manager reimports nixpkgs.",
@@ -1841,7 +1845,8 @@ test("updates report dropped details and review candidates; deprecate reviews de
     "nixpkgs-security",
     "flake.nix",
   ]);
-  // The record that cites the premise comes first, then the one that shares a name.
+  // The record that cites the premise comes first, then the one that shares
+  // two of its names. `dependent` shares one name, which is not enough.
   expect(updated.result.review_candidates).toEqual([
     expect.objectContaining({
       id: citing.result.id,
@@ -1849,11 +1854,19 @@ test("updates report dropped details and review candidates; deprecate reviews de
       cites: true,
     }),
     expect.objectContaining({
-      id: dependent.result.id,
-      shared_identifiers: ["nixpkgs-security"],
+      id: twoNames.result.id,
+      shared_identifiers: ["flake.nix", "nixpkgs-security"],
       cites: false,
     }),
   ]);
+  // An update that only adds withdraws nothing, so even the citing record is not listed.
+  const appended = await product("update", {
+    id: premise.result.id,
+    content:
+      "Home Manager reimports nixpkgs. Rollbacks boot the previous generation.",
+  });
+  expect(appended.status).toBe(200);
+  expect(appended.result).not.toHaveProperty("review_candidates");
   const deprecated = await product("deprecate", { ids: [dependent.result.id] });
   expect(deprecated.status).toBe(200);
   expect(deprecated.result).not.toHaveProperty("review_candidates");

@@ -199,7 +199,11 @@ const fetchReviewCandidates = (
   Effect.gen(function* () {
     const groups = [];
     for (const premise of premises) {
-      if (!reviewsDependents(premise.memory_type)) {
+      // An update that only adds withdraws nothing a record could rely on.
+      if (
+        !reviewsDependents(premise.memory_type) ||
+        premise.text.trim() === ""
+      ) {
         continue;
       }
       const names = reviewNames(premise.text);

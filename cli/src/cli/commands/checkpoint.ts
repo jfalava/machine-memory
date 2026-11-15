@@ -124,7 +124,7 @@ function classification(flag: string): JsonObject[] {
     },
     {
       group: "superseded_or_conflicting",
-      action: `machine-memory update <id> "<content>" ${flag} or machine-memory deprecate <id> --superseded-by <id> ${flag}; then follow each review_candidates entry`,
+      action: `machine-memory update <id> "<content>" ${flag} or machine-memory deprecate <id> --superseded-by <id> ${flag}; then read each review_candidates entry and change the ones that rely on what changed`,
     },
     {
       group: "transient_status",

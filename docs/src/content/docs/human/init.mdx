@@ -29,7 +29,7 @@ The block is about 2,500 bytes, because agents read it on every turn. Each rule 
 - One fact per record. Delivery state goes in one expiring `status` record. Pixel values, UI state, deploy outcomes and facts about one machine stay out.
 - Check size before writing.
 - An update replaces the whole content, so read the record first; leaving the content out changes only metadata. `add --upsert-match` updates a strong match instead of adding a duplicate.
-- Act on `dropped` and `review_candidates`.
+- Restore details listed in `dropped` by mistake, and read the `review_candidates`, changing only those that rely on what changed.
 - `verified` needs evidence kinds.
 - In delegated work, the parent agent writes memory. Child agents return findings with evidence.
 - Run `machine-memory checkpoint` before the final response.
@@ -42,7 +42,7 @@ The line after the start marker records the block's version and backend:
 
 ```html
 <!-- machine-memory:start -->
-<!-- machine-memory:version 5 remote -->
+<!-- machine-memory:version 6 remote -->
 ```
 
 `init` also pins the repository slug in `.agents/machine-memory.json`:

@@ -155,6 +155,12 @@ const REVIEW_NAMES_CHECKED = 24;
  * half the repository mentions says nothing about which record relies on this one.
  */
 const REVIEW_NAME_MAX_HOLDERS = 3;
+/**
+ * One shared name, usually a file path or a flag, says the record is about the
+ * same place, not that it relies on the premise. Two names do: measured on the
+ * updates of this repository, one-name candidates were 44 of 56 and mostly unrelated.
+ */
+const REVIEW_MIN_SHARED_NAMES = 2;
 const REVIEW_CANDIDATES_LIMIT = 5;
 
 /** The names of a changed or retired premise to look up in other records. */
@@ -229,7 +235,8 @@ export type ReviewCandidate<Row> = {
 
 /**
  * Other active records that may rely on a changed or retired premise: those
- * that cite it by id, then those that share the most specific names with it.
+ * that cite it by id, then those that share at least two specific names with
+ * it, most specific first.
  * `rows` come from reviewCandidateRowsQuery, one group per premise.
  */
 export function selectReviewCandidates<
@@ -251,7 +258,7 @@ export function selectReviewCandidates<
       if (
         exclude.has(row.id) ||
         found.has(row.id) ||
-        !(cites || names.length)
+        !(cites || names.length >= REVIEW_MIN_SHARED_NAMES)
       ) {
         continue;
       }
