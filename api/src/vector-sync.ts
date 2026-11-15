@@ -16,6 +16,28 @@ import { Schema } from "effect";
 const REPAIR_INTERVAL_MS = 60 * 60 * 1000;
 const REPAIRED = VECTOR_SYNC_NEVER;
 const BATCH_SIZE = 20;
+/**
+ * The pause after a drain that did work. With BATCH_SIZE it caps indexing at
+ * 20 memories a minute, whatever queues them and however often requests wake
+ * the coordinator.
+ */
+export const DRAIN_INTERVAL_MS = 60_000;
+const WAKE_DELAY_MS = 1000;
+
+/**
+ * When a request should move the coordinator's alarm to, or undefined to leave
+ * it. An alarm within one interval is the pause after a working drain, or work
+ * already scheduled, and is never moved earlier. A missing alarm (idle) or a
+ * distant one (a repair an hour away) gives way to the write that just landed.
+ */
+export function wakeAlarmAt(
+  alarm: number | null,
+  now: number,
+): number | undefined {
+  return alarm === null || alarm > now + DRAIN_INTERVAL_MS
+    ? now + WAKE_DELAY_MS
+    : undefined;
+}
 
 type PendingVector = {
   memory_id: number;
@@ -141,11 +163,32 @@ async function recordFailure(
   );
 }
 
-/** Called only by the coordinator's alarm: there is one mutation-producing drain. */
+/**
+ * The earliest time a queued index write is due, by the rule the drain selects
+ * jobs with: a pending write at its next attempt, a delivered one at its
+ * repair. Parked and repaired rows never run. Undefined when nothing is queued.
+ */
+async function nextDueAt(db: D1Database): Promise<number | undefined> {
+  const queued = await db
+    .prepare(`SELECT MIN(CASE WHEN generation > delivered_generation THEN next_attempt_at
+      ELSE MAX(next_attempt_at, last_delivered_at + ?) END) AS due
+    FROM memory_vector_sync WHERE next_attempt_at < ?`)
+    .bind(REPAIR_INTERVAL_MS, VECTOR_SYNC_NEVER)
+    .first<{ due: number | null }>();
+  return queued?.due ?? undefined;
+}
+
+/**
+ * Called only by the coordinator's alarm: there is one mutation-producing drain.
+ * Returns when to drain next: one interval from now after a drain that did
+ * work, the earliest retry or repair after one that found nothing due, and
+ * undefined when nothing is queued, so the coordinator can sleep until a
+ * request wakes it.
+ */
 export async function drainVectorSync(
   { db, index, embed }: VectorSyncResources,
   now = Date.now(),
-): Promise<void> {
+): Promise<number | undefined> {
   const jobs = await db
     .prepare(`SELECT memory_id, generation, delivered_generation, attempts FROM memory_vector_sync
     WHERE next_attempt_at <= ? AND (generation > delivered_generation OR last_delivered_at <= ?)
@@ -197,4 +240,9 @@ export async function drainVectorSync(
       );
     }
   }
+  if (jobs.results.length > 0) {
+    return now + DRAIN_INTERVAL_MS;
+  }
+  const due = await nextDueAt(db);
+  return due === undefined ? undefined : Math.max(due, now + DRAIN_INTERVAL_MS);
 }

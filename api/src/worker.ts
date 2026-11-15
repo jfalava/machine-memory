@@ -126,7 +126,9 @@ export default Cloudflare.Worker<{}>()(
         ),
       ),
     );
-    yield* Cloudflare.Workers.cron("*/5 * * * *", () => wake);
+    // Requests wake the coordinator themselves and it schedules its own
+    // retries, so the cron only recovers a wake or an alarm that was lost.
+    yield* Cloudflare.Workers.cron("0 * * * *", () => wake);
     const restHandlers = yield* createApiHandlers({
       d1,
       vectorize,

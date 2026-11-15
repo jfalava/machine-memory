@@ -20,7 +20,12 @@ import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, beforeEach, expect, test, vi } from "vitest";
 
 import { handleRestRequest } from "../src/rest-handlers";
-import { drainVectorSync, parseEmbedding } from "../src/vector-sync";
+import {
+  drainVectorSync,
+  DRAIN_INTERVAL_MS,
+  parseEmbedding,
+  wakeAlarmAt,
+} from "../src/vector-sync";
 import { createApiHandlers } from "../src/worker";
 
 let mf: Miniflare;
@@ -1294,6 +1299,53 @@ test("an unchanged active memory is embedded once, repaired once, then left alon
   await drain(now + 301 * 3_600_000);
   expect(embed).toHaveBeenCalledTimes(3);
   expect(embed.mock.calls[2][0]).toContain("edited");
+});
+
+test("a drain reports when the next one is due, and nothing when the queue is empty", async () => {
+  const now = Date.now();
+  const hour = 3_600_000;
+  // Nothing queued: the coordinator sleeps.
+  expect(await drain(now)).toBeUndefined();
+
+  const id = await insert();
+  // A drain that did work pauses one interval, whatever is due next.
+  expect(await drain(now)).toBe(now + DRAIN_INTERVAL_MS);
+  // Nothing is due after the pause; the one repair is an hour after delivery.
+  expect(await drain(now + DRAIN_INTERVAL_MS)).toBe(now + hour);
+  expect(await drain(now + hour)).toBe(now + hour + DRAIN_INTERVAL_MS);
+  expect(await drain(now + 2 * hour)).toBeUndefined();
+  expect(embed).toHaveBeenCalledTimes(2);
+
+  // A failed delivery is due again after a second, but the pause still applies.
+  await db
+    .prepare("UPDATE memories SET content = ? WHERE id = ?")
+    .bind("edited", id)
+    .run();
+  const later = now + 3 * hour;
+  embed.mockRejectedValueOnce(new Error("AI unavailable"));
+  expect(await drain(later)).toBe(later + DRAIN_INTERVAL_MS);
+  expect((await job(id))?.next_attempt_at).toBe(later + 1000);
+
+  // One drain embeds at most 20 memories; the rest wait for the next one.
+  for (let extra = 0; extra < 25; extra += 1) {
+    await insert(`batch ${extra}`);
+  }
+  embed.mockClear();
+  const busy = later + DRAIN_INTERVAL_MS;
+  expect(await drain(busy)).toBe(busy + DRAIN_INTERVAL_MS);
+  expect(embed).toHaveBeenCalledTimes(20);
+  await drain(busy + DRAIN_INTERVAL_MS);
+  expect(embed).toHaveBeenCalledTimes(26);
+});
+
+test("a request wakes an idle coordinator but never shortens the pause after a drain", () => {
+  const now = 1_000_000;
+  // Idle, or only a repair an hour away: index the new write in a second.
+  expect(wakeAlarmAt(null, now)).toBe(now + 1000);
+  expect(wakeAlarmAt(now + 3_600_000, now)).toBe(now + 1000);
+  // Within the pause after a drain: requests cannot bring the next drain forward.
+  expect(wakeAlarmAt(now + DRAIN_INTERVAL_MS, now)).toBeUndefined();
+  expect(wakeAlarmAt(now + 5000, now)).toBeUndefined();
 });
 
 test("embedding parser rejects invalid dimensions and nonfinite values", () => {
