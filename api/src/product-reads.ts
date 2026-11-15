@@ -5,6 +5,7 @@ import {
   embeddingSizeReport,
   indexStatusFromRows,
   indexStatusQueries,
+  unindexedIdsQuery,
   jsonNumber,
   jsonString,
   normalizeListRepositoriesArgs,
@@ -182,7 +183,17 @@ export const productReadHandlers = (
         `SELECT * FROM memories WHERE repository = ? AND status = 'active' ORDER BY updated_at DESC, id DESC`,
         [input.repository],
       );
-      return analyzeMemoryDoctor(input.repository, rows);
+      const unindexed = unindexedIdsQuery(input.repository);
+      const unindexedRows = yield* ctx.sql.unsafe<JsonObject>(
+        unindexed.sql,
+        unindexed.params,
+      );
+      return analyzeMemoryDoctor(
+        input.repository,
+        rows,
+        undefined,
+        unindexedRows.length,
+      );
     }),
 
   stats: (input) =>

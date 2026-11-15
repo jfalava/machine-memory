@@ -1657,6 +1657,247 @@ describe("CLI integration", () => {
     );
   });
 
+  it("reminds a thread of checkpoint --mine after its first write only", async () => {
+    const project = await createProject();
+    const reminder =
+      "review what it wrote with 'machine-memory checkpoint --mine --local'";
+    const planned = await runCliAs(
+      project,
+      "amp:T-7",
+      "add",
+      "Deploy runs bun",
+      "--dry-run",
+    );
+    expect(planned.stderr).not.toContain(reminder);
+    const first = await runCliAs(
+      project,
+      "amp:T-7",
+      "add",
+      "Deploy runs bun",
+      "--quiet",
+    );
+    expect(first.stderr).toContain(reminder);
+    const second = await runCliAs(
+      project,
+      "amp:T-7",
+      "add",
+      "Lint runs oxlint from the root",
+      "--create-new",
+      "--quiet",
+    );
+    expect(second.stderr).not.toContain(reminder);
+    // Without a thread there is nothing to scope the review to.
+    const agentOnly = await runCliAs(
+      project,
+      "amp",
+      "add",
+      "Fixtures live under tests/fixtures",
+      "--create-new",
+      "--quiet",
+    );
+    expect(agentOnly.stderr).not.toContain(reminder);
+    // Another thread's first change here is a first write too.
+    const other = await runCliAs(
+      project,
+      "codex:9",
+      "update",
+      "1",
+      "--tags",
+      "area:ops",
+    );
+    expect(other.stderr).toContain(reminder);
+    // Changing that one memory again is not a first write.
+    const again = await runCliAs(
+      project,
+      "codex:9",
+      "update",
+      "1",
+      "--tags",
+      "area:deploy",
+    );
+    expect(again.stderr).not.toContain(reminder);
+    const retired = await runCliAs(project, "codex:9", "deprecate", "1");
+    expect(retired.stderr).not.toContain(reminder);
+  });
+
+  it("takes content and flag values that start with a dash", async () => {
+    const { cwd, dbPath } = await createProject();
+    const content =
+      "--remote is required on every database command in this repository.";
+    const added = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      content,
+      "--context",
+      "--local stays for scratch databases",
+      "--tags",
+      "area:cli",
+      "--quiet",
+    );
+    expect(added.code).toBe(0);
+    const stored = await getMemory(cwd, dbPath, "1");
+    expect(stored.json.content).toBe(content);
+    expect(stored.json.context).toBe("--local stays for scratch databases");
+    expect(stored.json.tags).toBe("area:cli");
+
+    const updated = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      "1",
+      "-r is not a short form of --remote; every database command spells it out.",
+      "--quiet",
+    );
+    expect(updated.code).toBe(0);
+    expect((await getMemory(cwd, dbPath, "1")).json.content).toContain(
+      "-r is not a short form",
+    );
+  });
+
+  it("reads several repositories with --repo a,b and writes to one only", async () => {
+    const { cwd, dbPath } = await createProject();
+    const local = await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy pipeline applies migrations first",
+      "--quiet",
+    );
+    const foreignId = await insertMemoryFromRepository(
+      dbPath,
+      "acme/widgets",
+      "Deploy pipeline of the widgets service runs on tags",
+    );
+    const hiddenId = await insertMemoryFromRepository(
+      dbPath,
+      "acme/gadgets",
+      "Deploy pipeline of the gadgets service is manual",
+    );
+    const localId = Number(local.json.id);
+    const both = ["--repo", "jfalava/machine-memory,acme/widgets"];
+    const where = (rows: readonly { id?: unknown; repository?: unknown }[]) =>
+      rows
+        .map((row) => [Number(row.id), row.repository])
+        .sort(([left], [right]) => Number(left) - Number(right));
+
+    const queried = await runCli(
+      cwd,
+      dbPath,
+      "query",
+      "deploy pipeline",
+      ...both,
+      "--json-min",
+    );
+    expect(queried.json.repositories).toEqual([
+      "jfalava/machine-memory",
+      "acme/widgets",
+    ]);
+    expect(queried.json).not.toHaveProperty("repository");
+    expect(where(queried.json.results ?? [])).toEqual([
+      [localId, "jfalava/machine-memory"],
+      [foreignId, "acme/widgets"],
+    ]);
+
+    const fetched = await runCli(
+      cwd,
+      dbPath,
+      "get",
+      `${localId},${foreignId},${hiddenId}`,
+      ...both,
+    );
+    expect(where(fetched.json.results ?? [])).toEqual([
+      [localId, "jfalava/machine-memory"],
+      [foreignId, "acme/widgets"],
+    ]);
+    expect(fetched.json.missing_ids).toEqual([hiddenId]);
+
+    const listed = await runCli(cwd, dbPath, "list", ...both, "--json-min");
+    expect(listed.json.total_count).toBe(2);
+
+    const unknown = await runCli(
+      cwd,
+      dbPath,
+      "list",
+      "--repo",
+      "jfalava/machine-memory,acme/nothing",
+      "--quiet",
+    );
+    expect(unknown.json.warning).toContain("No memories in: acme/nothing.");
+    expect(unknown.stderr).toContain("No memories in: acme/nothing.");
+
+    for (const command of [
+      ["add", "Written to two repositories"],
+      ["suggest", "--files", "deploy/pipeline.ts"],
+    ]) {
+      const refused = await runCli(cwd, dbPath, ...command, ...both);
+      expect(refused.code).toBe(1);
+      expect(refused.json.error).toContain(
+        "only query, get and list read several at once",
+      );
+    }
+    expect((await runCliRows(cwd, dbPath, "list", "--quiet")).rows).toEqual([
+      { id: localId },
+    ]);
+  });
+
+  it("leaves an expired status out of query and suggest, not out of list", async () => {
+    const { cwd, dbPath } = await createProject();
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy pipeline applies migrations before the workers",
+      "--type",
+      "decision",
+      "--quiet",
+    );
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Deploy pipeline migration is half finished",
+      "--type",
+      "status",
+      "--expires-after-days",
+      "3",
+      "--create-new",
+      "--quiet",
+    );
+    const backdated = await execBun(
+      [
+        "-e",
+        `import { Database } from "bun:sqlite";
+const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE memories SET updated_at = datetime('now', '-4 days') WHERE memory_type = 'status'"); db.close();`,
+      ],
+      { env: { ...process.env, MACHINE_MEMORY_DB_PATH: dbPath } },
+    );
+    expect(backdated.code).toBe(0);
+    const ids = async (...args: string[]) =>
+      (await runCliRows(cwd, dbPath, ...args, "--json-min")).rows
+        .map((row) => Number(row.id))
+        .sort((left, right) => left - right);
+    expect(await ids("query", "deploy pipeline")).toEqual([1]);
+    expect(await ids("query", "deploy pipeline", "--type", "status")).toEqual([
+      2,
+    ]);
+    expect(await ids("suggest", "--files", "deploy/pipeline.ts")).toEqual([1]);
+    expect(await ids("list")).toEqual([1, 2]);
+
+    const generic = await runCli(
+      cwd,
+      dbPath,
+      "suggest",
+      "--files",
+      "package.json,bun.lock",
+      "--json-min",
+    );
+    expect(generic.json).toMatchObject({
+      count: 0,
+      generic_files: ["package.json", "bun.lock"],
+    });
+  });
+
   it("flags legacy verified records without evidence in doctor", async () => {
     const { cwd, dbPath } = await createProject();
     await runCli(cwd, dbPath, "add", "Legacy verified claim", "--quiet");
@@ -1681,9 +1922,20 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
         )
       ).code,
     ).toBe(0);
+    // A legacy backlog, not a new defect: counted, and listed on request.
     const doctor = await runCli(cwd, dbPath, "doctor");
-    expect(doctor.json.summary).toMatchObject({ verified_without_evidence: 1 });
-    expect(doctor.json.findings?.verified_without_evidence).toEqual([
+    expect(doctor.json.summary).not.toHaveProperty("verified_without_evidence");
+    expect(doctor.json["informational_counts"]).toMatchObject({
+      verified_without_evidence: 1,
+    });
+    const listed = await runCli(
+      cwd,
+      dbPath,
+      "doctor",
+      "--only",
+      "verified_without_evidence",
+    );
+    expect(listed.json.findings?.verified_without_evidence).toEqual([
       expect.objectContaining({ id: 1 }),
     ]);
   });
@@ -1749,16 +2001,35 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
       "nixpkgs-security was removed from flake.nix; Home Manager reimports nixpkgs.",
       "--json-min",
     );
-    // The rewrite keeps the identifiers and most terms, so nothing is dropped.
+    // The rewrite keeps the identifiers and most terms, so nothing is dropped,
+    // but the reworded sentence names what the dependent relies on.
     expect(updated.json).toEqual({
       id: Number(premiseId),
       review_candidate_ids: [dependentId],
       size: { bytes: 76, remaining_bytes: 1924 },
     });
+    // An update that only adds leaves every earlier statement standing.
+    const appended = await runCli(
+      cwd,
+      dbPath,
+      "update",
+      premiseId,
+      "nixpkgs-security was removed from flake.nix; Home Manager reimports nixpkgs. Rollbacks boot the previous generation.",
+      "--json-min",
+    );
+    expect(appended.json).not.toHaveProperty("review_candidate_ids");
+    expect(appended.stderr).not.toContain("may rely on the old content");
 
     const deprecated = await runCli(cwd, dbPath, "deprecate", premiseId);
+    expect(deprecated.stderr).toContain(
+      `Deprecating #${premiseId}: 1 record(s) may rely on the old content: #${dependentId}.`,
+    );
     expect(deprecated.json.review_candidates).toEqual([
-      expect.objectContaining({ id: dependentId, match_strength: "strong" }),
+      expect.objectContaining({
+        id: dependentId,
+        shared_identifiers: ["nixpkgs-security"],
+        cites: false,
+      }),
     ]);
   });
 
@@ -1810,6 +2081,42 @@ const db = new Database(process.env.MACHINE_MEMORY_DB_PATH); db.exec("UPDATE mem
     const unknown = await runCliStdout(cwd, dbPath, ["doctor", "--only", "x"]);
     expect(unknown.code).not.toBe(0);
     expect(unknown.stdout + unknown.stderr).toContain("transient_non_status");
+  });
+
+  it("doctor pages its findings and keeps the counts whole", async () => {
+    const { cwd, dbPath } = await createProject();
+    for (const content of [
+      "Deploys go through scripts/deploy.sh",
+      "Lint runs oxlint from the repository root",
+      "Fixtures live under tests/fixtures",
+    ]) {
+      await runCli(cwd, dbPath, "add", content, "--create-new", "--quiet");
+    }
+    const page = async (...flags: string[]) =>
+      (await runCli(cwd, dbPath, "doctor", "--only", "empty_tags", ...flags))
+        .json;
+    const first = await page("--limit", "2");
+    expect(first["page"]).toEqual({
+      offset: 0,
+      limit: 2,
+      total: 3,
+      has_more: true,
+    });
+    expect(first.summary).toMatchObject({ tag_hygiene: 3, unindexed: 0 });
+    expect(first.findings?.tag_hygiene).toHaveLength(2);
+    expect(first["suggested_commands"]).toHaveLength(2);
+
+    const last = await page("--limit", "2", "--offset", "2");
+    expect(last["page"]).toMatchObject({ offset: 2, has_more: false });
+    expect(last.findings?.tag_hygiene).toHaveLength(1);
+    // The two pages cover each finding once.
+    expect(
+      JSON.stringify([first.findings?.tag_hygiene, last.findings?.tag_hygiene])
+        .match(/"id":\d+/g)
+        ?.toSorted(),
+    ).toEqual(['"id":1', '"id":2', '"id":3']);
+    // A local database has no index, so nothing is unindexed.
+    expect(first).not.toHaveProperty("unindexed");
   });
 
   it("flags overlapping gotchas in doctor", async () => {

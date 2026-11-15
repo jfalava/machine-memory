@@ -24,6 +24,8 @@ print `{id}` for single targets and compact `{deprecated_ids, not_found,
 count}` payloads for batches.
 
 Retiring a premise can leave other memories relying on it. The response adds
-`review_candidates` (minimal output: `review_candidate_ids`) for active
-memories that share the deprecated content's paths, identifiers, or terms,
-excluding the `--superseded-by` replacement. Resolve each one.
+`review_candidates` (minimal output: `review_candidate_ids`): up to five
+active memories that refer to the deprecated memory by ID (`cites: true`), or
+that name a path, flag or symbol of its content that at most three other
+memories mention (`shared_identifiers`). The `--superseded-by` replacement is
+excluded. Resolve each one.

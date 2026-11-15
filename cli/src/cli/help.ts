@@ -63,6 +63,10 @@ export function helpPayload() {
         "Query identifiers (paths, flags, snake/kebab/camel case, dotted or tag-like tokens) or suggested file paths found literally in the memory.",
       term_coverage:
         "Fraction of distinct query terms found in the memory's content, tags, context, or refs.",
+      matched_terms:
+        "Full output only: the query terms found in the memory. matched_in lists the fields that hold them or an exact match: content, tags, context or refs.",
+      generic_files:
+        "suggest/sweep: the manifests and lockfiles among the files. Their names were not searched, so an empty result for them does not mean nothing is recorded.",
       evidence:
         "Kinds of evidence behind a claim (see enums.evidence); [] means unspecified. add/update reject --certainty verified without at least one kind. Legacy verified rows keep their certainty until re-asserted; doctor lists them as verified_without_evidence. Not embedded.",
       validation_gaps:
@@ -70,7 +74,7 @@ export function helpPayload() {
       dropped:
         "update/diff/add --upsert-match/add --update-id: identifiers and sentences of the old content that the new content no longer carries. Updates replace the whole content, so carry valid details over or confirm they are obsolete.",
       review_candidates:
-        "update/deprecate/add --upsert-match: other active records that may rely on the changed or retired premise (strong = shares a literal path or identifier). Update or deprecate them too. Minimal output lists review_candidate_ids.",
+        "update/deprecate/add --upsert-match: up to five other active records that may rely on what the write changed or retired. Each one refers to the changed memory by id (cites true), or names a path, flag or symbol of the changed text that at most three other records mention (shared_identifiers). An update counts only the sentences it removed or reworded, so an update that only adds lists none. Update or deprecate each one, or confirm it still holds. Minimal output lists review_candidate_ids.",
       results:
         "get, query, list, suggest, sweep and export all print one object: repository, count, the fields of that command, then results, an array even for one memory or none. The output mode changes only what each result carries: the whole memory by default, a summary with --json-min, the id alone with --quiet. --brief prints one text line per memory instead.",
       snippet:
@@ -91,7 +95,7 @@ export function helpPayload() {
     global_options: {
       pretty:
         "Render human-readable output for machine commands; existing human commands keep their normal output.",
-      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without either, the slug is the one init pinned in .agents/machine-memory.json, and without a pin it is the path of the origin remote.",
+      repo: "--repo <slug> (or MACHINE_MEMORY_REPO) targets another repository's memories without changing directory. A slug is the remote's path: owner/name, @namespace/name, or group/subgroup/name. The flag wins over the variable. Without either, the slug is the one init pinned in .agents/machine-memory.json, and without a pin it is the path of the origin remote. query, get and list read several repositories at once with --repo a,b: the output names them in repositories, each result carries its repository, and a slug without memories is named in warning. Every other command takes one slug.",
       ascii:
         "--ascii, on any command, prints only 7-bit ASCII: every other character becomes a \\uXXXX escape. JSON parsers read the escapes back as the original text, so nothing is lost. Use it when a shell or tool treats the output as binary.",
       allow_new_repo:
@@ -105,7 +109,7 @@ export function helpPayload() {
       },
       query: {
         usage: `query <search_term> [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--semantic|--hybrid] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
-        notes: `--limit defaults to ${SEARCH_LIMIT_DEFAULT}; the most is ${CLI_LIMIT_MAX}, or ${SEARCH_LIMIT_MAX} with --semantic or --hybrid. suggest and sweep use the same default.`,
+        notes: `--limit defaults to ${SEARCH_LIMIT_DEFAULT}; the most is ${CLI_LIMIT_MAX}, or ${SEARCH_LIMIT_MAX} with --semantic or --hybrid. suggest and sweep use the same default. query, suggest and sweep leave out a status memory past its expiry unless --type status is given; list and get still return it, and doctor reports it as expired_status.`,
       },
       list: {
         usage: `list [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--status <status>] [--include-deprecated] [--limit <n>] [--offset <n>] [--by <writer> | --mine]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -143,14 +147,16 @@ export function helpPayload() {
       delete: { usage: `delete <id|id,id,...>${DATABASE_BACKEND_USAGE}` },
       suggest: {
         usage: `suggest (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--include-deprecated] [--limit <n>] [--explain-score]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        notes:
+          "Manifests and lockfiles (package.json, bunfig.toml, *.lock) are named in memories about unrelated things. suggest searches their directories, not their names, and lists them in generic_files. Use query to find a memory about such a file.",
       },
       sweep: {
         usage: `sweep (--files "src/a.ts,src/b.ts" | --files-json '["src/a.ts","src/b.ts"]') [--query <search_term>] [--tags <tag>] [--limit <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
       },
       doctor: {
-        usage: `doctor [--only <kind,kind>] [--since <ISO date>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
+        usage: `doctor [--only <kind,kind>] [--since <ISO date>] [--limit <n>] [--offset <n>]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
         notes:
-          "--only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. canonical_thread_overlap and similar_tags describe the collection, not a defect in one record: they are counted in informational_counts and listed only with --only. verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
+          "The full output lists 50 findings at a time: page reports offset, limit, total and has_more, --limit and --offset move through them, and summary always counts every finding. On a remote database, unindexed counts the active records semantic search cannot find; reindex --unindexed queues them. --only keeps the named finding kinds or groups. --since keeps findings that involve a memory changed since that date, which separates new findings from the backlog. --json-min prints counts_by_kind and ids_by_kind instead of the findings. Three kinds are counted in informational_counts and listed only with --only: canonical_thread_overlap and similar_tags describe the collection, not a defect in one record, and verified_without_evidence is the backlog of records saved as verified before evidence existed (checkpoint flags the ones a task touches). verified_without_evidence and gotcha_overlap findings carry hints, not suggested commands: only a reviewer knows the right evidence or merge.",
       },
       checkpoint: {
         usage: `checkpoint [--files "src/a.ts,src/b.ts" | --files-json '[...]'] [--query <search_term>] [--since <ISO date>] [--limit <n>] [--by <writer> | --mine] [--last-commit]${DATABASE_BACKEND_USAGE} [--brief|--json-min|--quiet]`,
@@ -179,12 +185,12 @@ export function helpPayload() {
       reindex: {
         usage: REINDEX_USAGE,
         description:
-          "Queue records for the semantic index again: the whole current repository by default, only records whose last index write failed with --failed-only, the given records with --id, or every repository with --all-repos. Returns at once; watch progress with index status.",
+          "Queue records for the semantic index again: the whole current repository by default, only records whose last index write failed with --failed-only, only active records without a vector in the current index with --unindexed, the given records with --id, or every repository with --all-repos. Returns at once; watch progress with index status.",
       },
       index: {
         usage: INDEX_USAGE,
         description:
-          "Report where records stand in the semantic index: pending (written, not indexed yet), retrying (last index write failed and will be tried again), parked (cannot be indexed until the record changes or reindex re-queues it), oldest_pending_seconds, and failures grouped by error with record ids. stats reports the same under index.",
+          "Report where records stand in the semantic index: pending (written, not indexed yet), retrying (last index write failed and will be tried again), parked (cannot be indexed until the record changes or reindex re-queues it), oldest_pending_seconds, unindexed (active records semantic search cannot find because their vector predates the current index; reindex --unindexed queues them), and failures grouped by error with record ids. stats reports the same under index.",
       },
       export: {
         usage: `export [--tags <tag>] [--type <memory_type>] [--certainty <certainty>] [--since <ISO date>] [--by <writer> | --mine]${DATABASE_BACKEND_USAGE}`,
@@ -307,6 +313,7 @@ const HELP_FOCUS = {
       "no_strong_match",
       "exact_matches",
       "term_coverage",
+      "matched_terms",
       "snippet",
       "evidence",
     ],
@@ -320,6 +327,8 @@ const HELP_FOCUS = {
       "no_strong_match",
       "exact_matches",
       "term_coverage",
+      "matched_terms",
+      "generic_files",
       "snippet",
       "evidence",
     ],
@@ -418,7 +427,7 @@ function workflowHelpPayload(): JsonObject {
       "Recover an overwrite with history <id>, then restore <id> --revision <revision_id> --expected-update-count <current_update_count>, using the current count from history. Delete is permanent and removes history; prefer deprecate.",
     ],
     reconcile: [
-      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates (strong ones name the same path or identifier): resolve each one or confirm it still holds.",
+      "When a decision changes or is reversed, update or deprecate the other active records that rely on the old premise. Updates and deprecations return review_candidates, each with the names it shares with the changed text (shared_identifiers) or cites true when it refers to the changed memory by id: resolve each one or confirm it still holds.",
       "Consolidate overlapping records instead of adding a partly redundant one. Use deprecate <id> --superseded-by <id> when a record is replaced.",
     ],
     evidence: [

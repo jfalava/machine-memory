@@ -70,3 +70,22 @@ test("the vector sync queue migration dates every queued write", async () => {
   }
   expect(statements.match(/queued_at = excluded\.queued_at;/g)).toHaveLength(3);
 });
+
+test("the vector sync model migration adds the column once and backfills in one statement", async () => {
+  const sql = await readFile(
+    new URL("../migrations/0009_vector_sync_model.sql", import.meta.url),
+    "utf8",
+  );
+  const statements = sql
+    .replace(/^--.*$/gm, "")
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
+  expect(statements).toHaveLength(2);
+  expect(statements[0]).toBe(
+    "ALTER TABLE memory_vector_sync ADD COLUMN delivered_model TEXT",
+  );
+  // Triggers do not name the column, so writes queued by them leave it as it is.
+  expect(sql).not.toMatch(/\bTRIGGER\b/i);
+  expect(sql.replace(/^--.*$/gm, "")).not.toMatch(/\bCASE\b/i);
+});

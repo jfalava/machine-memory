@@ -26,10 +26,39 @@ export const stringFlag = (name: string) =>
   Flag.String(name).pipe(Flag.optional);
 export const booleanFlag = (name: string) =>
   Flag.Boolean(name).pipe(Flag.withDefault(false));
-export const stringSpec = (name: string): FlagSpec => ({
-  name,
-  kind: "string",
-});
+const stringFlagNames = new Set<string>();
+
+export const stringSpec = (name: string): FlagSpec => {
+  stringFlagNames.add(`--${name}`);
+  return { name, kind: "string" };
+};
+
+/**
+ * An argument that starts with a dash and contains whitespace is text, such as
+ * content about a flag; no flag is spelled that way. The parser would reject
+ * it, so a string flag's value is joined to its flag, and any other text moves
+ * behind `--`, where everything is positional.
+ */
+export function protectDashedText(args: ReadonlyArray<string>): string[] {
+  const separator = args.indexOf("--");
+  const head = separator < 0 ? args : args.slice(0, separator);
+  const text = separator < 0 ? [] : args.slice(separator + 1);
+  const kept: string[] = [];
+  const moved: string[] = [];
+  for (const arg of head) {
+    const previous = kept.at(-1);
+    if (!/^-.*\s/s.test(arg)) {
+      kept.push(arg);
+    } else if (previous !== undefined && stringFlagNames.has(previous)) {
+      kept[kept.length - 1] = `${previous}=${arg}`;
+    } else {
+      moved.push(arg);
+    }
+  }
+  return moved.length + text.length > 0
+    ? [...kept, "--", ...moved, ...text]
+    : kept;
+}
 export const booleanSpec = (name: string): FlagSpec => ({
   name,
   kind: "boolean",

@@ -215,11 +215,12 @@ export async function drainVectorSync(
       // A mutation during the remote call stays pending; retry never rewrites canonical data.
       await db
         .prepare(`UPDATE memory_vector_sync SET delivered_generation = ?, attempts = 0,
-        last_error = NULL, last_delivered_at = ?, next_attempt_at = ?
+        last_error = NULL, last_delivered_at = ?, delivered_model = ?, next_attempt_at = ?
         WHERE memory_id = ? AND generation = ?`)
         .bind(
           job.generation,
           now,
+          EMBEDDING_MODEL,
           // Write triggers and reindex reset next_attempt_at to 0.
           job.delivered_generation === job.generation
             ? REPAIRED

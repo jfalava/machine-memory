@@ -69,14 +69,14 @@ user as `mcp:<login>`.
 ### Maintenance
 
 - `memory_doctor` audits active memories and returns typed findings with every involved id. Findings are suggestions: review them semantically before writing.
-- `memory_stats` reports aggregate status, type, certainty, tag, and age data for one repository. Its `index` field reports how many records are `pending`, `retrying` or `parked` in the semantic index and the failures grouped by error.
+- `memory_stats` reports aggregate status, type, certainty, tag, and age data for one repository. Its `index` field reports how many records are `pending`, `retrying` or `parked` in the semantic index, how many are `unindexed` (active records whose vector predates the current index), and the failures grouped by error.
 - `memory_gc` is always a dry run. It returns active status memories whose `expires_after_days` window has elapsed.
 - `memory_deprecate` accepts `ids` and optional `superseded_by`. It preserves the records and re-syncs their vector metadata.
 - `memory_delete_many` accepts one to 100 explicit `ids`. It is permanent and echoes `deleted_from`, `deleted_ids`, and `not_found`.
 
 ### Suggest
 
-`memory_suggest` ports the CLI `suggest` command for the pre-edit scan. Pass comma-separated `files` plus an optional extra `query`; it returns the derived path terms, the directory neighborhood (`tags` / `paths` hints), `no_strong_match`, and scored results. A result is `strong` only when the memory names a suggested file by full path or specific file name.
+`memory_suggest` ports the CLI `suggest` command for the pre-edit scan. Pass comma-separated `files` plus an optional extra `query`; it returns the derived path terms, the directory neighborhood (`tags` / `paths` hints), `no_strong_match`, and scored results. A result is `strong` only when the memory names a suggested file by full path or specific file name. Manifests and lockfiles are searched by directory, not by name, and listed in `generic_files`.
 
 ### Verify and diff
 
@@ -84,7 +84,7 @@ user as `mcp:<login>`.
 
 ### Writes
 
-`memory_add` refuses a memory that an active one already states (text overlap of 0.78 or more) and names that memory. Pass `update_id` to replace that memory's content, keeping the fields you omit, or `create_new: true` when you read the existing memories and this is a different fact. `upsert_match` finds the target by topic instead (with `upsert_threshold`, default `rank_score` 32, alongside `text_overlap` ≥ 0.62): a strong match updates in place, no match creates a record, and a weak match is refused with up to three candidates, each with `rank_score`, `text_overlap` and `shared_identifiers`. New records echo `related`, the active memories that strongly match them, when there are any.
+`memory_add` refuses a memory that an active one already states (text overlap of 0.78 or more) and names that memory. Pass `update_id` to replace that memory's content, keeping the fields you omit, or `create_new: true` when you read the existing memories and this is a different fact. `upsert_match` finds the target by topic instead (with `upsert_threshold`, default `rank_score` 50, alongside `text_overlap` ≥ 0.62): a strong match updates in place, no match creates a record, and a weak match is refused with up to three candidates, each with `rank_score`, `text_overlap` and `shared_identifiers`. New records echo `related`, the active memories that strongly match them, when there are any.
 
 `memory_update` targets `id` or `match` (best active full-text hit, echoed back as `matched`); only provided fields change, so omitting `content` changes only metadata. `add_tags`, `remove_tags`, `add_validation_gaps` and `remove_validation_gaps` change part of a list; `tags` and `validation_gaps` replace it.
 
@@ -127,7 +127,7 @@ Filters `status`, `memory_type`, and `certainty` use the same enums as the CLI.
 
 Search results and full rows include `evidence` and `validation_gaps`. Neither is embedded, so they do not affect semantic search or the size budget.
 
-`memory_query` returns `{ count, no_strong_match, results }`. Each result includes `score`, which only ranks within the response, plus absolute relevance fields: `match_strength` (`strong`, `weak`, or `none`), `term_coverage`, and `exact_matches`. Strong results come first. When `no_strong_match` is true, treat the results as loosely related candidates. The thresholds match the CLI; see [query match strength](/machine/query#match-strength).
+`memory_query` returns `{ count, no_strong_match, results }`. Each result includes `score`, which only ranks within the response, plus absolute relevance fields: `match_strength` (`strong`, `weak`, or `none`), `term_coverage`, `exact_matches`, and `matched_terms` with `matched_in` (the fields that hold them). A status memory past its expiry is left out unless `memory_type` is `status`. Strong results come first. When `no_strong_match` is true, treat the results as loosely related candidates. The thresholds match the CLI; see [query match strength](/machine/query#match-strength).
 
 ### Writes
 

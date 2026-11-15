@@ -2,6 +2,7 @@ import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as SQL from "@alchemy.run/cloudflare/D1/SQL";
 import {
   EMBEDDING_MODEL,
+  FTS_CANDIDATE_LIMIT,
   type JsonObject,
   type ProductRequest,
   type ProductResponse,
@@ -98,6 +99,25 @@ export const fetchRankedProductRows = (
 ) =>
   Effect.gen(function* () {
     const query = ftsSelect(ftsQuery, repository, filters, limit);
+    const rows = yield* ctx.sql.unsafe<JsonObject>(query.sql, query.params);
+    return rows.map(toRankedRow);
+  });
+
+/** Full-text candidates of a search, which leaves expired status memories out. */
+export const fetchSearchCandidates = (
+  ctx: ApiContext,
+  ftsQuery: string,
+  repository: string,
+  filters: ProductFilters,
+) =>
+  Effect.gen(function* () {
+    const query = ftsSelect(
+      ftsQuery,
+      repository,
+      filters,
+      FTS_CANDIDATE_LIMIT,
+      true,
+    );
     const rows = yield* ctx.sql.unsafe<JsonObject>(query.sql, query.params);
     return rows.map(toRankedRow);
   });

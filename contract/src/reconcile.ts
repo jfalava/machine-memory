@@ -34,6 +34,24 @@ function sentenceHead(sentence: string): string {
     : sentence;
 }
 
+/**
+ * The part of the stored content an update removes or rewrites: its sentences
+ * that are not a sentence of the new content. A reworded sentence can reverse
+ * its meaning and keep every name, so any rewording counts. Empty when the
+ * update only adds.
+ */
+export function changedText(previous: string, next: string): string {
+  const normalize = (sentence: string) =>
+    sentence
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/[.!?;]+$/, "");
+  const kept = new Set(sentences(next).map(normalize));
+  return sentences(previous)
+    .filter((sentence) => !kept.has(normalize(sentence)))
+    .join(" ");
+}
+
 export function droppedDetails(previous: string, next: string): DroppedDetails {
   const nextLower = next.toLowerCase();
   const nextTokens = new Set(nextLower.match(/[a-z0-9]+/g) ?? []);
@@ -72,25 +90,6 @@ export function hasDroppedDetails(details: DroppedDetails): boolean {
 export function reviewsDependents(memoryType: MemoryType): boolean {
   return memoryType !== "status";
 }
-
-/**
- * Search input for records that may rely on a changed or retired premise.
- * Identifier terms come first so the capped full-text query keeps them.
- */
-export type PremiseQuery = {
-  readonly identifiers: string[];
-  readonly leadingText: string;
-};
-
-export function premiseQuery(content: string): PremiseQuery {
-  const identifiers = extractQueryIdentifiers(content);
-  return {
-    identifiers,
-    leadingText: [...identifiers, content].join(" "),
-  };
-}
-
-export const REVIEW_CANDIDATES_LIMIT = 5;
 
 const GOTCHA_OVERLAP_MIN_SHARED = 2;
 const GOTCHA_OVERLAP_MAX_FINDINGS = 50;

@@ -1,4 +1,5 @@
 import {
+  expiredStatusSql,
   SUGGEST_NEIGHBORHOOD_LIMIT,
   type Certainty,
   type EvidenceKind,
@@ -97,17 +98,24 @@ export function listCountSelect(
   };
 }
 
+/** Searches leave expired status memories out unless they ask for status. */
+function searchableSql(filters: ProductFilters): string {
+  return filters.memory_type === "status"
+    ? ""
+    : ` AND NOT ${expiredStatusSql("m.")}`;
+}
+
 export function ftsSelect(
   ftsQuery: string,
   repository: string,
   filters: ProductFilters,
   limit: number,
+  /** True for a search; writes look for their target among every memory. */
+  hideExpiredStatus = false,
 ): ProductQuery {
   const extra = filterClauses(filters, "m.");
-  const where =
-    extra.sql.length > 0
-      ? `memories_fts MATCH ? AND m.repository = ? AND ${extra.sql}`
-      : `memories_fts MATCH ? AND m.repository = ?`;
+  const base = `memories_fts MATCH ? AND m.repository = ?${hideExpiredStatus ? searchableSql(filters) : ""}`;
+  const where = extra.sql.length > 0 ? `${base} AND ${extra.sql}` : base;
   return {
     sql: `SELECT m.*, bm25(memories_fts) AS fts_rank FROM memories m JOIN memories_fts ON m.id = memories_fts.rowid WHERE ${where} ORDER BY bm25(memories_fts) LIMIT ?`,
     params: [ftsQuery, repository, ...extra.params, limit],
@@ -192,7 +200,10 @@ function neighborhoodWhere(
   orClauses: string[],
   orParams: (string | number)[],
 ): ProductQuery {
-  const clauses = [`(${orClauses.join(" OR ")})`, "m.repository = ?"];
+  const clauses = [
+    `(${orClauses.join(" OR ")})`,
+    `m.repository = ?${searchableSql(input.filters)}`,
+  ];
   const params: (string | number)[] = [...orParams, input.repository];
   const extra = filterClauses(input.filters, "m.");
   const where =

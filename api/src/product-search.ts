@@ -8,20 +8,24 @@ import {
   fileIdentifiers,
   FTS_CANDIDATE_LIMIT,
   hasStrongMatch,
+  isExpiredStatus,
+  isGenericFile,
   mergeSuggestCandidates,
   normalizeMemoryQueryArgs,
   normalizeMemorySuggestArgs,
   orderByMatchStrength,
   reciprocalRankScore,
   semanticCandidateCount,
+  sqliteDateToMs,
   type JsonObject,
   type MemoryQueryArgs,
+  type MemoryRow,
 } from "@machine-memory/contract";
 import * as Effect from "effect/Effect";
 
 import {
   fetchProductRow,
-  fetchRankedProductRows,
+  fetchSearchCandidates,
   type ApiContext,
   type ProductHandlers,
 } from "./api-context";
@@ -49,15 +53,31 @@ const fetchKeywordScored = (
   match: MatchQuery,
 ) =>
   Effect.gen(function* () {
-    const rows = yield* fetchRankedProductRows(
+    const rows = yield* fetchSearchCandidates(
       ctx,
       ftsQuery,
       args.repository,
       args,
-      FTS_CANDIDATE_LIMIT,
     );
     return scoreMemoryRows(rows, match).slice(0, limit).map(scoredResultRow);
   });
+
+/** The filters full-text search applies in SQL, for a semantic match read by id. */
+function passesSearchFilters(args: MemoryQueryArgs, row: MemoryRow): boolean {
+  if (
+    args.memory_type !== "status" &&
+    isExpiredStatus(row, sqliteDateToMs(row.updated_at ?? ""))
+  ) {
+    return false;
+  }
+  return (
+    (args.status === undefined || row.status === args.status) &&
+    (args.memory_type === undefined || row.memory_type === args.memory_type) &&
+    (args.certainty === undefined || row.certainty === args.certainty) &&
+    (args.tags === undefined ||
+      row.tags.toLowerCase().includes(args.tags.toLowerCase()))
+  );
+}
 
 const resolveSemanticMatch = (
   ctx: ApiContext,
@@ -74,14 +94,7 @@ const resolveSemanticMatch = (
     if (!row) {
       return undefined;
     }
-    if (
-      (args.status !== undefined && row.status !== args.status) ||
-      (args.memory_type !== undefined &&
-        row.memory_type !== args.memory_type) ||
-      (args.certainty !== undefined && row.certainty !== args.certainty) ||
-      (args.tags !== undefined &&
-        !row.tags.toLowerCase().includes(args.tags.toLowerCase()))
-    ) {
+    if (!passesSearchFilters(args, row)) {
       return undefined;
     }
     return scoredResultRow({
@@ -229,13 +242,7 @@ export const productSearchHandlers = (
       const ftsRows =
         ftsQuery === undefined
           ? []
-          : yield* fetchRankedProductRows(
-              ctx,
-              ftsQuery,
-              args.repository,
-              args,
-              FTS_CANDIDATE_LIMIT,
-            );
+          : yield* fetchSearchCandidates(ctx, ftsQuery, args.repository, args);
       const select = neighborhoodSelect({
         repository: args.repository,
         filters: args,
@@ -265,6 +272,7 @@ export const productSearchHandlers = (
         repository: args.repository,
         count: results.length,
         files,
+        generic_files: files.filter(isGenericFile),
         normalized_path_terms: pathTerms,
         derived_terms: scoreTerms,
         neighborhood: {

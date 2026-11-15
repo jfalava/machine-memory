@@ -2,10 +2,13 @@ import { resolve, relative, sep } from "node:path";
 
 import {
   assessMatch,
+  bestFtsRank,
+  expiredStatusSql,
+  scoreCandidate,
+  type ScoreBreakdown,
   buildFtsQuery,
   canonicalTags,
   CLI_LIMIT_MAX,
-  certaintyPoints,
   extractTerms,
   mergeSuggestCandidates,
   normalizeSuggestPath,
@@ -14,21 +17,18 @@ import {
   RRF_K,
   sqliteDateToMs,
   type FileNeighborhood,
-  exactMatchPoints,
-  ftsRankPoints,
   MATCH_STRENGTHS,
   matchStrengthRank,
   matchText,
   extractQueryIdentifiers,
   orderByMatchStrength,
-  premiseQuery,
-  recencyPoints,
-  REVIEW_CANDIDATES_LIMIT,
+  nameHoldersFromRows,
+  nameHoldersQuery,
+  reviewCandidateRowsQuery,
+  reviewNames,
   reviewsDependents,
+  selectReviewCandidates,
   SEARCH_LIMIT_DEFAULT,
-  tagMatchPoints,
-  termCoveragePoints,
-  updateCountPoints,
   type MatchAssessment,
   type MatchScope,
   type MatchStrength,
@@ -59,6 +59,7 @@ import {
   commandError,
   MemoryDatabaseError,
 } from "../effect/errors";
+import { toContractValue } from "../effect/remote-http";
 import {
   jsonNumber,
   jsonObject,
@@ -71,6 +72,7 @@ import {
 } from "../json";
 import {
   allowsNewRepository,
+  readRepositories,
   repositoryForCurrentDirectory,
   similarRepositories,
 } from "../repository";
@@ -320,17 +322,6 @@ export const HYBRID_FUSION = {
   k: RRF_K,
 } as const;
 
-export type ScoreBreakdown = {
-  fts_rank: number;
-  term_coverage: number;
-  exact_match: number;
-  tag_match: number;
-  recency: number;
-  certainty: number;
-  update_count: number;
-  total: number;
-};
-
 /** Query terms plus literal identifiers used for absolute match strength. */
 export type SearchMatchQuery = {
   terms: string[];
@@ -358,6 +349,12 @@ export function assessRowMatch(
       stringValue(row.context),
       ...storedStringArray(row.refs),
     ]),
+    fields: {
+      content: stringValue(row.content),
+      tags: stringValue(row.tags),
+      context: stringValue(row.context),
+      refs: storedStringArray(row.refs).join("\n"),
+    },
     semanticScore,
     scope: query.scope,
   });
@@ -368,6 +365,8 @@ function matchFields(match: MatchAssessment): JsonObject {
     match_strength: match.match_strength,
     term_coverage: match.term_coverage,
     exact_matches: [...match.exact_matches],
+    matched_terms: [...match.matched_terms],
+    matched_in: [...match.matched_in],
   };
 }
 
@@ -401,40 +400,18 @@ function scoreBreakdown(
   row: JsonObject,
   queryTokens: string[],
   match: MatchAssessment,
+  best: number,
 ): ScoreBreakdown {
-  const ftsRank = ftsRankPoints(jsonNumber(row.fts_rank) ?? 0);
-  const termCoverage = termCoveragePoints(match.term_coverage);
-  const exactMatch = exactMatchPoints(match.exact_matches.length);
-  const tagMatch = tagMatchPoints(
-    parseTags(stringValue(row.tags)),
-    queryTokens,
-  );
-  const recency = recencyPoints(sqliteDateToMs(stringValue(row.updated_at)));
-  const certainty = certaintyPoints(
-    normalizeCertaintyValue(row.certainty, "speculative"),
-  );
-  const updateCount = updateCountPoints(jsonNumber(row.update_count) ?? 0);
-  const total = Number(
-    (
-      ftsRank +
-      termCoverage +
-      exactMatch +
-      tagMatch +
-      recency +
-      certainty +
-      updateCount
-    ).toFixed(3),
-  );
-  return {
-    fts_rank: ftsRank,
-    term_coverage: termCoverage,
-    exact_match: exactMatch,
-    tag_match: tagMatch,
-    recency,
-    certainty,
-    update_count: updateCount,
-    total,
-  };
+  return scoreCandidate({
+    ftsRank: jsonNumber(row.fts_rank) ?? 0,
+    bestFtsRank: best,
+    match,
+    tags: parseTags(stringValue(row.tags)),
+    queryTerms: queryTokens,
+    updatedAtMs: sqliteDateToMs(stringValue(row.updated_at)),
+    certainty: normalizeCertaintyValue(row.certainty, "speculative"),
+    memoryType: stringValue(row.memory_type),
+  });
 }
 
 export function scoreRowsWithDetails(
@@ -448,9 +425,12 @@ export function scoreRowsWithDetails(
     scope: options.scope,
   };
   const normalized = rows.map((row) => normalizeSqliteRow(row));
+  const best = bestFtsRank(
+    normalized.map((row) => jsonNumber(row.fts_rank) ?? 0),
+  );
   const withScore = normalized.map((row) => {
     const match = assessRowMatch(row, query);
-    const breakdown = scoreBreakdown(row, queryTokens, match);
+    const breakdown = scoreBreakdown(row, queryTokens, match, best);
     const scored =
       jsonObject({
         ...row,
@@ -458,7 +438,7 @@ export function scoreRowsWithDetails(
         score: breakdown.total,
       }) ?? {};
     if (options.explainScore) {
-      Object.assign(scored, { score_breakdown: breakdown });
+      Object.assign(scored, { score_breakdown: { ...breakdown } });
     }
     return scored;
   });
@@ -624,15 +604,36 @@ function appendStatusFilter(
   }
 }
 
+/** SQL for the repositories a read covers: one, or the list given to --repo. */
+export function repositoryClause(prefix = "") {
+  const params = readRepositories();
+  return {
+    sql:
+      params.length === 1
+        ? `${prefix}repository = ?`
+        : `${prefix}repository IN (${params.map(() => "?").join(", ")})`,
+    params,
+  };
+}
+
 export function applySqlFilters(
   clauses: string[],
   params: (string | number)[],
   filters: CommonFilters,
-  options: { defaultActiveOnly?: boolean; columnPrefix?: string } = {},
+  options: {
+    defaultActiveOnly?: boolean;
+    columnPrefix?: string;
+    /** Searches leave expired status memories out unless they ask for status. */
+    hideExpiredStatus?: boolean;
+  } = {},
 ) {
   const prefix = options.columnPrefix ?? "";
-  clauses.push(`${prefix}repository = ?`);
-  params.push(repositoryForCurrentDirectory());
+  const repositories = repositoryClause(prefix);
+  clauses.push(repositories.sql);
+  params.push(...repositories.params);
+  if (options.hideExpiredStatus && filters.memoryType !== "status") {
+    clauses.push(`NOT ${expiredStatusSql(prefix)}`);
+  }
   if (filters.tag) {
     clauses.push(`${prefix}tags LIKE ?`);
     params.push(`%${filters.tag}%`);
@@ -657,9 +658,10 @@ export function getMemoryById(
   database: MemoryDatabaseApi,
   id: number,
 ): Effect.Effect<JsonObject | null, MemoryDatabaseError> {
+  const repositories = repositoryClause();
   return database
-    .get("SELECT * FROM memories WHERE repository = ? AND id = ?", [
-      repositoryForCurrentDirectory(),
+    .get(`SELECT * FROM memories WHERE ${repositories.sql} AND id = ?`, [
+      ...repositories.params,
       id,
     ])
     .pipe(Effect.map((row) => (row ? normalizeSqliteRow(row) : null)));
@@ -749,66 +751,74 @@ export function detectPotentialConflicts(
     );
 }
 
+/** A changed or retired memory, with the part of its text that no longer holds. */
+export type ReviewPremise = {
+  readonly id: number;
+  readonly memoryType: string;
+  /** The whole content when it is retired; the removed or rewritten part when updated. */
+  readonly text: string;
+};
+
 /**
- * Active records that may rely on a changed or retired premise. A shared
- * literal identifier makes a candidate strong; broad term overlap is weak.
+ * Active records that may rely on a changed or retired premise: they cite it
+ * by id, or share a name with its text that few other records carry. Each
+ * row carries shared_identifiers and cites.
  */
 export function findReviewCandidates(
   database: MemoryDatabaseApi,
-  premises: JsonObject[],
+  premises: readonly ReviewPremise[],
   alsoExclude: number[] = [],
 ): Effect.Effect<JsonObject[], MemoryDatabaseError> {
-  const excluded = new Set([
-    ...premises.map((premise) => Number(premise.id)),
-    ...alsoExclude,
-  ]);
-  const durable = premises.filter((premise) => {
-    const memoryType = stringValue(premise.memory_type, "convention");
-    return isMemoryType(memoryType) && reviewsDependents(memoryType);
-  });
-  return Effect.forEach(durable, (premise) => {
-    const query = premiseQuery(stringValue(premise.content));
-    const terms = extractTerms(query.leadingText);
-    const ftsQuery = buildFtsQuery(terms);
-    if (!ftsQuery) {
-      return Effect.succeed<JsonObject[]>([]);
-    }
-    return database
-      .all(
-        `SELECT m.*, bm25(memories_fts) AS fts_rank
-         FROM memories m
-         JOIN memories_fts ON m.id = memories_fts.rowid
-         WHERE memories_fts MATCH ? AND m.repository = ? AND m.status = 'active'
-         ORDER BY bm25(memories_fts)
-         LIMIT 20`,
-        [ftsQuery, repositoryForCurrentDirectory()],
-      )
-      .pipe(
-        Effect.map((rows) =>
-          scoreRowsWithDetails(rows, terms, {
-            identifiers: query.identifiers,
-            scope: "files",
-          }),
-        ),
+  const repository = repositoryForCurrentDirectory();
+  const durable = premises.filter(
+    (premise) =>
+      isMemoryType(premise.memoryType) && reviewsDependents(premise.memoryType),
+  );
+  return Effect.forEach(durable, (premise) =>
+    Effect.gen(function* () {
+      const names = reviewNames(premise.text);
+      const holderQuery = nameHoldersQuery({
+        repository,
+        excludeId: premise.id,
+        names,
+      });
+      const holders = nameHoldersFromRows(
+        names.length === 0
+          ? []
+          : (yield* database.all(holderQuery.sql, holderQuery.params)).map(
+              toContractValue,
+            ),
       );
-  }).pipe(
-    Effect.map((groups) => {
-      const byId = new Map<number, JsonObject>();
-      for (const row of groups.flat()) {
-        const id = Number(row.id);
-        if (
-          !excluded.has(id) &&
-          !byId.has(id) &&
-          row.match_strength !== "none"
-        ) {
-          byId.set(id, row);
-        }
-      }
-      return orderRowsByMatchStrength([...byId.values()]).slice(
-        0,
-        REVIEW_CANDIDATES_LIMIT,
-      );
+      const rowQuery = reviewCandidateRowsQuery({
+        repository,
+        premiseId: premise.id,
+        holders,
+      });
+      const rows = yield* database.all(rowQuery.sql, rowQuery.params);
+      return {
+        id: premise.id,
+        holders,
+        rows: rows.map((row) => {
+          const normalized = normalizeSqliteRow(row);
+          return {
+            id: Number(normalized.id),
+            content: stringValue(normalized.content),
+            normalized,
+          };
+        }),
+      };
     }),
+  ).pipe(
+    Effect.map((groups) =>
+      selectReviewCandidates(
+        groups,
+        new Set([...premises.map((premise) => premise.id), ...alsoExclude]),
+      ).map((candidate) => ({
+        ...candidate.row.normalized,
+        shared_identifiers: candidate.shared_identifiers,
+        cites: candidate.cites,
+      })),
+    ),
   );
 }
 
@@ -853,6 +863,35 @@ function otherRepositoriesText(unknown: UnknownRepository): string {
 }
 
 /**
+ * `repositories` for a read across several. A slug without memories adds
+ * nothing to the results, so it is named in `warning` and on stderr.
+ */
+function listScope(
+  database: MemoryDatabaseApi,
+  repositories: string[],
+): Effect.Effect<JsonObject, MemoryDatabaseError> {
+  return database
+    .all(
+      `SELECT repository FROM memories WHERE repository IN (${repositories.map(() => "?").join(", ")}) GROUP BY repository`,
+      repositories,
+    )
+    .pipe(
+      Effect.map((rows) => {
+        const known = new Set(
+          rows.map((row) => stringValue(jsonObject(row)?.repository)),
+        );
+        const empty = repositories.filter((slug) => !known.has(slug));
+        if (empty.length === 0) {
+          return { repositories };
+        }
+        const warning = `No memories in: ${empty.join(", ")}. 'machine-memory repo list' shows the repositories that have memories.`;
+        warnOnStderr(warning);
+        return { repositories, warning };
+      }),
+    );
+}
+
+/**
  * `repository` for a read's output. When the read found nothing because the
  * repository holds no memories at all, adds `warning` and repeats it on stderr:
  * a wrong slug otherwise looks like "nothing is known about this".
@@ -861,6 +900,10 @@ export function readScope(
   database: MemoryDatabaseApi,
   found: number,
 ): Effect.Effect<JsonObject, MemoryDatabaseError> {
+  const repositories = readRepositories();
+  if (repositories.length > 1) {
+    return listScope(database, repositories);
+  }
   const scope: JsonObject = { repository: repositoryForCurrentDirectory() };
   if (found > 0) {
     return Effect.succeed(scope);
@@ -1097,6 +1140,7 @@ export function queryNeighborhoodMatches(
   applySqlFilters(clauses, params, filters, {
     defaultActiveOnly: true,
     columnPrefix: "m.",
+    hideExpiredStatus: true,
   });
   return database
     .all(

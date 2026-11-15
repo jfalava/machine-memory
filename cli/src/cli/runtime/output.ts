@@ -3,6 +3,7 @@ import { Flag, GlobalFlag } from "effect/cli";
 import { asciiSafe, type CommandFlags, printJson } from "../../cli-utils";
 import type { CommonFilters } from "../../constants";
 import type { JsonObject, JsonValue } from "../../json";
+import { readRepositories } from "../../repository";
 import {
   parseStoredEvidence,
   parseStoredValidationGaps,
@@ -76,7 +77,10 @@ function formatBriefMemoryLine(row: JsonObject): string {
   const gaps = parseStoredValidationGaps(row.validation_gaps).length;
   const support = `${evidence.length > 0 ? ` <evidence:${evidence.join("+")}>` : ""}${gaps > 0 ? ` <gaps:${gaps}>` : ""}`;
   const content = stringValue(row.content).replace(/\s+/g, " ").trim();
-  return `[${id}] <${certainty}>${support} <${type}>${match}: ${content} ${briefTagText(row.tags)}`;
+  // A read across several repositories says which one each memory is in.
+  const where =
+    readRepositories().length > 1 ? ` ${stringValue(row.repository)}` : "";
+  return `[${id}${where}] <${certainty}>${support} <${type}>${match}: ${content} ${briefTagText(row.tags)}`;
 }
 
 const SNIPPET_MAX_CHARS = 140;
@@ -116,6 +120,9 @@ export function evidenceSummary(row: JsonObject): JsonObject {
  */
 export function minimalResultSummary(row: JsonObject): JsonObject {
   const summary: JsonObject = { id: Number(row.id ?? 0) };
+  if (readRepositories().length > 1) {
+    summary.repository = stringValue(row.repository);
+  }
   if (row.score !== undefined) {
     summary.score = Number(row.score);
   }

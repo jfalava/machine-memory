@@ -15,6 +15,8 @@ type RepositoryTarget = {
   readonly slug: string | undefined;
   /** --allow-new-repo: writes may start a repository that has no memories. */
   readonly allowNew: boolean;
+  /** The other repositories of a read across several: --repo a,b. */
+  readonly others?: readonly string[];
 };
 
 let repositoryTarget: RepositoryTarget = { slug: undefined, allowNew: false };
@@ -29,6 +31,35 @@ export function parseRepositorySlug(value: string): string {
     );
   }
   return slug;
+}
+
+/** Validates --repo or MACHINE_MEMORY_REPO, which may list several slugs for a read. */
+export function parseRepositoryList(value: string): string[] {
+  const slugs = value.split(",").map((slug) => parseRepositorySlug(slug));
+  return [...new Set(slugs)];
+}
+
+/** Commands that read several repositories at once with --repo a,b. */
+const MULTI_REPOSITORY_COMMANDS = new Set(["query", "get", "list"]);
+
+/** Why `command` cannot run on the repository list of this run, if it cannot. */
+export function repositoryListError(
+  command: string | undefined,
+): string | undefined {
+  const count = 1 + (repositoryTarget.others?.length ?? 0);
+  if (
+    repositoryTarget.slug === undefined ||
+    count === 1 ||
+    (command !== undefined && MULTI_REPOSITORY_COMMANDS.has(command))
+  ) {
+    return undefined;
+  }
+  return `--repo lists ${count} repositories, and only query, get and list read several at once. Run '${command ?? "this command"}' once per repository with --repo <slug>.`;
+}
+
+/** The repositories a read covers: one, or the list given to --repo. */
+export function readRepositories(): string[] {
+  return [repositoryForCurrentDirectory(), ...(repositoryTarget.others ?? [])];
 }
 
 /** Process-wide target for every repository-scoped command in this run. */

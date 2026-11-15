@@ -1,6 +1,8 @@
 import {
+  EMBEDDING_MODEL,
   indexStatusFromRows,
   indexStatusQueries,
+  UNINDEXED_SQL,
   type IndexStatus,
 } from "@machine-memory/contract";
 import { Effect } from "effect";
@@ -15,6 +17,30 @@ import { INDEX_USAGE, REINDEX_USAGE } from "../features/memory/usage";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import { parseIdSpec } from "../shared";
+
+/** --failed-only or --unindexed: the part of the scope to queue, if not all of it. */
+function reindexSubset(flags: CommandContext["flags"]) {
+  const failedOnly = hasFlag(flags, "--failed-only");
+  const unindexed = hasFlag(flags, "--unindexed");
+  if (failedOnly && unindexed) {
+    usageError(
+      `--failed-only and --unindexed select different memories; run reindex once for each. Usage: ${REINDEX_USAGE}`,
+    );
+  }
+  if (failedOnly) {
+    return {
+      sql: "generation > delivered_generation AND last_error IS NOT NULL",
+      params: [],
+    };
+  }
+  if (unindexed) {
+    return {
+      sql: `memory_id IN (SELECT s.memory_id FROM memory_vector_sync s JOIN memories m ON m.id = s.memory_id WHERE m.status = 'active' AND ${UNINDEXED_SQL})`,
+      params: [EMBEDDING_MODEL],
+    };
+  }
+  return undefined;
+}
 
 /** Which sync rows `reindex` re-queues, as a WHERE clause and its bindings. */
 function reindexScope(commandCtx: CommandContext) {
@@ -38,10 +64,10 @@ function reindexScope(commandCtx: CommandContext) {
     conditions.push(`memory_id IN (${ids.map(() => "?").join(", ")})`);
     params.push(...ids);
   }
-  if (hasFlag(flags, "--failed-only")) {
-    conditions.push(
-      "generation > delivered_generation AND last_error IS NOT NULL",
-    );
+  const subset = reindexSubset(flags);
+  if (subset !== undefined) {
+    conditions.push(subset.sql);
+    params.push(...subset.params);
   }
   return {
     repository,
@@ -118,12 +144,14 @@ export function handleIndexCommand(commandCtx: CommandContext) {
       ? undefined
       : repositoryForCurrentDirectory();
     const status = yield* readIndexStatus(database, repository);
-    yield* Effect.sync(() =>
-      printCommandOutput(commandCtx, {
-        repository: repository ?? null,
-        all_repositories: repository === undefined,
-        ...status,
-      }),
-    );
+    const payload: JsonObject = {
+      repository: repository ?? null,
+      all_repositories: repository === undefined,
+      ...status,
+    };
+    if (status.unindexed > 0) {
+      payload.note = `Semantic search cannot find ${status.unindexed} active memories: their vectors predate the current index. Queue them with 'machine-memory reindex --unindexed --remote${repository === undefined ? " --all-repos" : ""}'.`;
+    }
+    yield* Effect.sync(() => printCommandOutput(commandCtx, payload));
   });
 }

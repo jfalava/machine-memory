@@ -142,7 +142,7 @@ export function createMemoryServer(
   register(
     "memory_query",
     "query",
-    "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { repository, count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none) and the query identifiers it matched exactly. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
+    "Search project memories. Use this to recall facts, decisions, conventions, gotchas, and references recorded for a repository. Supports keyword (full-text), semantic (embedding-based), and hybrid search. Returns { repository, count, no_strong_match, results }; each result has an absolute match_strength (strong, weak, none), the query identifiers it matched exactly, and matched_terms with matched_in, the fields that hold them. Scores only rank within one response: when no_strong_match is true, treat results as loosely related candidates. A status memory past its expiry is left out unless memory_type is status; memory_list and memory_get still return it. This is a read-only tool — a wrong repository slug returns empty results; nothing is lost.",
   );
 
   register(
@@ -166,13 +166,13 @@ export function createMemoryServer(
   register(
     "memory_doctor",
     "doctor",
-    "Audit active memories in one repository for exact and near duplicates, a status superseded by a newer status on the same topic tag (stale_status_overlap), missing status expiry, status records past their expiry (expired_status: update or deprecate them), type-boundary problems, tag taxonomy issues, malformed refs, verified records without evidence (verified_without_evidence: legacy rows to review, not bulk-fix), and gotchas naming the same identifiers (gotcha_overlap: consolidate the shared workaround). Two kinds are informational and need no fix on their own: canonical_thread_overlap (several records on one topic) and similar_tags (tags such as topic:og and topic:og-image that may name one topic). counts_by_kind gives the size of each kind. This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
+    "Audit active memories in one repository for exact and near duplicates, a status superseded by a newer status on the same topic tag (stale_status_overlap), missing status expiry, status records past their expiry (expired_status: update or deprecate them), type-boundary problems, tag taxonomy issues, malformed refs, verified records without evidence (verified_without_evidence: legacy rows to review, not bulk-fix), and gotchas naming the same identifiers (gotcha_overlap: consolidate the shared workaround). Two kinds are informational and need no fix on their own: canonical_thread_overlap (several records on one topic) and similar_tags (tags such as topic:og and topic:og-image that may name one topic). counts_by_kind gives the size of each kind. unindexed counts the active records semantic search cannot find because their vector predates the current index; the CLI command reindex --unindexed queues them. This is read-only. Review every finding semantically before applying memory_deprecate or memory_update.",
   );
 
   register(
     "memory_stats",
     "stats",
-    "Summarize one repository's memory health and distribution: status, type, certainty, tags, oldest record, stale records, and untagged records. The index field reports the semantic index: records pending (written, not indexed yet), retrying (last index write failed and will be tried again), and parked (cannot be indexed until the record changes), plus failures grouped by error; semantic search can miss records until all three are 0. This is read-only; a wrong repository slug returns zero counts.",
+    "Summarize one repository's memory health and distribution: status, type, certainty, tags, oldest record, stale records, and untagged records. The index field reports the semantic index: records pending (written, not indexed yet), retrying (last index write failed and will be tried again), and parked (cannot be indexed until the record changes), plus failures grouped by error, and unindexed (active records whose vector predates the current index; the CLI command reindex --unindexed queues them); semantic search can miss records until all four are 0. This is read-only; a wrong repository slug returns zero counts.",
   );
 
   register(
@@ -184,7 +184,7 @@ export function createMemoryServer(
   register(
     "memory_suggest",
     "suggest",
-    "Suggest memories relevant to file paths, e.g. the files about to be edited. Combines full-text search over path-derived terms with directory neighborhood matches (tags and content/context path hints), merged and scored. Results are strong only when a memory names a suggested file path or specific file name literally; no_strong_match is true otherwise. Use this for the pre-edit scan when touched paths are known.",
+    "Suggest memories relevant to file paths, e.g. the files about to be edited. Combines full-text search over path-derived terms with directory neighborhood matches (tags and content/context path hints), merged and scored. Results are strong only when a memory names a suggested file path or specific file name literally; no_strong_match is true otherwise. Manifests and lockfiles (package.json, bunfig.toml, *.lock) are searched by directory, not by name, and are listed in generic_files; use memory_query to find a memory about one. Use this for the pre-edit scan when touched paths are known.",
   );
 
   register(

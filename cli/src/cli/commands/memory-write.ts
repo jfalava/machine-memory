@@ -1,6 +1,7 @@
 import {
   assessReplacement,
   canonicalTags,
+  changedText,
   compareMemoryFact,
   decideUpsert,
   droppedDetails,
@@ -220,7 +221,14 @@ function reconcileWrite(
   if (stringValue(previous.content) === content) {
     return Effect.succeed({ id, reviewCandidates: [] });
   }
-  return findReviewCandidates(database, [previous]).pipe(
+  // Records can only come to rely on what the update removes or rewrites.
+  return findReviewCandidates(database, [
+    {
+      id,
+      memoryType: stringValue(previous.memory_type, "convention"),
+      text: changedText(stringValue(previous.content), content),
+    },
+  ]).pipe(
     Effect.map((reviewCandidates) => ({
       id,
       dropped: droppedFor(previous, content),
@@ -247,8 +255,11 @@ function reconciliationFields(
         Number(row.id),
       );
     } else {
-      fields.review_candidates =
-        reconciliation.reviewCandidates.map(minimalResultSummary);
+      fields.review_candidates = reconciliation.reviewCandidates.map((row) => ({
+        ...minimalResultSummary(row),
+        shared_identifiers: row.shared_identifiers ?? [],
+        cites: row.cites === true,
+      }));
     }
   }
   return fields;
@@ -1364,6 +1375,47 @@ function runPlainAdd(
   });
 }
 
+/**
+ * After a thread's first write to a repository, says once on stderr how to
+ * review everything the thread wrote. A writer without a thread has nothing
+ * to scope that review to, and later writes stay quiet: either the thread has
+ * touched a second memory, or history holds a revision it wrote.
+ */
+function remindOfCheckpoint(commandCtx: CommandContext) {
+  const writer = currentWriter();
+  if (!writer.includes(":") || hasFlag(commandCtx.flags, "--dry-run")) {
+    return Effect.void;
+  }
+  const repository = repositoryForCurrentDirectory();
+  return requireDatabase(commandCtx)
+    .get(
+      `SELECT
+        (SELECT COUNT(*) FROM memories
+          WHERE repository = ? AND (source_agent = ? OR last_updated_by = ?))
+        + (SELECT COUNT(*) FROM memory_history
+          WHERE repository = ? AND (source_agent = ? OR last_updated_by = ?))
+        AS written`,
+      [repository, writer, writer, repository, writer, writer],
+    )
+    .pipe(
+      Effect.map((row) => {
+        if (jsonNumber(jsonObject(row)?.written) === 1) {
+          warnOnStderr(
+            `This is the first memory this thread wrote here. Before your final response, review what it wrote with 'machine-memory checkpoint --mine ${hasFlag(commandCtx.flags, "--remote") ? "--remote" : "--local"}'.`,
+          );
+        }
+      }),
+    );
+}
+
+/** Runs a write command, then the reminder above. */
+export function withCheckpointReminder<E, R>(
+  handler: (commandCtx: CommandContext) => Effect.Effect<void, E, R>,
+) {
+  return (commandCtx: CommandContext) =>
+    handler(commandCtx).pipe(Effect.tap(() => remindOfCheckpoint(commandCtx)));
+}
+
 export function handleAddCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const { flags, outputMode } = commandCtx;
@@ -1947,7 +1999,7 @@ function printDeprecateResults(params: {
   );
   const { outputMode } = commandCtx;
   warnReconciliation(
-    `Deprecating ${rows.map((row) => `#${Number(row.id)}`).join(", ")}:`,
+    `Deprecating ${rows.map((row) => `#${Number(row.id)}`).join(", ")}`,
     { id: 0, reviewCandidates: params.reviewCandidates },
   );
   if (targetIds.length === 1 && !rows.length) {
@@ -2037,7 +2089,11 @@ export function handleDeprecateCommand(commandCtx: CommandContext) {
     const { rows, missingIds } = result;
     const reviewCandidates = yield* findReviewCandidates(
       database,
-      rows,
+      rows.map((row) => ({
+        id: Number(row.id),
+        memoryType: stringValue(row.memory_type, "convention"),
+        text: stringValue(row.content),
+      })),
       supersededBy === undefined || supersededBy === null ? [] : [supersededBy],
     );
     yield* Effect.sync(() => {

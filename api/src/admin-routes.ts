@@ -154,6 +154,7 @@ export const SCHEMA_MARKERS: readonly {
   { name: "memories_validate_evidence_insert" },
   { name: "memories_validate_insert", sql: "2000 byte embedding budget" },
   { name: "memory_vector_sync", sql: "queued_at" },
+  { name: "memory_vector_sync", sql: "delivered_model" },
 ];
 
 /** POST /status */

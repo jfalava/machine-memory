@@ -40,5 +40,10 @@ to a different checkout, so `checkpoint` only uses files passed with `--files`.
 to another [writer](/machine/add#who-wrote-it), so the list is not mixed with
 other threads' writes from the same hours.
 
+The first time a thread writes to a repository, `add`, `update` or `deprecate`
+prints one line on stderr that names `checkpoint --mine` as the review to run
+before the final response. Later writes of that thread stay quiet, and so does
+a writer without a thread.
+
 `--json-min` returns minimal summaries with content snippets. `--quiet` prints
 only `{recent_ids, related_ids}`, and `--brief` prints one line per memory.

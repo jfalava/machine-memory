@@ -4,6 +4,7 @@ import {
   INFORMATIONAL_DOCTOR_KINDS,
   jsonString,
   sqliteDateToMs,
+  unindexedIdsQuery,
   type MemoryDoctorFinding,
 } from "@machine-memory/contract";
 import { Effect, Schema } from "effect";
@@ -14,11 +15,13 @@ import {
   usageError,
   type CommandFlags,
 } from "../../cli-utils";
-import type { JsonObject } from "../../json";
+import { jsonNumber, jsonObject, type JsonObject } from "../../json";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
 import {
+  parseIntegerFlag,
+  parseResultLimit,
   parseSinceDate,
   stringValue,
   uniqueLowerPreserveOrder,
@@ -229,9 +232,39 @@ const StoredRowsSchema = Schema.Array(
   Schema.Record(Schema.String, Schema.Json),
 );
 
+const PAGE_LIMIT_DEFAULT = 50;
+const UNINDEXED_IDS_SHOWN = 20;
+const UNINDEXED_COMMAND = "machine-memory reindex --unindexed";
+
+/** --limit and --offset over the selected findings; the counts cover all of them. */
+function parsePage(flags: CommandFlags) {
+  const offset = parseIntegerFlag(flags, "--offset") ?? 0;
+  if (offset < 0) {
+    usageError("--offset must be a non-negative integer.");
+  }
+  return { limit: parseResultLimit(flags, PAGE_LIMIT_DEFAULT), offset };
+}
+
+/** Ids of active memories without a vector in the current index; none on a local database. */
+function fetchUnindexedIds(commandCtx: CommandContext, repository: string) {
+  const database = requireDatabase(commandCtx);
+  if (!database.vectorize) {
+    return Effect.succeed<number[]>([]);
+  }
+  const query = unindexedIdsQuery(repository);
+  return database
+    .all(query.sql, query.params)
+    .pipe(
+      Effect.map((rows) =>
+        rows.flatMap((row) => jsonNumber(jsonObject(row)?.id) ?? []),
+      ),
+    );
+}
+
 export function handleDoctorCommand(commandCtx: CommandContext) {
   return Effect.gen(function* () {
     const repository = repositoryForCurrentDirectory();
+    const page = parsePage(commandCtx.flags);
     // Stored rows are JSON values by construction; a mismatch is a defect.
     const rows = yield* Schema.decodeUnknownEffect(StoredRowsSchema)(
       yield* requireDatabase(commandCtx).all(
@@ -242,9 +275,23 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
         [repository],
       ),
     ).pipe(Effect.orDie);
-    const result = analyzeMemoryDoctor(repository, rows);
+    const unindexedIds = yield* fetchUnindexedIds(commandCtx, repository);
+    const result = analyzeMemoryDoctor(
+      repository,
+      rows,
+      undefined,
+      unindexedIds.length,
+    );
     const selected = selectFindings(result.findings, commandCtx.flags, rows);
-    const { groups, commands } = groupFindings(selected);
+    const all = groupFindings(selected);
+    const shown = groupFindings(
+      selected.slice(page.offset, page.offset + page.limit),
+    );
+    // The reindex command belongs to the first page, like the first findings.
+    const commands =
+      unindexedIds.length > 0 && page.offset === 0
+        ? [UNINDEXED_COMMAND, ...shown.commands]
+        : shown.commands;
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.jsonMin || commandCtx.outputMode.quiet) {
         const byKind = findingsByKind(selected);
@@ -255,7 +302,9 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
           counts_by_kind: byKind.counts,
           ids_by_kind: byKind.ids,
           informational_counts: informationalCounts(result.counts_by_kind),
-          suggested_commands_count: commands.length,
+          unindexed: result.unindexed,
+          suggested_commands_count:
+            all.commands.length + (unindexedIds.length > 0 ? 1 : 0),
         });
         return;
       }
@@ -264,21 +313,38 @@ export function handleDoctorCommand(commandCtx: CommandContext) {
         return;
       }
       const summary: JsonObject = { checked: result.checked };
-      for (const [group, items] of groups) {
+      for (const [group, items] of all.groups) {
         // Informational groups are counted in informational_counts instead.
         if (items.length > 0 || !INFORMATIONAL_GROUPS.has(group)) {
           summary[group === "status_expiry" ? "status_missing_expiry" : group] =
             items.length;
         }
       }
-      summary.suggested_commands = commands.length;
-      printCommandOutput(commandCtx, {
+      summary.unindexed = result.unindexed;
+      summary.suggested_commands =
+        all.commands.length + (unindexedIds.length > 0 ? 1 : 0);
+      const output: JsonObject = {
         repository,
         summary,
         informational_counts: informationalCounts(result.counts_by_kind),
-        findings: Object.fromEntries(groups),
-        suggested_commands: commands,
-      });
+        page: {
+          offset: page.offset,
+          limit: page.limit,
+          total: selected.length,
+          has_more: page.offset + page.limit < selected.length,
+        },
+      };
+      if (unindexedIds.length > 0) {
+        output.unindexed = {
+          count: unindexedIds.length,
+          ids: unindexedIds.slice(0, UNINDEXED_IDS_SHOWN),
+          hint: "Semantic search cannot find these memories: their vectors predate the current index.",
+          suggested_command: UNINDEXED_COMMAND,
+        };
+      }
+      output.findings = Object.fromEntries(shown.groups);
+      output.suggested_commands = commands;
+      printCommandOutput(commandCtx, output);
     });
   });
 }

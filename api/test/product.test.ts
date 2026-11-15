@@ -80,6 +80,7 @@ beforeAll(async () => {
     "0006_memory_evidence_triggers",
     "0007_embedding_budget",
     "0008_vector_sync_queue",
+    "0009_vector_sync_model",
   ]) {
     await applyMigration(name);
   }
@@ -1053,6 +1054,63 @@ test("hybrid ranks agreement above a keyword-only leader before truncation", asy
   expect(result.result.results[0].id).not.toBe(first.result.id);
 });
 
+test("searches leave an expired status out, while writes and status searches still find it", async () => {
+  const durable = await product("add", {
+    content: "Deploy pipeline applies migrations before the workers",
+  });
+  const status = (content: string) =>
+    product("add", {
+      content,
+      memory_type: "status",
+      expires_after_days: 3,
+      create_new: true,
+    });
+  const expired = await status("Deploy pipeline migration is half finished");
+  const current = await status("Deploy pipeline dashboards await review");
+  await db
+    .prepare(
+      "UPDATE memories SET updated_at = datetime('now', '-4 days') WHERE id = ?",
+    )
+    .bind(expired.result.id)
+    .run();
+  const found = async (fields: Record<string, JsonValue>) =>
+    (
+      await product("query", { query: "deploy pipeline", ...fields })
+    ).result.results
+      .map((row: { id: number }) => row.id)
+      .sort((left: number, right: number) => left - right);
+  expect(await found({})).toEqual([durable.result.id, current.result.id]);
+  expect(await found({ memory_type: "status" })).toEqual([
+    expired.result.id,
+    current.result.id,
+  ]);
+  query.mockImplementation(() =>
+    Effect.succeed({
+      count: 1,
+      matches: [{ id: String(expired.result.id), score: 0.95 }],
+    }),
+  );
+  expect(await found({ mode: "semantic" })).toEqual([]);
+
+  const suggested = await product("suggest", {
+    files: "package.json,bun.lock",
+  });
+  expect(suggested.result).toMatchObject({
+    count: 0,
+    generic_files: ["package.json", "bun.lock"],
+    normalized_path_terms: [],
+  });
+
+  // The status update that refreshes the record must still find it.
+  const refreshed = await product("add", {
+    content: "Deploy pipeline migration is half finished",
+    upsert_match: "deploy pipeline migration half finished",
+    upsert_threshold: 0,
+  });
+  expect(refreshed.result.mode).toBe("updated");
+  expect(refreshed.result.id).toBe(expired.result.id);
+});
+
 test("migration retries retain inactive records and distinct metadata by source identity", async () => {
   const rows: JsonObject[] = [
     {
@@ -1286,6 +1344,7 @@ test("a memory that cannot be embedded is parked, reported by stats, and re-queu
     retrying: 0,
     parked: 1,
     oldest_pending_seconds: null,
+    unindexed: 0,
     failures: [
       {
         error: "Memory is over by 1 bytes of 2,000.",
@@ -1307,6 +1366,87 @@ test("a memory that cannot be embedded is parked, reported by stats, and re-queu
   });
   await drain(now + 700_000);
   expect(await job(id)).toMatchObject({ delivered_generation: 3, attempts: 0 });
+});
+
+test("an active memory whose vector predates the current index is unindexed until it is queued again", async () => {
+  const stale = await insert("indexed with the previous model");
+  const legacy = await insert("indexed before the model was recorded");
+  const fresh = await insert("indexed with the current model");
+  const inactive = await insert("deprecated, so it has no vector");
+  await product("deprecate", { ids: [inactive] });
+  const now = Date.now();
+  await drain(now);
+  expect(await job(fresh)).toMatchObject({
+    delivered_model: "@cf/baai/bge-m3",
+  });
+  const deliveredWith = (model: string | null, id: number) =>
+    db
+      .prepare(
+        "UPDATE memory_vector_sync SET delivered_model = ? WHERE memory_id = ?",
+      )
+      .bind(model, id)
+      .run();
+  await deliveredWith("@cf/baai/bge-base-en-v1.5", stale);
+  await deliveredWith(null, legacy);
+  await deliveredWith("@cf/baai/bge-base-en-v1.5", inactive);
+
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 0,
+    unindexed: 2,
+  });
+  expect((await product("doctor")).result.unindexed).toBe(2);
+
+  // What `reindex --unindexed` does: queue the write again.
+  await db
+    .prepare(
+      "UPDATE memory_vector_sync SET generation = generation + 1, next_attempt_at = 0 WHERE memory_id IN (?, ?)",
+    )
+    .bind(stale, legacy)
+    .run();
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 2,
+    unindexed: 0,
+  });
+  await drain(now + 120_000);
+  expect(await job(stale)).toMatchObject({
+    delivered_model: "@cf/baai/bge-m3",
+  });
+  expect((await product("stats", {})).result.index).toMatchObject({
+    pending: 0,
+    unindexed: 0,
+  });
+});
+
+test("the model migration marks only writes queued and delivered since the queue migration", async () => {
+  const delivered = await insert("queued and delivered on the current index");
+  const older = await insert("delivered before queued_at existed");
+  const pending = await insert("queued, not delivered yet");
+  const state = (id: number, sets: string) =>
+    db
+      .prepare(
+        `UPDATE memory_vector_sync SET delivered_model = NULL, ${sets} WHERE memory_id = ?`,
+      )
+      .bind(id)
+      .run();
+  await state(
+    delivered,
+    "delivered_generation = generation, queued_at = 1000, last_delivered_at = 2000",
+  );
+  await state(
+    older,
+    "delivered_generation = generation, queued_at = 0, last_delivered_at = 2000",
+  );
+  await state(pending, "queued_at = 1000, last_delivered_at = 500");
+  const sql = await readFile(
+    new URL("../../iac/migrations/0009_vector_sync_model.sql", import.meta.url),
+    "utf8",
+  );
+  const backfill = sql.replace(/--[^\n]*/g, "").split(";")[1];
+  expect(backfill).toContain("UPDATE memory_vector_sync");
+  await db.prepare(backfill!).run();
+  expect((await job(delivered))?.delivered_model).toBe("@cf/baai/bge-m3");
+  expect((await job(older))?.delivered_model).toBeNull();
+  expect((await job(pending))?.delivered_model).toBeNull();
 });
 
 test("stats reports a failing delivery as retrying with its error", async () => {
@@ -1555,6 +1695,12 @@ test("updates report dropped details and review candidates; deprecate reviews de
     content: "Security updates wait for nixpkgs-security bumps.",
     memory_type: "convention",
   });
+  const citing = await product("add", {
+    content: `Rollback notes follow the pin decision (#${premise.result.id}).`,
+    memory_type: "reference",
+  });
+  // Unrelated records are not candidates.
+  await product("add", { content: "Docs sidebar lists install first." });
   const diff = await product("diff", {
     id: premise.result.id,
     content: "Home Manager reimports nixpkgs.",
@@ -1593,8 +1739,18 @@ test("updates report dropped details and review candidates; deprecate reviews de
     "nixpkgs-security",
     "flake.nix",
   ]);
+  // The record that cites the premise comes first, then the one that shares a name.
   expect(updated.result.review_candidates).toEqual([
-    expect.objectContaining({ id: dependent.result.id }),
+    expect.objectContaining({
+      id: citing.result.id,
+      shared_identifiers: [],
+      cites: true,
+    }),
+    expect.objectContaining({
+      id: dependent.result.id,
+      shared_identifiers: ["nixpkgs-security"],
+      cites: false,
+    }),
   ]);
   const deprecated = await product("deprecate", { ids: [dependent.result.id] });
   expect(deprecated.status).toBe(200);

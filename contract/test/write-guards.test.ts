@@ -8,6 +8,9 @@ import {
   editValidationGaps,
   nameHoldersFromRows,
   nearDuplicate,
+  reviewCandidateRowsQuery,
+  reviewNames,
+  selectReviewCandidates,
   sharedIdentifiers,
   upsertRefusal,
 } from "../src/index";
@@ -76,6 +79,84 @@ describe("write guards", () => {
         "Keycap styling lives in src/ui/Keycap.tsx. Built with bun@1.4.0, MAX_KEYS=16, released 2026-12-01 as v0.23.0.",
       ),
     ).toEqual(["shadow-inset"]);
+    // Alternatives written as a|b are still present when written apart.
+    expect(
+      droppedNames(
+        "reindex takes --failed-only|--unindexed|--all-repos.",
+        "reindex takes --failed-only, --unindexed or --every-repo.",
+      ),
+    ).toEqual(["--all-repos"]);
+  });
+
+  it("lists review candidates that cite the premise or share a name few records carry", () => {
+    expect(
+      reviewNames(
+        "bun@1.3.2 runs src/ui/Keycap.tsx with --hot since 2026-11-01 (v0.23.0).",
+      ),
+    ).toEqual(["bun", "src/ui/keycap.tsx", "--hot"]);
+
+    const holders = new Map([
+      ["src/ui/keycap.tsx", [2]],
+      ["shadow-inset", [2, 3, 4]],
+      // Four records carry it: too common to say which one relies on the premise.
+      ["--remote", [3, 5, 6, 7]],
+    ]);
+    const rows = [
+      {
+        id: 2,
+        content: "Keycap tests render src/ui/Keycap.tsx with shadow-inset.",
+      },
+      {
+        id: 3,
+        content: "shadow-inset is defined in the theme; run with --remote.",
+      },
+      { id: 5, content: "Deploys pass --remote." },
+      { id: 8, content: "Pressed keys follow the keycap decision (12)." },
+      { id: 9, content: "Step (1) installs, step 12 of 14 deploys." },
+    ];
+    const [keycapTests, theme, , citing, listMarker] = rows;
+    expect(
+      selectReviewCandidates([{ id: 12, holders, rows }], new Set([12])),
+    ).toEqual([
+      { row: citing, shared_identifiers: [], cites: true },
+      {
+        row: keycapTests,
+        shared_identifiers: ["src/ui/keycap.tsx", "shadow-inset"],
+        cites: false,
+      },
+      { row: theme, shared_identifiers: ["shadow-inset"], cites: false },
+    ]);
+    // A bare (1) is a list marker, not a reference to memory 1.
+    expect(
+      selectReviewCandidates(
+        [
+          {
+            id: 1,
+            holders: new Map(),
+            rows: [listMarker, { id: 10, content: "See #1." }].filter(
+              (row) => row !== undefined,
+            ),
+          },
+        ],
+        new Set([1]),
+      ).map((candidate) => candidate.row.id),
+    ).toEqual([10]);
+
+    const query = reviewCandidateRowsQuery({
+      repository: "acme/app",
+      premiseId: 12,
+      holders,
+    });
+    expect(query.params).toEqual([
+      "acme/app",
+      12,
+      "[2,3,4]",
+      "#12",
+      "(12",
+      ", 12",
+      "record 12",
+      "memory 12",
+    ]);
   });
 
   it("refuses an update that drops a name no other record carries", () => {

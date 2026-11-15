@@ -12,6 +12,8 @@ export {
   IndexStatusSchema,
   indexStatusFromRows,
   indexStatusQueries,
+  UNINDEXED_SQL,
+  unindexedIdsQuery,
   VECTOR_SYNC_NEVER,
   type IndexStatus,
 } from "./index-status";
@@ -61,11 +63,10 @@ export {
   type MemoryType,
 } from "./literals";
 export {
-  REVIEW_CANDIDATES_LIMIT,
+  changedText,
   droppedDetails,
   gotchaOverlaps,
   hasDroppedDetails,
-  premiseQuery,
   reviewsDependents,
 } from "./reconcile";
 export {
@@ -79,21 +80,20 @@ export {
   MATCH_THRESHOLDS,
   SEARCH_SCORE_WEIGHTS,
   assessMatch,
-  certaintyPoints,
-  exactMatchPoints,
+  bestFtsRank,
+  expiredStatusSql,
   extractQueryIdentifiers,
   fileIdentifiers,
-  ftsRankPoints,
   hasStrongMatch,
+  isExpiredStatus,
+  isGenericFile,
   matchText,
   matchStrengthRank,
   orderByMatchStrength,
-  recencyPoints,
-  tagMatchPoints,
-  termCoveragePoints,
-  updateCountPoints,
+  scoreCandidate,
   type MatchAssessment,
   type MatchScope,
+  type ScoreBreakdown,
 } from "./search";
 export {
   FTS_CANDIDATE_LIMIT,
@@ -123,12 +123,16 @@ export {
   nameHoldersFromRows,
   nameHoldersQuery,
   nearDuplicate,
+  reviewCandidateRowsQuery,
+  reviewNames,
+  selectReviewCandidates,
   sharedIdentifiers,
   upsertRefusal,
   type AddIntentHints,
   type DuplicateMatch,
   type NameHolders,
   type ReplacementAssessment,
+  type ReviewCandidate,
   type UpsertCandidate,
 } from "./write-guards";
 export {
@@ -199,6 +203,7 @@ export {
   type MemoryStatsSuccess,
   type MemoryWriteResult,
   type MatchedUpdateTarget,
+  type ReviewCandidateRow,
   type ScoredMemoryRow,
   type UpsertMatchInfo,
 } from "./product/results";

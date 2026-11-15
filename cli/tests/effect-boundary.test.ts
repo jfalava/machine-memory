@@ -285,6 +285,12 @@ describe("Effect application boundaries", () => {
       params: [],
     },
     {
+      flags: [["--unindexed", true]],
+      where:
+        "WHERE repository = ? AND memory_id IN (SELECT s.memory_id FROM memory_vector_sync s JOIN memories m ON m.id = s.memory_id WHERE m.status = 'active' AND s.generation = s.delivered_generation AND s.delivered_model IS NOT ?)",
+      params: ["jfalava/machine-memory", "@cf/baai/bge-m3"],
+    },
+    {
       flags: [["--all-repos", true]],
       where: undefined,
       params: [],
@@ -356,6 +362,7 @@ describe("Effect application boundaries", () => {
         retrying: 2,
         parked: 1,
         oldest_queued_at: now - 90_000,
+        unindexed: 4,
       }),
     );
     const all = vi.fn((_sql: string, _params?: unknown[]) =>
@@ -390,6 +397,8 @@ describe("Effect application boundaries", () => {
         pending: 3,
         retrying: 2,
         parked: 1,
+        unindexed: 4,
+        note: "Semantic search cannot find 4 active memories: their vectors predate the current index. Queue them with 'machine-memory reindex --unindexed --remote'.",
         failures: [
           { error: "AI unavailable", state: "retrying", count: 2, ids: [4, 5] },
           {
@@ -414,6 +423,7 @@ describe("Effect application boundaries", () => {
         retrying: 0,
         parked: 0,
         oldest_queued_at: null,
+        unindexed: 0,
       }),
     );
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);

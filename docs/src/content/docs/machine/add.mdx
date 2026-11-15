@@ -89,7 +89,7 @@ machine-memory add "The API uses remote D1" \
 Two numbers decide whether the match is strong:
 
 - `rank_score` (0 to 100): how well the record matches the query. It must
-  reach the threshold (`--upsert-threshold <0-100>`, default `32`, override
+  reach the threshold (`--upsert-threshold <0-100>`, default `50`, override
   via the `MACHINE_MEMORY_UPSERT_MIN_SCORE` environment variable).
 - `text_overlap` (0 to 1): the share of terms the record and the new content
   have in common. It must be at least `0.62`.

@@ -20,25 +20,51 @@ export const MATCH_THRESHOLDS = {
   weakSemantic: 0.55,
 } as const;
 
-/** Relevance components dominate; recency, certainty, and churn only break ties. */
+/**
+ * Relevance decides the order. Recency and certainty together add at most five
+ * points, enough to order near-ties and never to lift a weaker match over a
+ * better one. A status memory gives points back: it records where work stood,
+ * so it ranks below a durable memory that matches as well.
+ */
 export const SEARCH_SCORE_WEIGHTS = {
-  ftsRank: { multiplier: -10, minPoints: 0, maxPoints: 30 },
+  ftsRank: { maxPoints: 30 },
   termCoverage: { maxPoints: 30 },
   exactMatch: { pointsPerMatch: 15, maxMatchesCounted: 2 },
   tagMatch: { exact: 18, partial: 8 },
-  recency: { maxPoints: 15, maxAgeDays: 180 },
-  certainty: { verified: 10, inferred: 5, speculative: 1 },
-  updateCount: { maxUpdatesCounted: 10, pointsPerUpdate: 1 },
+  recency: { maxPoints: 3, maxAgeDays: 180 },
+  certainty: { verified: 2, inferred: 1, speculative: 0 },
+  statusPenalty: 10,
 } as const;
 
 export type MatchAssessment = {
   readonly match_strength: MatchStrength;
   readonly term_coverage: number;
   readonly exact_matches: readonly string[];
+  /** The query terms the memory holds. */
+  readonly matched_terms: readonly string[];
+  /** The fields that hold them, when the caller passed the fields. */
+  readonly matched_in: readonly string[];
 };
 
 const IDENTIFIER_EDGE_PUNCTUATION = /^[\s"'`([{<]+|[\s"'`)\]}>,;:!?.]+$/g;
 const GENERIC_FILE_STEMS = new Set(["index", "main", "mod", "app"]);
+const GENERIC_FILE_NAMES = new Set([
+  "package.json",
+  "package-lock.json",
+  "pnpm-lock.yaml",
+  "bun.lockb",
+  "go.sum",
+  "bunfig.toml",
+]);
+
+/**
+ * Manifests and lockfiles change with almost every task and are named in
+ * memories about unrelated things, so their names say nothing about the task.
+ */
+export function isGenericFile(path: string): boolean {
+  const basename = (path.split("/").pop() ?? "").toLowerCase();
+  return GENERIC_FILE_NAMES.has(basename) || basename.endsWith(".lock");
+}
 
 function isIdentifierToken(token: string): boolean {
   if (
@@ -62,7 +88,8 @@ function isIdentifierToken(token: string): boolean {
  */
 export function extractQueryIdentifiers(query: string): string[] {
   const identifiers: string[] = [];
-  for (const raw of query.split(/[\s,]+/)) {
+  // `--local|--remote` lists alternatives; each one is its own identifier.
+  for (const raw of query.split(/[\s,|]+/)) {
     const token = raw.replace(IDENTIFIER_EDGE_PUNCTUATION, "");
     const lower = token.toLowerCase();
     if (isIdentifierToken(token) && !identifiers.includes(lower)) {
@@ -82,10 +109,19 @@ export function fileIdentifiers(files: readonly string[]): string[] {
     }
   };
   for (const file of files) {
-    push(file);
     const basename = file.split("/").pop() ?? "";
+    const generic = isGenericFile(file);
+    // A generic file keeps its full path, which names one file, unless the
+    // path is only the name.
+    if (!generic || basename !== file) {
+      push(file);
+    }
     const stem = basename.split(".")[0] ?? "";
-    if (basename.includes(".") && !GENERIC_FILE_STEMS.has(stem.toLowerCase())) {
+    if (
+      !generic &&
+      basename.includes(".") &&
+      !GENERIC_FILE_STEMS.has(stem.toLowerCase())
+    ) {
       push(basename);
     }
   }
@@ -124,19 +160,39 @@ function exactMatchIsStrong(
   return scope === "files" || exactCount === identifierCount || strongCoverage;
 }
 
+function matchedFields(
+  fields: Readonly<Record<string, string>> | undefined,
+  terms: readonly string[],
+  identifiers: readonly string[],
+): string[] {
+  return Object.entries(fields ?? {})
+    .filter(([, value]) => {
+      const text = value.toLowerCase();
+      const tokens = textTokens(text);
+      return (
+        terms.some((term) => tokens.has(term)) ||
+        identifiers.some((identifier) => text.includes(identifier))
+      );
+    })
+    .map(([name]) => name);
+}
+
 export function assessMatch(input: {
   readonly queryTerms: readonly string[];
   readonly identifiers: readonly string[];
   readonly text: string;
   readonly semanticScore?: number;
   readonly scope?: MatchScope;
+  /** The same text by field name, to report where the terms matched. */
+  readonly fields?: Readonly<Record<string, string>>;
 }): MatchAssessment {
   const scope = input.scope ?? "query";
   const tokens = textTokens(input.text);
   const terms = [
     ...new Set(input.queryTerms.map((term) => term.toLowerCase())),
   ];
-  const matchedTerms = terms.filter((term) => tokens.has(term)).length;
+  const matched = terms.filter((term) => tokens.has(term));
+  const matchedTerms = matched.length;
   const coverage =
     terms.length === 0 ? 0 : Number((matchedTerms / terms.length).toFixed(3));
   const exactMatches = input.identifiers.filter((identifier) =>
@@ -169,6 +225,8 @@ export function assessMatch(input: {
     match_strength: strength,
     term_coverage: coverage,
     exact_matches: exactMatches,
+    matched_terms: matched,
+    matched_in: matchedFields(input.fields, matched, exactMatches),
   };
 }
 
@@ -206,13 +264,28 @@ export function orderByMatchStrength<
     .map((entry) => entry.row);
 }
 
-export function ftsRankPoints(ftsRank: number): number {
-  if (!Number.isFinite(ftsRank)) {
+/** The strongest full-text rank of a candidate set; bm25 is negative, lower is better. */
+export function bestFtsRank(ranks: readonly number[]): number {
+  return ranks.reduce(
+    (best, rank) => (Number.isFinite(rank) && rank < best ? rank : best),
+    0,
+  );
+}
+
+/**
+ * Full-text points relative to the best candidate of the same search. bm25
+ * grows with the number of query terms and the size of the repository, so a
+ * fixed scale gave every good candidate the maximum and left the order to
+ * recency and certainty.
+ */
+export function ftsRankPoints(ftsRank: number, best: number): number {
+  if (!(ftsRank < 0) || !(best < 0)) {
     return 0;
   }
-  const { multiplier, minPoints, maxPoints } = SEARCH_SCORE_WEIGHTS.ftsRank;
   return Number(
-    Math.max(minPoints, Math.min(maxPoints, ftsRank * multiplier)).toFixed(3),
+    (
+      SEARCH_SCORE_WEIGHTS.ftsRank.maxPoints * Math.min(1, ftsRank / best)
+    ).toFixed(3),
   );
 }
 
@@ -273,11 +346,81 @@ export function certaintyPoints(certainty: string): number {
   return weights.speculative;
 }
 
-export function updateCountPoints(updateCount: number): number {
-  if (!Number.isFinite(updateCount) || updateCount <= 0) {
-    return 0;
-  }
-  const { maxUpdatesCounted, pointsPerUpdate } =
-    SEARCH_SCORE_WEIGHTS.updateCount;
-  return Math.min(updateCount, maxUpdatesCounted) * pointsPerUpdate;
+/**
+ * SQL that is true for a status memory past its expiry. Searches leave these
+ * out: the writer said the record stops describing the work after that many
+ * days. `prefix` is the table alias with its dot, such as `m.`.
+ */
+export function expiredStatusSql(prefix = ""): string {
+  return `(${prefix}memory_type = 'status' AND ${prefix}expires_after_days IS NOT NULL AND datetime(${prefix}updated_at, '+' || ${prefix}expires_after_days || ' days') <= datetime('now'))`;
+}
+
+/** The same rule for a row already read, such as a semantic match. */
+export function isExpiredStatus(
+  row: {
+    readonly memory_type: string;
+    readonly expires_after_days?: number | null | undefined;
+  },
+  updatedAtMs: number | null,
+  nowMs: number = Date.now(),
+): boolean {
+  return (
+    row.memory_type === "status" &&
+    row.expires_after_days !== null &&
+    row.expires_after_days !== undefined &&
+    updatedAtMs !== null &&
+    updatedAtMs + row.expires_after_days * 86_400_000 <= nowMs
+  );
+}
+
+export function statusPenaltyPoints(memoryType: string): number {
+  return memoryType === "status" ? SEARCH_SCORE_WEIGHTS.statusPenalty : 0;
+}
+
+export type ScoreBreakdown = {
+  readonly fts_rank: number;
+  readonly term_coverage: number;
+  readonly exact_match: number;
+  readonly tag_match: number;
+  readonly recency: number;
+  readonly certainty: number;
+  readonly status_penalty: number;
+  readonly total: number;
+};
+
+/** One candidate's rank score and its parts, the same for the CLI and the API. */
+export function scoreCandidate(input: {
+  readonly ftsRank: number;
+  readonly bestFtsRank: number;
+  readonly match: MatchAssessment;
+  readonly tags: readonly string[];
+  readonly queryTerms: readonly string[];
+  readonly updatedAtMs: number | null;
+  readonly certainty: string;
+  readonly memoryType: string;
+  readonly nowMs?: number;
+}): ScoreBreakdown {
+  const parts = {
+    fts_rank: ftsRankPoints(input.ftsRank, input.bestFtsRank),
+    term_coverage: termCoveragePoints(input.match.term_coverage),
+    exact_match: exactMatchPoints(input.match.exact_matches.length),
+    tag_match: tagMatchPoints(input.tags, input.queryTerms),
+    recency: recencyPoints(input.updatedAtMs, input.nowMs),
+    certainty: certaintyPoints(input.certainty),
+    status_penalty: statusPenaltyPoints(input.memoryType),
+  };
+  return {
+    ...parts,
+    total: Number(
+      (
+        parts.fts_rank +
+        parts.term_coverage +
+        parts.exact_match +
+        parts.tag_match +
+        parts.recency +
+        parts.certainty -
+        parts.status_penalty
+      ).toFixed(3),
+    ),
+  };
 }
