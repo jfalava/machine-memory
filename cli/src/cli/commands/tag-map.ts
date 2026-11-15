@@ -1,31 +1,51 @@
+import { normalizeTagMapPath, normalizeTags } from "@machine-memory/contract";
 import { Effect } from "effect";
 
-import { usageError } from "../../cli-utils";
+import { usageError, warnOnStderr } from "../../cli-utils";
 import {
-  deletePathTagMapEntry,
+  deletePathTags,
+  legacyTagMapFilePath,
   loadPathTagMap,
-  pathTagMapFilePath,
+  readLegacyTagMap,
+  setPathTags,
   suggestTagsForPath,
-  upsertPathTagMapEntry,
 } from "../../path-tags";
-import type { CommandContext } from "../runtime/context";
+import { repositoryForCurrentDirectory } from "../../repository";
+import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
-import { parseTags } from "../shared";
 
 type TagMapEffect = Effect.Effect<void, unknown, never>;
 
+const USAGE =
+  "tag-map <list|set|delete|suggest|import> [path_prefix] [tags_csv|path] (--local|--remote)";
+
+/**
+ * The map lived in a file before it moved into the database. A checkout that
+ * still has the file and no mappings would otherwise lose its tags silently.
+ */
+function warnOfLegacyFile(context: CommandContext, mappingCount: number) {
+  return mappingCount > 0
+    ? Effect.void
+    : context.fileSystem.exists(legacyTagMapFilePath()).pipe(
+        Effect.map((exists) => {
+          if (exists) {
+            warnOnStderr(
+              ".agents/path-tags.json is no longer read: the tag map is stored in the database. Load the file once with 'machine-memory tag-map import', then delete it.",
+            );
+          }
+        }),
+      );
+}
+
 function listTagMap(context: CommandContext): TagMapEffect {
   return Effect.gen(function* () {
-    const map = yield* loadPathTagMap(context.fileSystem);
-    yield* Effect.sync(() =>
-      printCommandOutput(context, {
-        file: pathTagMapFilePath(),
-        mappings: Object.entries(map).map(([path_prefix, tags]) => ({
-          path_prefix,
-          tags,
-        })),
-      }),
-    );
+    const mappings = yield* loadPathTagMap(requireDatabase(context));
+    yield* warnOfLegacyFile(context, mappings.length);
+    printCommandOutput(context, {
+      repository: repositoryForCurrentDirectory(),
+      count: mappings.length,
+      mappings,
+    });
   });
 }
 
@@ -35,43 +55,43 @@ function setTagMap(
   tagsRaw: string | undefined,
 ): TagMapEffect {
   return Effect.gen(function* () {
-    if (!pathPrefix || !tagsRaw) {
+    const mapping = {
+      path_prefix: normalizeTagMapPath(pathPrefix ?? ""),
+      tags: normalizeTags(tagsRaw ?? ""),
+    };
+    if (mapping.path_prefix === "" || mapping.tags.length === 0) {
       usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
     }
-    const tags = parseTags(tagsRaw);
-    if (tags.length === 0) {
-      usageError("Usage: tag-map set <path_prefix> <tag1,tag2,...>");
-    }
-    yield* upsertPathTagMapEntry(context.fileSystem, pathPrefix, tags);
-    yield* Effect.sync(() =>
-      printCommandOutput(context, {
-        status: "ok",
-        path_prefix: pathPrefix,
-        tags,
-        file: pathTagMapFilePath(),
-      }),
-    );
+    yield* setPathTags(requireDatabase(context), mapping);
+    printCommandOutput(context, {
+      status: "ok",
+      repository: repositoryForCurrentDirectory(),
+      ...mapping,
+    });
   });
 }
 
 function deleteTagMap(
   context: CommandContext,
-  pathPrefix: string | undefined,
+  rawPrefix: string | undefined,
 ): TagMapEffect {
   return Effect.gen(function* () {
-    if (!pathPrefix) {
+    const pathPrefix = normalizeTagMapPath(rawPrefix ?? "");
+    if (pathPrefix === "") {
       usageError("Usage: tag-map delete <path_prefix>");
     }
-    const current = yield* loadPathTagMap(context.fileSystem);
-    const existed = Object.hasOwn(current, pathPrefix);
-    yield* deletePathTagMapEntry(context.fileSystem, pathPrefix);
-    yield* Effect.sync(() =>
-      printCommandOutput(context, {
-        status: existed ? "deleted" : "not_found",
-        path_prefix: pathPrefix,
-        file: pathTagMapFilePath(),
-      }),
+    const database = requireDatabase(context);
+    const existed = (yield* loadPathTagMap(database)).some(
+      (mapping) => mapping.path_prefix === pathPrefix,
     );
+    if (existed) {
+      yield* deletePathTags(database, pathPrefix);
+    }
+    printCommandOutput(context, {
+      status: existed ? "deleted" : "not_found",
+      repository: repositoryForCurrentDirectory(),
+      path_prefix: pathPrefix,
+    });
   });
 }
 
@@ -83,12 +103,44 @@ function suggestTagMap(
     if (!filePath) {
       usageError("Usage: tag-map suggest <path|path,path,...>");
     }
-    const { tags, matches } = yield* suggestTagsForPath(
-      context.fileSystem,
-      filePath,
-    );
-    yield* Effect.sync(() =>
-      printCommandOutput(context, { path: filePath, tags, matches }),
+    const database = requireDatabase(context);
+    const suggestion = yield* suggestTagsForPath(database, filePath);
+    if (suggestion.matches.length === 0) {
+      yield* warnOfLegacyFile(
+        context,
+        (yield* loadPathTagMap(database)).length,
+      );
+    }
+    printCommandOutput(context, {
+      path: filePath,
+      tags: suggestion.tags,
+      matches: suggestion.matches,
+      unmatched_paths: suggestion.unmatched,
+    });
+  });
+}
+
+/** Loads the mappings of the legacy file into the database, once. */
+function importTagMap(context: CommandContext): TagMapEffect {
+  return Effect.gen(function* () {
+    const mappings = yield* readLegacyTagMap(context.fileSystem);
+    if (mappings === undefined) {
+      usageError(
+        `Nothing to import: ${legacyTagMapFilePath()} does not exist.`,
+      );
+    }
+    const database = requireDatabase(context);
+    for (const mapping of mappings) {
+      yield* setPathTags(database, mapping);
+    }
+    printCommandOutput(context, {
+      status: "ok",
+      repository: repositoryForCurrentDirectory(),
+      imported: mappings.length,
+      mappings,
+    });
+    warnOnStderr(
+      `Imported ${mappings.length} mapping(s). ${legacyTagMapFilePath()} is no longer read; delete it.`,
     );
   });
 }
@@ -100,11 +152,10 @@ export function handleTagMapCommand(context: CommandContext): TagMapEffect {
     ["set", () => setTagMap(context, first, second)],
     ["delete", () => deleteTagMap(context, first)],
     ["suggest", () => suggestTagMap(context, first)],
+    ["import", () => importTagMap(context)],
   ]);
   return (
     handlers.get(action ?? "")?.() ??
-    Effect.sync(() =>
-      usageError("Usage: tag-map <list|set|delete|suggest> [args]"),
-    )
+    Effect.sync(() => usageError(`Usage: ${USAGE}`))
   );
 }

@@ -29,6 +29,10 @@ const { read, write } = MCP_SCOPES;
 /** Exhaustive classification: new product operations must choose a scope. */
 const REQUIRED_SCOPES = {
   "list-repositories": read,
+  "tag-map-list": read,
+  coverage: read,
+  "tag-map-set": write,
+  "tag-map-delete": write,
   query: read,
   get: read,
   history: read,
@@ -204,7 +208,7 @@ export function createMemoryServer(
   register(
     "memory_add",
     "add",
-    `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. A plain add is refused when an active memory already states nearly the same thing; the error names that memory. To restate an existing memory, pass update_id with its id: the content is replaced and the fields you omit keep their stored values. When you have read the existing memories and this is a different fact, pass create_new true. upsert_match resolves the target by topic instead: a strong match is updated in place (echoes mode and upsert_match), and a weak match is refused with up to three candidates, each with rank_score, text_overlap and shared_identifiers. Replacing content is refused when it drops a path, flag or symbol that no other active memory mentions; carry the detail over, or pass allow_drop true when it is obsolete. A new memory echoes related, the active memories that strongly match it, when there are any. certainty verified requires a non-empty evidence array naming what was established (user_requirement, observed_implementation, verified_mechanism, tested_behavior); record remaining limits in validation_gaps. evidence and validation_gaps are not embedded. Refuses a memory whose content, tags and context together exceed 2,000 UTF-8 bytes; call memory_size to preflight.`,
+    `⚠️ WRITE OPERATION — a wrong repository slug will write to the wrong namespace. There is no default: repository is always required and must be an exact owner/name slug. Call list_repositories first if you are not certain.${ownerHint} Use this to record facts, decisions, conventions, gotchas, preferences, constraints, references, or status snapshots so future agent sessions can recall them. A plain add is refused when an active memory already states nearly the same thing; the error names that memory. To restate an existing memory, pass update_id with its id: the content is replaced and the fields you omit keep their stored values. When you have read the existing memories and this is a different fact, pass create_new true. Pass paths with the files the memory is about to add the tags of the repository's tag map (tag_map_list shows it); the result lists them in path_tag_matches. upsert_match resolves the target by topic instead: a strong match is updated in place (echoes mode and upsert_match), and a weak match is refused with up to three candidates, each with rank_score, text_overlap and shared_identifiers. Replacing content is refused when it drops a path, flag or symbol that no other active memory mentions; carry the detail over, or pass allow_drop true when it is obsolete. A new memory echoes related, the active memories that strongly match it, when there are any. certainty verified requires a non-empty evidence array naming what was established (user_requirement, observed_implementation, verified_mechanism, tested_behavior); record remaining limits in validation_gaps. evidence and validation_gaps are not embedded. Refuses a memory whose content, tags and context together exceed 2,000 UTF-8 bytes; call memory_size to preflight.`,
     errorResult,
     attributed,
   );
@@ -261,6 +265,30 @@ export function createMemoryServer(
     "memory_delete_many",
     "delete-many",
     `⚠️ WRITE OPERATION — bulk deletion is permanent. Deletes one to 100 explicit ids from exactly one repository; there is no default and repository is always required. Call list_repositories first if unsure.${ownerHint} The response echoes deleted_from, deleted_ids, and not_found. Also removes vector embeddings. Prefer memory_deprecate when audit history should remain.`,
+  );
+
+  register(
+    "tag_map_list",
+    "tag-map-list",
+    "List the repository's tag map: path prefixes and the tags that memory_add gives a memory when its paths fall under them. Pass paths to see the tags a set of files would get, the prefix each one matched (matches), and the paths no prefix matched (unmatched_paths). A repository without mappings returns an empty list. This is read-only.",
+  );
+
+  register(
+    "tag_map_set",
+    "tag-map-set",
+    `⚠️ WRITE OPERATION — sets the tags of one path prefix in the repository's tag map, replacing the tags that prefix had. A prefix matches the path itself and everything under it, so src/cli covers src/cli/app.ts. Use it when memories about one directory should share tags, such as area:cli for src/cli; memory_add then adds them to every memory whose paths fall under the prefix. Memories that already exist keep their tags.${ownerHint}`,
+  );
+
+  register(
+    "tag_map_delete",
+    "tag-map-delete",
+    "⚠️ WRITE OPERATION — removes one path prefix from the repository's tag map. The response reports status deleted, or not_found when the map has no such prefix. Memories tagged through the prefix keep their tags.",
+  );
+
+  register(
+    "memory_coverage",
+    "coverage",
+    "Find directories that no active memory is tagged for. Pass the directory paths of the checkout, relative to the repository root. A directory is covered when one of its path segments equals a tag of an active memory, compared in lower case. Returns uncovered_paths and tag_distribution, the number of active memories per tag. Treat the result as a hint about where memories may be missing, not as a score. This is read-only.",
   );
 
   return server;

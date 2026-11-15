@@ -170,8 +170,9 @@ export function helpPayload() {
           "Reports term changes plus dropped identifiers and sentences, the same check update applies.",
       },
       "tag-map": {
-        usage:
-          "tag-map <list|set|delete|suggest> [path_prefix] [tags_csv|path]",
+        usage: `tag-map <list|set|delete|suggest|import> [path_prefix] [tags_csv|path]${DATABASE_BACKEND_USAGE}`,
+        notes:
+          "The tag map is stored in the database, one per repository. A prefix covers the path itself and everything under it. import loads the mappings of a legacy .agents/path-tags.json once; that file is no longer read.",
       },
       migrate: { usage: `migrate${DATABASE_BACKEND_USAGE}` },
       coverage: { usage: `coverage [--root <path>]${DATABASE_BACKEND_USAGE}` },

@@ -323,6 +323,44 @@ const PASS_THROUGH_CASES: ReadonlyArray<
       count: 1,
     },
   ],
+  [
+    "tag_map_list",
+    "tag-map-list",
+    { repository: "o/r", paths: "src/cli/app.ts,docs/a.md" },
+    {
+      repository: "o/r",
+      count: 1,
+      mappings: [{ path_prefix: "src/cli", tags: ["area:cli"] }],
+      tags: ["area:cli"],
+      matches: [
+        { path: "src/cli/app.ts", prefix: "src/cli", tags: ["area:cli"] },
+      ],
+      unmatched_paths: ["docs/a.md"],
+    },
+  ],
+  [
+    "tag_map_set",
+    "tag-map-set",
+    { repository: "o/r", path_prefix: "src/cli", tags: "area:cli" },
+    { repository: "o/r", path_prefix: "src/cli", tags: ["area:cli"] },
+  ],
+  [
+    "tag_map_delete",
+    "tag-map-delete",
+    { repository: "o/r", path_prefix: "src/cli" },
+    { repository: "o/r", path_prefix: "src/cli", status: "deleted" },
+  ],
+  [
+    "memory_coverage",
+    "coverage",
+    { repository: "o/r", directories: ["src/", "docs/"] },
+    {
+      repository: "o/r",
+      checked: 2,
+      uncovered_paths: ["docs/"],
+      tag_distribution: { src: 3 },
+    },
+  ],
 ];
 
 async function linkedClient(
@@ -403,6 +441,11 @@ describe("mcp gateway to api product routes", () => {
     ["memory_deprecate", { repository: "o/r", ids: [7] }],
     ["memory_delete", { repository: "o/r", id: 7 }],
     ["memory_delete_many", { repository: "o/r", ids: [7] }],
+    [
+      "tag_map_set",
+      { repository: "o/r", path_prefix: "src/cli", tags: "area:cli" },
+    ],
+    ["tag_map_delete", { repository: "o/r", path_prefix: "src/cli" }],
   ])("read scope denies %s without an API call", async (name, args) => {
     const seen: SeenCall[] = [];
     const client = await linkedClient(
@@ -432,6 +475,8 @@ describe("mcp gateway to api product routes", () => {
     ["memory_verify", { repository: "o/r", id: 7, fact: "fact" }],
     ["memory_diff", { repository: "o/r", id: 7, content: "fact" }],
     ["memory_size", { repository: "o/r", content: "fact" }],
+    ["tag_map_list", { repository: "o/r" }],
+    ["memory_coverage", { repository: "o/r", directories: ["src/"] }],
   ])("%s requires read scope even with write scope", async (name, args) => {
     for (const scopes of [[], ["mcp:write"]]) {
       const seen: SeenCall[] = [];

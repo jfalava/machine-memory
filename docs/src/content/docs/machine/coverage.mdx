@@ -16,5 +16,12 @@ machine-memory coverage --root cli/src (--local|--remote)
 their names with tags on active memories, and returns `uncovered_paths` plus a
 `tag_distribution` map. `--root` changes the directory tree being inspected.
 
+A directory is covered when one of its path segments equals a tag of an active
+memory, compared in lower case. A scoped tag such as `area:cli` does not cover
+the directory `cli`; only the tag `cli` does.
+
 The result is a signal for missing path-driven context, not a percentage. Add
-or update memories with scoped tags when an uncovered directory matters.
+or update memories when an uncovered directory matters.
+
+The MCP tool `memory_coverage` runs the same comparison. It cannot walk a
+checkout, so the client passes the directory paths in `directories`.

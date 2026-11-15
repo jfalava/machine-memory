@@ -3,6 +3,8 @@ import * as SQL from "@alchemy.run/cloudflare/D1/SQL";
 import {
   EMBEDDING_MODEL,
   FTS_CANDIDATE_LIMIT,
+  pathTagMapSelect,
+  pathTagMappingsFromRows,
   type JsonObject,
   type ProductRequest,
   type ProductResponse,
@@ -50,6 +52,15 @@ export type ProductHandlers = {
     input: ProductRequest<R>,
   ) => Effect.Effect<ProductResult<R>, unknown, RuntimeContext>;
 };
+
+/** The tag map of one repository, in prefix order. */
+export const fetchPathTagMap = (ctx: ApiContext, repository: string) =>
+  Effect.gen(function* () {
+    const query = pathTagMapSelect(repository);
+    return pathTagMappingsFromRows(
+      yield* ctx.sql.unsafe<JsonObject>(query.sql, query.params),
+    );
+  });
 
 export const fetchProductRow = (
   ctx: ApiContext,

@@ -17,6 +17,10 @@ import {
   MemoryDiffArgsSchema,
   MemorySizeArgsInputSchema,
   ListRepositoriesArgsInputSchema,
+  TagMapListArgsSchema,
+  TagMapSetArgsSchema,
+  TagMapDeleteArgsSchema,
+  MemoryCoverageArgsSchema,
 } from "./ops";
 import {
   MemoryQuerySuccessSchema,
@@ -36,6 +40,10 @@ import {
   MemoryDiffSuccessSchema,
   MemorySizeSuccessSchema,
   ListRepositoriesSuccessSchema,
+  TagMapListSuccessSchema,
+  TagMapSetSuccessSchema,
+  TagMapDeleteSuccessSchema,
+  MemoryCoverageSuccessSchema,
 } from "./results";
 
 /** One catalog for product route names and both sides of their wire contract. */
@@ -105,6 +113,22 @@ export const PRODUCT_OPERATIONS = {
   "list-repositories": {
     request: ListRepositoriesArgsInputSchema,
     response: ListRepositoriesSuccessSchema,
+  },
+  "tag-map-list": {
+    request: TagMapListArgsSchema,
+    response: TagMapListSuccessSchema,
+  },
+  "tag-map-set": {
+    request: TagMapSetArgsSchema,
+    response: TagMapSetSuccessSchema,
+  },
+  "tag-map-delete": {
+    request: TagMapDeleteArgsSchema,
+    response: TagMapDeleteSuccessSchema,
+  },
+  coverage: {
+    request: MemoryCoverageArgsSchema,
+    response: MemoryCoverageSuccessSchema,
   },
 };
 export type ProductRoute = keyof typeof PRODUCT_OPERATIONS;

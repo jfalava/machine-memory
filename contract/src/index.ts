@@ -136,6 +136,22 @@ export {
   type UpsertCandidate,
 } from "./write-guards";
 export {
+  COVERAGE_DIRECTORIES_MAX,
+  PathTagMappingSchema,
+  PathTagMatchSchema,
+  coverageReport,
+  normalizeTagMapPath,
+  pathTagMapDelete,
+  pathTagMapSelect,
+  pathTagMapUpsert,
+  pathTagMappingsFromRows,
+  suggestPathTags,
+  type CoverageReport,
+  type PathTagMapping,
+  type PathTagMatch,
+  type PathTagSuggestion,
+} from "./path-tags";
+export {
   DEFAULT_STATUS_EXPIRY_DAYS,
   INFORMATIONAL_DOCTOR_KINDS,
   NEAR_DUPLICATE_THRESHOLD,

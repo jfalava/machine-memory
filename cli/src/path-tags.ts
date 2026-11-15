@@ -1,191 +1,105 @@
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 
-import { Effect, FileSystem, Schema } from "effect";
+import {
+  normalizeTagMapPath,
+  normalizeTags,
+  pathTagMapDelete,
+  pathTagMappingsFromRows,
+  pathTagMapSelect,
+  pathTagMapUpsert,
+  suggestPathTags,
+  type PathTagMapping,
+  type PathTagSuggestion,
+} from "@machine-memory/contract";
+import { Effect, Schema, type FileSystem } from "effect";
 
-import { CommandError } from "./effect/errors";
+import type { MemoryDatabaseApi } from "./effect/database";
+import { CommandError, type MemoryDatabaseError } from "./effect/errors";
+import { toContractValue } from "./effect/remote-http";
 import { jsonObject, jsonStringArray, parseJson } from "./json";
+import { repositoryForCurrentDirectory } from "./repository";
 
-type PathTagMap = Record<string, string[]>;
-
-function normalizePath(value: string): string {
-  const normalized = value
-    .replaceAll("\\", "/")
-    .trim()
-    .replace(/^\.\/+/, "");
-  return normalized;
-}
-
-function normalizeTags(tags: string[]): string[] {
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const rawTag of tags) {
-    const cleaned = rawTag.trim();
-    if (!cleaned || seen.has(cleaned.toLowerCase())) {
-      continue;
-    }
-    seen.add(cleaned.toLowerCase());
-    unique.push(cleaned);
-  }
-  return unique;
-}
-
-export function pathTagMapFilePath(cwd = process.cwd()): string {
+/** The file that held the tag map before it moved into the database. */
+export function legacyTagMapFilePath(cwd = process.cwd()): string {
   return resolve(cwd, ".agents", "path-tags.json");
 }
 
+/** The tag map of the current repository, in prefix order. */
 export function loadPathTagMap(
-  fileSystem: FileSystem.FileSystem,
-  cwd = process.cwd(),
-): Effect.Effect<PathTagMap, CommandError> {
-  const filePath = pathTagMapFilePath(cwd);
-  return Effect.gen(function* () {
-    if (!(yield* fileSystem.exists(filePath))) {
-      return {};
-    }
-    const bytes = yield* fileSystem.readFile(filePath);
-    const parsed = yield* Effect.try({
-      try: () => parseJson(new TextDecoder().decode(bytes)),
-      catch: (cause) =>
-        new CommandError({
-          message: `Failed to parse path tag map: ${String(cause)}`,
-          command: "tag-map",
-          cause,
-        }),
-    });
-    const parsedObject = jsonObject(parsed);
-    if (parsedObject === undefined) {
-      return {};
-    }
-    const next: PathTagMap = {};
-    for (const [rawPrefix, value] of Object.entries(parsedObject)) {
-      const prefix = normalizePath(rawPrefix);
-      const parsedTags = jsonStringArray(value);
-      if (!prefix || parsedTags === undefined) {
-        continue;
-      }
-      const tags = normalizeTags(parsedTags);
-      if (tags.length > 0) {
-        next[prefix] = tags;
-      }
-    }
-    return next;
-  }).pipe(
-    Effect.mapError((cause) =>
-      Schema.is(CommandError)(cause)
-        ? cause
-        : new CommandError({
-            message: "Unable to read path tag map.",
-            command: "tag-map",
-            cause,
-          }),
-    ),
-  );
-}
-
-export function savePathTagMap(
-  fileSystem: FileSystem.FileSystem,
-  map: PathTagMap,
-  cwd = process.cwd(),
-): Effect.Effect<void, never> {
-  const filePath = pathTagMapFilePath(cwd);
-  return fileSystem
-    .makeDirectory(dirname(filePath), { recursive: true })
+  database: MemoryDatabaseApi,
+): Effect.Effect<PathTagMapping[], MemoryDatabaseError> {
+  const query = pathTagMapSelect(repositoryForCurrentDirectory());
+  return database
+    .all(query.sql, query.params)
     .pipe(
-      Effect.andThen(
-        fileSystem.writeFile(
-          filePath,
-          new TextEncoder().encode(JSON.stringify(map, null, 2)),
-        ),
-      ),
-      Effect.orDie,
+      Effect.map((rows) => pathTagMappingsFromRows(rows.map(toContractValue))),
     );
 }
 
-export function upsertPathTagMapEntry(
-  fileSystem: FileSystem.FileSystem,
-  pathPrefix: string,
-  tags: string[],
-  cwd = process.cwd(),
-): Effect.Effect<PathTagMap, CommandError> {
-  const prefix = normalizePath(pathPrefix);
-  if (!prefix) {
-    return Effect.succeed({});
-  }
-  const normalized = normalizeTags(tags);
-  return Effect.gen(function* () {
-    const map = yield* loadPathTagMap(fileSystem, cwd);
-    if (normalized.length > 0) {
-      map[prefix] = normalized;
-    }
-    yield* savePathTagMap(fileSystem, map, cwd);
-    return map;
+/** Sets the tags of one prefix, replacing the tags it had. */
+export function setPathTags(
+  database: MemoryDatabaseApi,
+  mapping: PathTagMapping,
+): Effect.Effect<void, MemoryDatabaseError> {
+  const query = pathTagMapUpsert({
+    repository: repositoryForCurrentDirectory(),
+    ...mapping,
   });
+  return database.run(query.sql, query.params).pipe(Effect.asVoid);
 }
 
-export function deletePathTagMapEntry(
-  fileSystem: FileSystem.FileSystem,
+export function deletePathTags(
+  database: MemoryDatabaseApi,
   pathPrefix: string,
-  cwd = process.cwd(),
-): Effect.Effect<PathTagMap, CommandError> {
-  const prefix = normalizePath(pathPrefix);
-  return Effect.gen(function* () {
-    const map = yield* loadPathTagMap(fileSystem, cwd);
-    if (prefix in map) {
-      delete map[prefix];
-      yield* savePathTagMap(fileSystem, map, cwd);
-    }
-    return map;
-  });
+): Effect.Effect<void, MemoryDatabaseError> {
+  const query = pathTagMapDelete(repositoryForCurrentDirectory(), pathPrefix);
+  return database.run(query.sql, query.params).pipe(Effect.asVoid);
 }
-
-function pathMatchesPrefix(path: string, prefix: string): boolean {
-  if (path === prefix) {
-    return true;
-  }
-  if (prefix.endsWith("/")) {
-    return path.startsWith(prefix);
-  }
-  return path.startsWith(prefix) || path.startsWith(`${prefix}/`);
-}
-
-/** One tag-map prefix that matched a path, with the tags it contributes. */
-export type PathTagMatch = { path: string; prefix: string; tags: string[] };
-
-export type PathTagSuggestion = {
-  /** Tags of every matching prefix, longest prefix first, deduplicated. */
-  tags: string[];
-  matches: PathTagMatch[];
-  /** Paths that no prefix of the map matched. */
-  unmatched: string[];
-};
 
 /** Tags the map assigns to one path or to several comma-separated paths. */
 export function suggestTagsForPath(
-  fileSystem: FileSystem.FileSystem,
+  database: MemoryDatabaseApi,
   paths: string,
-  cwd = process.cwd(),
-): Effect.Effect<PathTagSuggestion, CommandError> {
-  const normalizedPaths = paths.split(",").map(normalizePath).filter(Boolean);
-  if (normalizedPaths.length === 0) {
-    return Effect.succeed({ tags: [], matches: [], unmatched: [] });
-  }
-  return loadPathTagMap(fileSystem, cwd).pipe(
-    Effect.map((map) => {
-      const entries = Object.entries(map).sort(
-        (left, right) => right[0].length - left[0].length,
-      );
-      const matches = normalizedPaths.flatMap((path) =>
-        entries
-          .filter(([prefix]) => pathMatchesPrefix(path, prefix))
-          .map(([prefix, tags]) => ({ path, prefix, tags })),
-      );
-      return {
-        tags: normalizeTags(matches.flatMap((match) => match.tags)),
-        matches,
-        unmatched: normalizedPaths.filter(
-          (path) => !matches.some((match) => match.path === path),
-        ),
-      };
-    }),
+): Effect.Effect<PathTagSuggestion, MemoryDatabaseError> {
+  return loadPathTagMap(database).pipe(
+    Effect.map((mappings) => suggestPathTags(mappings, paths)),
+  );
+}
+
+/** The mappings of the legacy file; undefined when the checkout has none. */
+export function readLegacyTagMap(
+  fileSystem: FileSystem.FileSystem,
+): Effect.Effect<PathTagMapping[] | undefined, CommandError> {
+  const filePath = legacyTagMapFilePath();
+  const unreadable = (cause: unknown) =>
+    new CommandError({
+      message: `Unable to read ${filePath}: ${String(cause)}`,
+      command: "tag-map",
+      cause,
+    });
+  return Effect.gen(function* () {
+    if (!(yield* fileSystem.exists(filePath))) {
+      return undefined;
+    }
+    const text = new TextDecoder().decode(yield* fileSystem.readFile(filePath));
+    const parsed = yield* Effect.try({
+      try: () => parseJson(text),
+      catch: unreadable,
+    });
+    return Object.entries(jsonObject(parsed) ?? {}).flatMap(
+      ([rawPrefix, value]) => {
+        const mapping = {
+          path_prefix: normalizeTagMapPath(rawPrefix),
+          tags: normalizeTags((jsonStringArray(value) ?? []).join(",")),
+        };
+        return mapping.path_prefix !== "" && mapping.tags.length > 0
+          ? [mapping]
+          : [];
+      },
+    );
+  }).pipe(
+    Effect.mapError((cause) =>
+      Schema.is(CommandError)(cause) ? cause : unreadable(cause),
+    ),
   );
 }

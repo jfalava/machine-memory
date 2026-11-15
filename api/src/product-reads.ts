@@ -1,6 +1,8 @@
 import {
   analyzeMemoryDoctor,
   compareMemoryFact,
+  coverageReport,
+  suggestPathTags,
   droppedDetails,
   embeddingSizeReport,
   indexStatusFromRows,
@@ -18,6 +20,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import {
+  fetchPathTagMap,
   fetchProductRow,
   memoryNotFound,
   type ApiContext,
@@ -38,6 +41,8 @@ import {
 } from "./product-logic";
 
 type ReadRoute =
+  | "tag-map-list"
+  | "coverage"
   | "list-repositories"
   | "get"
   | "history"
@@ -235,6 +240,42 @@ export const productReadHandlers = (
         count: expired.length,
         ids: expired.map((row) => row.id),
         expired,
+      };
+    }),
+
+  "tag-map-list": (input) =>
+    Effect.gen(function* () {
+      const mappings = yield* fetchPathTagMap(ctx, input.repository);
+      const result = {
+        repository: input.repository,
+        count: mappings.length,
+        mappings,
+      };
+      if (input.paths === undefined || input.paths.trim() === "") {
+        return result;
+      }
+      const suggestion = suggestPathTags(mappings, input.paths);
+      return {
+        ...result,
+        tags: suggestion.tags,
+        matches: suggestion.matches,
+        unmatched_paths: suggestion.unmatched,
+      };
+    }),
+
+  coverage: (input) =>
+    Effect.gen(function* () {
+      const rows = yield* ctx.sql.unsafe<{ tags: string | null }>(
+        "SELECT tags FROM memories WHERE repository = ? AND status = 'active'",
+        [input.repository],
+      );
+      return {
+        repository: input.repository,
+        checked: input.directories.length,
+        ...coverageReport(
+          input.directories,
+          rows.map((row) => row.tags ?? ""),
+        ),
       };
     }),
 

@@ -61,6 +61,7 @@ const databaseCommands = new Set([
   "import",
   "export",
   "migrate",
+  "tag-map",
 ]);
 
 const cliEntrypoint = resolve(process.cwd(), "src/app.ts");
@@ -1424,6 +1425,50 @@ describe("CLI integration", () => {
     expect(untagged.stderr).toContain(
       `Memory ${untagged.json.id} was written without tags`,
     );
+  });
+
+  it("keeps the tag map in the database and imports the legacy file once", async () => {
+    const { cwd, dbPath } = await createProject();
+    await mkdir(join(cwd, ".agents"), { recursive: true });
+    await writeFile(
+      join(cwd, ".agents", "path-tags.json"),
+      JSON.stringify({ "./src/API": ["Area:API", "area:api"], docs: [] }),
+    );
+    // The file alone maps nothing, and the list says where the map went.
+    const before = await runCli(cwd, dbPath, "tag-map", "list");
+    expect(before.json).toMatchObject({ count: 0, mappings: [] });
+    expect(before.stderr).toContain("tag-map import");
+
+    const imported = await runCli(cwd, dbPath, "tag-map", "import");
+    expect(imported.code).toBe(0);
+    expect(imported.json).toMatchObject({
+      imported: 1,
+      mappings: [{ path_prefix: "src/API", tags: ["area:api"] }],
+    });
+    await runCli(cwd, dbPath, "tag-map", "set", "src", "area:src");
+
+    const listed = await runCli(cwd, dbPath, "tag-map", "list");
+    expect(listed.json.mappings).toEqual([
+      { path_prefix: "src", tags: ["area:src"] },
+      { path_prefix: "src/API", tags: ["area:api"] },
+    ]);
+    expect(listed.stderr).not.toContain("tag-map import");
+    const suggested = await runCli(
+      cwd,
+      dbPath,
+      "tag-map",
+      "suggest",
+      "src/API/routes.ts,docs/a.md",
+    );
+    expect(suggested.json).toMatchObject({
+      tags: ["area:api", "area:src"],
+      unmatched_paths: ["docs/a.md"],
+    });
+
+    const deleted = await runCli(cwd, dbPath, "tag-map", "delete", "src/API");
+    expect(deleted.json).toMatchObject({ status: "deleted" });
+    const again = await runCli(cwd, dbPath, "tag-map", "delete", "src/API");
+    expect(again.json).toMatchObject({ status: "not_found" });
   });
 
   it("migrates a legacy database when migrate is requested", async () => {
