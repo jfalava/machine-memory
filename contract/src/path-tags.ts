@@ -118,42 +118,122 @@ export function pathTagMappingsFromRows(
 /** The most directories one coverage request compares. */
 export const COVERAGE_DIRECTORIES_MAX = 2000;
 
+/** The text and tags of every active memory of one repository, for coverage. */
+export function coverageMemoriesSelect(repository: string) {
+  return {
+    sql: `SELECT content || ' ' || COALESCE(context, '') || ' ' || COALESCE(refs, '') AS text,
+      COALESCE(tags, '') AS tags
+      FROM memories WHERE repository = ? AND status = 'active'`,
+    params: [repository],
+  };
+}
+
+/** What coverage reads of one active memory. */
+export type CoverageMemory = {
+  /** Content, context and references, where a memory names paths. */
+  readonly text: string;
+  /** The stored comma-separated tags. */
+  readonly tags: string;
+};
+
 export type CoverageReport = {
-  /** Directories no segment of which is a tag of an active memory. */
+  /** Directories no active memory is about. */
   readonly uncovered_paths: string[];
+  /** For each other directory, how many active memories are about something in it. */
+  readonly covered_paths: Record<string, number>;
   /** How many active memories carry each tag. */
   readonly tag_distribution: Record<string, number>;
 };
 
+/** Where a path cannot continue: whitespace, quotes, brackets of prose and list separators. */
+const PATH_TOKEN_BREAK = /[\s"'`(),;<>|=*]+/;
+
 /**
- * Compares directory names with the tags of active memories. `tagLists` are
- * the stored comma-separated tags, one entry per memory.
+ * Every directory a text names a path under: `cli/src/app.ts` names `cli` and
+ * `cli/src`. Only a token with a slash is a path, so the word `cli` names
+ * nothing. A token that starts with a slash or a scheme is a URL or an
+ * absolute path, and names no directory of the repository.
+ */
+function namedDirectories(text: string): Set<string> {
+  const named = new Set<string>();
+  for (const raw of text.split(PATH_TOKEN_BREAK)) {
+    const token = normalizeTagMapPath(raw).replace(/[.:!?]+$/, "");
+    const segments = token.includes("/") ? token.split("/") : [];
+    for (let end = 1; end <= segments.length; end += 1) {
+      named.add(segments.slice(0, end).join("/"));
+    }
+  }
+  return named;
+}
+
+function addHolder(index: Map<string, Set<number>>, key: string, id: number) {
+  index.set(key, (index.get(key) ?? new Set<number>()).add(id));
+}
+
+/** Which memories name each directory, which carry each tag, and the tag counts. */
+function indexCoverageMemories(memories: readonly CoverageMemory[]) {
+  const distribution: Record<string, number> = {};
+  const byDirectory = new Map<string, Set<number>>();
+  const byTag = new Map<string, Set<number>>();
+  memories.forEach((memory, id) => {
+    for (const tag of memory.tags.split(",").map((value) => value.trim())) {
+      if (tag !== "") {
+        distribution[tag] = (distribution[tag] ?? 0) + 1;
+        addHolder(byTag, tag.toLowerCase(), id);
+      }
+    }
+    for (const directory of namedDirectories(memory.text)) {
+      addHolder(byDirectory, directory, id);
+    }
+  });
+  return { distribution, byDirectory, byTag };
+}
+
+/** Tags the map gives to the directory, or to a prefix inside it. */
+function tagsForDirectory(
+  mappings: readonly PathTagMapping[],
+  directory: string,
+): string[] {
+  return mappings.flatMap((mapping) =>
+    pathMatchesPrefix(directory, mapping.path_prefix) ||
+    `${mapping.path_prefix.replace(/\/+$/, "")}/`.startsWith(directory)
+      ? mapping.tags
+      : [],
+  );
+}
+
+/**
+ * Sorts directories by whether an active memory is about something in them. A
+ * memory is about a directory when its text names a path in it, or when it
+ * carries a tag the tag map gives to the directory or to a prefix inside it.
+ * A memory about `cli/src/app.ts` therefore covers `cli/` and `cli/src/`, and
+ * not `cli/src/commands/`. Paths are compared as written, tags in lower case.
  */
 export function coverageReport(
   directories: readonly string[],
-  tagLists: readonly string[],
+  memories: readonly CoverageMemory[],
+  mappings: readonly PathTagMapping[],
 ): CoverageReport {
-  const distribution: Record<string, number> = {};
-  const known = new Set<string>();
-  for (const tags of tagLists) {
-    for (const tag of tags.split(",").map((value) => value.trim())) {
-      if (tag !== "") {
-        distribution[tag] = (distribution[tag] ?? 0) + 1;
-        known.add(tag.toLowerCase());
+  const { distribution, byDirectory, byTag } = indexCoverageMemories(memories);
+  const uncovered: string[] = [];
+  const covered: Record<string, number> = {};
+  for (const directory of directories) {
+    const path = normalizeTagMapPath(directory).replace(/\/+$/, "");
+    const holders = new Set(byDirectory.get(path));
+    for (const tag of tagsForDirectory(mappings, `${path}/`)) {
+      for (const id of byTag.get(tag) ?? []) {
+        holders.add(id);
       }
+    }
+    if (path !== "" && holders.size === 0) {
+      uncovered.push(directory);
+    } else if (path !== "") {
+      covered[directory] = holders.size;
     }
   }
   return {
-    uncovered_paths: directories.filter((directory) => {
-      const segments = directory
-        .replace(/\/$/, "")
-        .split("/")
-        .map((segment) => segment.toLowerCase())
-        .filter(Boolean);
-      return (
-        segments.length > 0 && !segments.some((segment) => known.has(segment))
-      );
-    }),
+    uncovered_paths: uncovered,
+    covered_paths: covered,
     tag_distribution: distribution,
   };
 }

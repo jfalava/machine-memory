@@ -348,8 +348,10 @@ export const MemoryCoverageResultSchema = Schema.Struct({
   repository: Schema.String,
   /** How many directories were compared. */
   checked: Schema.Finite,
-  /** Directories no segment of which is a tag of an active memory. */
+  /** Directories no active memory is about. */
   uncovered_paths: Schema.Array(Schema.String),
+  /** For each other directory, how many active memories are about something in it. */
+  covered_paths: Schema.Record(Schema.String, Schema.Finite),
   /** How many active memories carry each tag. */
   tag_distribution: Schema.Record(Schema.String, Schema.Finite),
 });

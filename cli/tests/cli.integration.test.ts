@@ -1427,6 +1427,45 @@ describe("CLI integration", () => {
     );
   });
 
+  it("coverage counts the memories about each directory and lists the rest", async () => {
+    const { cwd, dbPath } = await createProject();
+    for (const directory of ["src/api", "src/cli", "docs"]) {
+      await mkdir(join(cwd, directory), { recursive: true });
+    }
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "src/api/routes.ts validates every request",
+      "--tags",
+      "area:api",
+      "--quiet",
+    );
+    await runCli(
+      cwd,
+      dbPath,
+      "add",
+      "Commands parse their own flags",
+      "--tags",
+      "area:cli",
+      "--quiet",
+    );
+    const before = await runCli(cwd, dbPath, "coverage");
+    expect(before.json).toMatchObject({
+      uncovered_paths: ["docs/", "src/cli/"],
+      covered_paths: { "src/": 1, "src/api/": 1 },
+      tag_distribution: { "area:api": 1, "area:cli": 1 },
+    });
+
+    // The tag map says which directory area:cli stands for.
+    await runCli(cwd, dbPath, "tag-map", "set", "src/cli", "area:cli");
+    const mapped = await runCli(cwd, dbPath, "coverage");
+    expect(mapped.json).toMatchObject({
+      uncovered_paths: ["docs/"],
+      covered_paths: { "src/": 2, "src/api/": 1, "src/cli/": 1 },
+    });
+  });
+
   it("keeps the tag map in the database and imports the legacy file once", async () => {
     const { cwd, dbPath } = await createProject();
     await mkdir(join(cwd, ".agents"), { recursive: true });

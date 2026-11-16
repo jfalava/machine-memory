@@ -288,7 +288,7 @@ export function createMemoryServer(
   register(
     "memory_coverage",
     "coverage",
-    "Find directories that no active memory is tagged for. Pass the directory paths of the checkout, relative to the repository root. A directory is covered when one of its path segments equals a tag of an active memory, compared in lower case. Returns uncovered_paths and tag_distribution, the number of active memories per tag. Treat the result as a hint about where memories may be missing, not as a score. This is read-only.",
+    "Find directories that no active memory is about. Pass the directory paths of the checkout, relative to the repository root. A memory is about a directory when its content, context or refs name a path in it (src/cli/app.ts covers src/ and src/cli/, not src/cli/commands/), or when it carries a tag the tag map gives to the directory or to a prefix inside it. A tag covers nothing without a tag map entry. Returns uncovered_paths, covered_paths (the number of active memories per covered directory) and tag_distribution (the number per tag). An uncovered directory is a place to look, not a defect: many directories need no memory. This is read-only.",
   );
 
   return server;

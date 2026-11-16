@@ -175,7 +175,11 @@ export function helpPayload() {
           "The tag map is stored in the database, one per repository. A prefix covers the path itself and everything under it. import loads the mappings of a legacy .agents/path-tags.json once; that file is no longer read.",
       },
       migrate: { usage: `migrate${DATABASE_BACKEND_USAGE}` },
-      coverage: { usage: `coverage [--root <path>]${DATABASE_BACKEND_USAGE}` },
+      coverage: {
+        usage: `coverage [--root <path>]${DATABASE_BACKEND_USAGE}`,
+        notes:
+          "Lists the directories no active memory is about (uncovered_paths) and counts the memories about each other directory (covered_paths). A memory is about a directory when its content, context or refs name a path in it, or when it carries a tag the tag map gives to the directory or to a prefix inside it. A tag covers nothing without a tag-map entry.",
+      },
       gc: { usage: `gc --dry-run${DATABASE_BACKEND_USAGE}` },
       stats: { usage: `stats${DATABASE_BACKEND_USAGE}` },
       import: {

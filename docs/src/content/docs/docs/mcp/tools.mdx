@@ -46,7 +46,7 @@ Call `list_repositories` before writes when the slug is not certain. Derive `own
 | `tag_map_list`       | List the tag map; with `paths`, the tags those files would get                |
 | `tag_map_set`        | Set the tags of one path prefix, replacing the tags it had                    |
 | `tag_map_delete`     | Remove one path prefix; reports `deleted` or `not_found`                      |
-| `memory_coverage`    | List the directories no active memory is tagged for                           |
+| `memory_coverage`    | List the directories no active memory is about, and count the rest            |
 
 Every tool that takes `repository` expects `owner/name`. Rows live in D1; embeddings sync to Vectorize on write. `memory_query`, `memory_list`, and `memory_suggest` accept a `tags` substring filter alongside `status` / `memory_type` / `certainty`.
 
@@ -77,7 +77,7 @@ user as `mcp:<login>`.
 - `memory_gc` is always a dry run. It returns active status memories whose `expires_after_days` window has elapsed.
 - `memory_deprecate` accepts `ids` and optional `superseded_by`. It preserves the records and re-syncs their vector metadata.
 - `memory_delete_many` accepts one to 100 explicit `ids`. It is permanent and echoes `deleted_from`, `deleted_ids`, and `not_found`.
-- `memory_coverage` takes `directories`, one to 2,000 directory paths relative to the repository root, because the server cannot walk a checkout. It returns `checked`, `uncovered_paths` and `tag_distribution`. A directory is covered when one of its path segments equals a tag of an active memory, so a scoped tag such as `area:cli` does not cover `cli`.
+- `memory_coverage` takes `directories`, one to 2,000 directory paths relative to the repository root, because the server cannot walk a checkout. It returns `checked`, `uncovered_paths`, `covered_paths` (the number of active memories per covered directory) and `tag_distribution`. A memory covers a directory when its content, context or refs name a path in it, or when it carries a tag the tag map gives to the directory or to a prefix inside it; see [coverage](/machine/coverage).
 
 ### Tag map
 

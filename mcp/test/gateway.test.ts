@@ -358,7 +358,8 @@ const PASS_THROUGH_CASES: ReadonlyArray<
       repository: "o/r",
       checked: 2,
       uncovered_paths: ["docs/"],
-      tag_distribution: { src: 3 },
+      covered_paths: { "src/": 3 },
+      tag_distribution: { "area:src": 3 },
     },
   ],
 ];
