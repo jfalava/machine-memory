@@ -12,16 +12,47 @@ machine-memory coverage (--local|--remote)
 machine-memory coverage --root cli/src (--local|--remote)
 ```
 
-`coverage` walks directories under the current working directory, compares
-their names with tags on active memories, and returns `uncovered_paths` plus a
-`tag_distribution` map. `--root` changes the directory tree being inspected.
+`coverage` walks the directories under the current working directory and
+sorts them by whether an active memory is about something in them. `--root`
+changes the directory tree being inspected.
 
-A directory is covered when one of its path segments equals a tag of an active
-memory, compared in lower case. A scoped tag such as `area:cli` does not cover
-the directory `cli`; only the tag `cli` does.
+```json
+{
+  "root": "/home/me/project",
+  "uncovered_paths": ["docs/", "src/cli/commands/"],
+  "covered_paths": { "src/": 12, "src/cli/": 7 },
+  "tag_distribution": { "area:cli": 7, "kind:decision": 5 }
+}
+```
 
-The result is a signal for missing path-driven context, not a percentage. Add
-or update memories when an uncovered directory matters.
+`covered_paths` gives the number of active memories about each directory.
+
+## What covers a directory
+
+A memory is about a directory in one of two ways:
+
+- **It names a path in it.** Content, context and refs are read. A memory that
+  names `src/cli/app.ts` covers `src/` and `src/cli/`, and not
+  `src/cli/commands/`. Only text with a slash is a path, so the word `cli`
+  covers nothing, and neither does a URL or a path that starts with a slash.
+  Paths are compared as written, including case.
+- **It carries a tag the [tag map](/machine/tag-map) gives to the directory.**
+  With `tag-map set src/cli area:cli`, every memory tagged `area:cli` covers
+  `src/cli/`, the directories under it and its parents. Without a tag map
+  entry a tag covers nothing: `area:cli` alone does not say which directory it
+  stands for.
+
+A memory that does both is counted once.
+
+## Reading the result
+
+An uncovered directory is a place to look, not a defect. Generated code,
+assets and directories without decisions or gotchas need no memory. Memories
+that name no path and carry no mapped tag are not counted anywhere, so a low
+count can also mean the memories about a directory do not say where they
+apply.
+
+## MCP
 
 The MCP tool `memory_coverage` runs the same comparison. It cannot walk a
 checkout, so the client passes the directory paths in `directories`.

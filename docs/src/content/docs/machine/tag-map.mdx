@@ -33,6 +33,9 @@ Mappings are consumed by `add --path`, which reports the same matches as
 `path_tag_matches` and warns on stderr about a path that matches no prefix.
 Changing the map does not change the tags of memories that already exist.
 
+[`coverage`](/machine/coverage) reads the map too: a memory covers a directory
+when it carries a tag the map gives to that directory.
+
 ## Moving from the file
 
 The map used to live in `.agents/path-tags.json`. That file is no longer

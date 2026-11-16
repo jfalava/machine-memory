@@ -511,27 +511,49 @@ test("the tag map is kept per repository and tags an add by its paths", async ()
   ).toBe(1);
 });
 
-test("coverage lists the directories no active memory is tagged for", async () => {
-  await product("add", { content: "The API validates input.", tags: "api" });
+test("coverage lists the directories no active memory is about", async () => {
   await product("add", {
-    content: "The API encodes every response.",
-    tags: "API,area:cli",
+    content: "api/src/worker.ts validates input.",
+    tags: "area:api",
   });
-  const retired = await product("add", {
-    content: "Docs moved to Astro.",
-    tags: "docs",
+  await product("add", {
+    content: "Every response is encoded.",
+    context: "See api/src/encode.ts",
+    tags: "area:api",
   });
+  await product("add", { content: "Commands parse flags.", tags: "area:cli" });
+  await product("add", {
+    content: "mcp/src/tools.ts registers tools.",
+    repository: "other/repo",
+  });
+  const retired = await product("add", { content: "docs/ moved to Astro." });
   await product("deprecate", { ids: [retired.result.id] });
-  const coverage = await product("coverage", {
-    directories: ["api/", "api/src/", "cli/", "docs/"],
-  });
-  expect(coverage.result).toEqual({
+  const directories = [
+    "api/",
+    "api/src/",
+    "api/test/",
+    "cli/",
+    "docs/",
+    "mcp/",
+  ];
+  const before = await product("coverage", { directories });
+  expect(before.result).toEqual({
     repository: "o/r",
-    checked: 4,
-    // A scoped tag such as area:cli does not cover cli/, and a deprecated
-    // memory covers nothing.
-    uncovered_paths: ["cli/", "docs/"],
-    tag_distribution: { api: 2, "area:cli": 1 },
+    checked: 6,
+    // A tag alone covers nothing, nor does a deprecated memory or one of
+    // another repository.
+    uncovered_paths: ["api/test/", "cli/", "docs/", "mcp/"],
+    covered_paths: { "api/": 2, "api/src/": 2 },
+    tag_distribution: { "area:api": 2, "area:cli": 1 },
+  });
+  // The tag map says which directory a tag stands for.
+  await product("tag-map-set", { path_prefix: "cli", tags: "area:cli" });
+  const mapped = await product("coverage", { directories });
+  expect(mapped.result.uncovered_paths).toEqual(["api/test/", "docs/", "mcp/"]);
+  expect(mapped.result.covered_paths).toEqual({
+    "api/": 2,
+    "api/src/": 2,
+    "cli/": 1,
   });
   const none = await productError("coverage", { directories: [] });
   expect(none.status).toBe(400);

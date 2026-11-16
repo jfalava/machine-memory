@@ -1,10 +1,14 @@
 import { resolve } from "node:path";
 
-import { coverageReport } from "@machine-memory/contract";
+import {
+  coverageMemoriesSelect,
+  coverageReport,
+} from "@machine-memory/contract";
 import { Effect } from "effect";
 
 import { getFlagValue } from "../../cli-utils";
 import { jsonObject } from "../../json";
+import { loadPathTagMap } from "../../path-tags";
 import { repositoryForCurrentDirectory } from "../../repository";
 import { requireDatabase, type CommandContext } from "../runtime/context";
 import { printCommandOutput } from "../runtime/output";
@@ -19,13 +23,15 @@ export function handleCoverageCommand(commandCtx: CommandContext) {
       root,
       commandCtx.fileSystem,
     );
-    const rows = yield* database.all(
-      "SELECT tags FROM memories WHERE repository = ? AND status = 'active'",
-      [repositoryForCurrentDirectory()],
-    );
+    const query = coverageMemoriesSelect(repositoryForCurrentDirectory());
+    const rows = yield* database.all(query.sql, query.params);
     const report = coverageReport(
       directories,
-      rows.map((row) => stringValue(jsonObject(row)?.tags)),
+      rows.map((row) => ({
+        text: stringValue(jsonObject(row)?.text),
+        tags: stringValue(jsonObject(row)?.tags),
+      })),
+      yield* loadPathTagMap(database),
     );
     yield* Effect.sync(() => {
       if (commandCtx.outputMode.quiet) {

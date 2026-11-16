@@ -1,6 +1,7 @@
 import {
   analyzeMemoryDoctor,
   compareMemoryFact,
+  coverageMemoriesSelect,
   coverageReport,
   suggestPathTags,
   droppedDetails,
@@ -14,6 +15,7 @@ import {
   normalizeMemoryHistoryArgs,
   normalizeMemoryListArgs,
   normalizeMemorySizeArgs,
+  type CoverageMemory,
   type JsonObject,
   type MemoryGetResult,
 } from "@machine-memory/contract";
@@ -265,16 +267,14 @@ export const productReadHandlers = (
 
   coverage: (input) =>
     Effect.gen(function* () {
-      const rows = yield* ctx.sql.unsafe<{ tags: string | null }>(
-        "SELECT tags FROM memories WHERE repository = ? AND status = 'active'",
-        [input.repository],
-      );
+      const memories = coverageMemoriesSelect(input.repository);
       return {
         repository: input.repository,
         checked: input.directories.length,
         ...coverageReport(
           input.directories,
-          rows.map((row) => row.tags ?? ""),
+          yield* ctx.sql.unsafe<CoverageMemory>(memories.sql, memories.params),
+          yield* fetchPathTagMap(ctx, input.repository),
         ),
       };
     }),
